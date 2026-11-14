@@ -85,7 +85,7 @@ The executor starts turns only through letta-code's own scheduler, the written e
 
 ```bash
 node --test 'landing/executor/tests/*.test.mjs'   # on the host: local node:http servers play landing, gmail-triggers and news-radar, a fake letta records its argv
-tests/run-sidecar.sh landing                      # the landing service's tests, plus the executor's in node:22.22.0-slim
+tests/run-sidecar.sh landing                      # the landing service's tests, plus the executor's in `tests/run-sidecar.sh`'s `NODE_IMAGE`
 tests/run-sidecar.sh gmail-triggers              # the other end of the Gmail request and claim protocol
 tests/run-sidecar.sh news-radar                   # the other end of News Radar's report queue
 tests/run.sh executor                            # the CLI's install, removal and cron (stubbed docker)

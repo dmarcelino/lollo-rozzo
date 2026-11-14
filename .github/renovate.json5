@@ -1,0 +1,235 @@
+// Renovate's configuration: what it updates, when, and what merges on its own.
+// It runs from .github/workflows/renovate.yml; CONTRIBUTING.md "Dependency
+// updates" explains the policy and the one-time GitHub setup.
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['config:recommended'],
+  timezone: 'Europe/Lisbon',
+  // Tuesdays and Fridays at 16:00, Saturdays and Sundays at 07:00. The workflow
+  // starts at both UTC hours that can be that hour in Lisbon; the run outside it
+  // creates and updates nothing.
+  schedule: ['* 16 * * 2,5', '* 7 * * 0,6'],
+  // Four runs a week: no cap on PRs per hour.
+  prHourlyLimit: 0,
+  // config:recommended skips every tests/ folder, which holds pinned images too.
+  ignorePaths: ['**/node_modules/**'],
+  // compose/shared/gotenberg.yml is not named like a Compose file.
+  'docker-compose': {
+    managerFilePatterns: ['/^compose/.+\\.ya?ml$/'],
+  },
+  packageRules: [
+    // Patch, minor and digest updates merge on their own once CI passes (GitHub
+    // auto-merge, with the CI jobs required on main), after three days, so a
+    // release that is pulled or compromised early never merges by itself.
+    {
+      matchUpdateTypes: ['patch', 'minor', 'digest'],
+      automerge: true,
+      minimumReleaseAge: '3 days',
+      minimumReleaseAgeBehaviour: 'timestamp-optional',
+    },
+    // A release with no date cannot be held three days (ghcr.io and mcr.microsoft.com
+    // give none, nor does Docker Hub when its tag API fails): it gets a PR, not
+    // an automatic merge.
+    {
+      matchUpdateTypes: ['patch', 'minor', 'digest'],
+      matchJsonata: ['$not($exists(releaseTimestamp)) or releaseTimestamp = null'],
+      automerge: false,
+      prBodyNotes: ['The registry gives no release date, so this update was not held for three days: it waits for a person.'],
+    },
+    // These have upgrade steps CI does not run: their patch updates merge on
+    // their own, their minor and major ones wait for a person.
+    {
+      matchDepNames: ['dmarchevsky/lettuce', 'coder/code-server', 'gotenberg/gotenberg'],
+      separateMinorPatch: true,
+    },
+    {
+      matchDepNames: ['dmarchevsky/lettuce'],
+      matchUpdateTypes: ['minor', 'major'],
+      automerge: false,
+      prBodyNotes: ['Before merging, walk the Lettuce upgrade checklist: CONTRIBUTING.md, "Upgrading `LETTUCE_REF`".'],
+    },
+    // A Lettuce patch tag that moves letta-code moves the app-server too.
+    {
+      matchDepNames: ['dmarchevsky/lettuce'],
+      matchJsonata: ["$substringAfter(currentValue, '-letta_') != $substringAfter(newValue, '-letta_')"],
+      automerge: false,
+      prBodyNotes: ['This tag moves letta-code (the app-server). Before merging, walk the Lettuce upgrade checklist: CONTRIBUTING.md, "Upgrading `LETTUCE_REF`".'],
+    },
+    {
+      matchDepNames: ['coder/code-server'],
+      matchUpdateTypes: ['minor', 'major'],
+      automerge: false,
+      prBodyNotes: ['Before merging, review the built-in extensions and run `scripts/code-server-e2e.sh --browser`: code-server/README.md, "Maintaining".'],
+    },
+    {
+      matchDepNames: ['gotenberg/gotenberg'],
+      matchUpdateTypes: ['minor', 'major'],
+      automerge: false,
+      prBodyNotes: ['Before merging, read the release notes for removed or renamed flags (an unknown flag stops Gotenberg from starting) and run `scripts/doc-tools-e2e.sh`: doc-tools/README.md, "Maintaining".'],
+    },
+    // A new Python minor changes every sidecar's interpreter; its patch updates
+    // get their own PRs, or they would wait behind the minor one.
+    {
+      matchDepNames: ['python'],
+      separateMinorPatch: true,
+    },
+    {
+      matchDepNames: ['python'],
+      matchUpdateTypes: ['minor', 'major'],
+      automerge: false,
+    },
+    // The pip package and its browser image must be the same release. Only the
+    // browser test checks they are, and CI does not run it.
+    {
+      matchDepNames: ['playwright', 'mcr.microsoft.com/playwright/python'],
+      groupName: 'playwright',
+      automerge: false,
+      prBodyNotes: ['Before merging, check the pip package and the image are the same Playwright release, and run `scripts/code-server-e2e.sh --browser`.'],
+    },
+    // What goes with a version is recomputed in the same branch
+    // (scripts/renovate-post-upgrade.sh; the workflow allows only that script).
+    {
+      matchDepNames: ['koalaman/shellcheck'],
+      postUpgradeTasks: {
+        commands: ['scripts/renovate-post-upgrade.sh shellcheck'],
+        fileFilters: ['.github/workflows/ci.yml'],
+        executionMode: 'update',
+      },
+    },
+    {
+      matchDepNames: ['coder/code-server'],
+      postUpgradeTasks: {
+        commands: ['scripts/renovate-post-upgrade.sh code-server'],
+        fileFilters: ['code-server/editor/Dockerfile'],
+        executionMode: 'update',
+      },
+    },
+    {
+      matchDepNames: ['ilia-sokolov/OfficeAgent.NET'],
+      postUpgradeTasks: {
+        commands: ['scripts/renovate-post-upgrade.sh officeagent'],
+        fileFilters: ['doc-tools/Dockerfile'],
+        executionMode: 'update',
+      },
+    },
+    {
+      matchDepNames: ['pipelab-org/pipelock'],
+      postUpgradeTasks: {
+        commands: ['scripts/renovate-post-upgrade.sh pipelock'],
+        fileFilters: ['pipelock/Dockerfile'],
+        executionMode: 'update',
+      },
+    },
+    // doc-tools installs from its hash-locked list, compiled for its Python with
+    // its uv, both named in the list's header.
+    {
+      matchFileNames: ['doc-tools/pyproject.toml'],
+      postUpgradeTasks: {
+        commands: ['scripts/renovate-post-upgrade.sh doc-tools-lock'],
+        fileFilters: ['doc-tools/requirements.lock'],
+        executionMode: 'update',
+      },
+    },
+    {
+      matchFileNames: ['doc-tools/Dockerfile'],
+      matchDepNames: ['python', 'ghcr.io/astral-sh/uv'],
+      postUpgradeTasks: {
+        commands: ['scripts/renovate-post-upgrade.sh doc-tools-lock'],
+        fileFilters: ['doc-tools/requirements.lock'],
+        executionMode: 'update',
+      },
+    },
+  ],
+  // Pins no built-in manager reads.
+  customManagers: [
+    {
+      customType: 'regex',
+      description: 'The Lettuce tag a release is tested with',
+      managerFilePatterns: ['/^config\\.env\\.example$/'],
+      matchStrings: ['LETTUCE_REF=(?<currentValue>v\\S+)'],
+      depNameTemplate: 'dmarchevsky/lettuce',
+      datasourceTemplate: 'github-tags',
+      // The update type follows Lettuce's own version; the letta-code version
+      // after it moves along with it.
+      versioningTemplate: 'regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-letta_\\d+\\.\\d+\\.\\d+$',
+    },
+    {
+      customType: 'regex',
+      description: 'shellcheck in CI',
+      managerFilePatterns: ['/^\\.github/workflows/ci\\.yml$/'],
+      matchStrings: ['SHELLCHECK_VERSION: (?<currentValue>v\\S+)'],
+      depNameTemplate: 'koalaman/shellcheck',
+      datasourceTemplate: 'github-releases',
+      versioningTemplate: 'semver-coerced',
+    },
+    {
+      customType: 'regex',
+      description: 'Pipelock, built from its tag',
+      managerFilePatterns: ['/^pipelock/Dockerfile$/'],
+      matchStrings: ['ARG PIPELOCK_VERSION=(?<currentValue>\\S+)'],
+      depNameTemplate: 'pipelab-org/pipelock',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>.+)$',
+    },
+    {
+      customType: 'regex',
+      description: 'code-server, downloaded from its release',
+      managerFilePatterns: ['/^code-server/editor/Dockerfile$/'],
+      matchStrings: ['ARG CODE_SERVER_VERSION=(?<currentValue>\\S+)'],
+      depNameTemplate: 'coder/code-server',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>.+)$',
+    },
+    {
+      customType: 'regex',
+      description: 'OfficeAgent, downloaded from its release',
+      managerFilePatterns: ['/^doc-tools/Dockerfile$/'],
+      matchStrings: ['ARG OFFICEAGENT_VERSION=(?<currentValue>\\S+)'],
+      depNameTemplate: 'ilia-sokolov/OfficeAgent.NET',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>.+)$',
+    },
+    {
+      customType: 'regex',
+      description: "doc-tools' own Python",
+      managerFilePatterns: ['/^doc-tools/Dockerfile$/'],
+      matchStrings: ['ARG PYTHON_VERSION=(?<currentValue>\\S+)'],
+      depNameTemplate: 'python',
+      datasourceTemplate: 'python-version',
+    },
+    {
+      customType: 'regex',
+      description: 'Images the test and e2e scripts run',
+      managerFilePatterns: [
+        '/^tests/run-sidecar\\.sh$/',
+        '/^tests/run-pipelock\\.sh$/',
+        '/^scripts/code-server-e2e\\.sh$/',
+      ],
+      matchStrings: ['(?:[A-Z_]+_IMAGE|DEBIAN)=(?<depName>[^:\\s]+):(?<currentValue>[^@\\s]+)(?:@(?<currentDigest>sha256:[0-9a-f]{64}))?'],
+      datasourceTemplate: 'docker',
+    },
+    {
+      customType: 'regex',
+      description: "Playwright's browser image, tagged v<version>-<Ubuntu release>",
+      managerFilePatterns: ['/^scripts/code-server-e2e\\.sh$/'],
+      matchStrings: ['PLAYWRIGHT=(?<depName>[^:\\s]+):(?<currentValue>\\S+)'],
+      datasourceTemplate: 'docker',
+      versioningTemplate: 'regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<compatibility>.+)$',
+    },
+    {
+      customType: 'regex',
+      description: 'pip installs pinned inline',
+      managerFilePatterns: ['/^doc-tools/Dockerfile$/', '/^scripts/code-server-e2e\\.sh$/'],
+      matchStrings: ['\\s(?<depName>pytest|playwright)==(?<currentValue>[0-9][^\\s\']*)'],
+      datasourceTemplate: 'pypi',
+    },
+    {
+      customType: 'regex',
+      description: 'Renovate itself',
+      managerFilePatterns: ['/^\\.github/workflows/renovate\\.yml$/'],
+      matchStrings: ['RENOVATE_VERSION: (?<currentValue>\\S+)'],
+      depNameTemplate: 'renovate',
+      datasourceTemplate: 'npm',
+    },
+  ],
+}

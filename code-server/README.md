@@ -87,6 +87,8 @@ With the profile on, `check_stack` refuses:
 Whatever the profiles, it refuses `code-server-data` mounted by anything but `lollo-code-server-editor`, `code-exec-keys` by anything but the editor and the shell, `code-server-sock` by anything but the gate and the editor, a `volumes_from` naming one of the three services or a service mounting their volumes, and a `network_mode` sharing one of their network namespaces (`service:`, or a `container:` name with `code-server` in it).
 
 ## Maintaining
+Renovate proposes each code-server release and fills in both `SHA256_*` (`scripts/renovate-post-upgrade.sh code-server`); a patch release merges once CI passes, any other waits in its PR for the steps below ([CONTRIBUTING.md](../CONTRIBUTING.md#dependency-updates)).
+
 Moving code-server to a new release: change `CODE_SERVER_VERSION` and both `SHA256_*` in `code-server/editor/Dockerfile` (GitHub shows each release asset's digest), review the release's built-in extensions against `code-server/editor/extensions-kept` (the image tests fail on a listed one that is gone; a new one stays out until listed) and the Dockerfile's edits to the Markdown and git extensions (the build fails when one no longer matches), and run `tests/run-sidecar.sh code-server` and `scripts/code-server-e2e.sh --browser`.
 
 ## Upstream seams
