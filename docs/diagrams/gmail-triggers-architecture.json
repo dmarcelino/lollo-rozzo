@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "9499c99f267337cc46e5bb4baf5f133559057ab8"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     }
   },
   "components": [
@@ -30,8 +30,8 @@
       "sources": [
         {
           "path": "docs/gmail-triggers.md",
-          "line": 15,
-          "end_line": 31,
+          "line": 11,
+          "end_line": 27,
           "label": "using Gmail triggers"
         }
       ]
@@ -52,14 +52,14 @@
       "sources": [
         {
           "path": "lib/cloudflare.sh",
-          "line": 80,
-          "end_line": 91,
+          "line": 73,
+          "end_line": 84,
           "label": "cf_app_body"
         },
         {
           "path": "lolloctl",
-          "line": 163,
-          "end_line": 179,
+          "line": 171,
+          "end_line": 187,
           "label": "the lollo's Access app (CF_LOLLO_AUD)"
         }
       ]
@@ -80,14 +80,14 @@
       "sources": [
         {
           "path": "lib/cloudflare.sh",
-          "line": 121,
-          "end_line": 134,
+          "line": 114,
+          "end_line": 128,
           "label": "PROFILE_ROUTES"
         },
         {
           "path": "lib/cloudflare.sh",
-          "line": 160,
-          "end_line": 180,
+          "line": 154,
+          "end_line": 174,
           "label": "cf_tunnel_configure"
         }
       ]
@@ -107,8 +107,8 @@
       ],
       "sources": [
         {
-          "path": "AGENTS.md",
-          "line": 22,
+          "path": "CONTRIBUTING.md",
+          "line": 23,
           "label": "owns the only connection to the app-server"
         },
         {
@@ -134,14 +134,14 @@
       ],
       "sources": [
         {
-          "path": "AGENTS.md",
-          "line": 22,
+          "path": "CONTRIBUTING.md",
+          "line": 23,
           "label": "scheduler fires on the BFF's connection"
         },
         {
           "path": "lolloctl",
-          "line": 272,
-          "end_line": 281,
+          "line": 283,
+          "end_line": 297,
           "label": "executor_cron"
         }
       ]
@@ -174,8 +174,8 @@
         },
         {
           "path": "gmail-triggers/src/gmail_triggers/executor_api.py",
-          "line": 47,
-          "end_line": 96,
+          "line": 43,
+          "end_line": 44,
           "label": "executor API behind guard()"
         }
       ]
@@ -197,19 +197,19 @@
         {
           "path": "landing/executor/run.mjs",
           "line": 1,
-          "end_line": 20,
+          "end_line": 22,
           "label": "what a run does"
         },
         {
           "path": "landing/executor/run.mjs",
-          "line": 415,
-          "end_line": 427,
+          "line": 426,
+          "end_line": 438,
           "label": "letta cron add --once"
         },
         {
           "path": "lolloctl",
-          "line": 249,
-          "end_line": 262,
+          "line": 257,
+          "end_line": 273,
           "label": "installed by up"
         }
       ]
@@ -236,14 +236,14 @@
         },
         {
           "path": "lib/common.sh",
-          "line": 424,
-          "end_line": 425,
+          "line": 782,
+          "end_line": 783,
           "label": "only bff, google-mcp, gmail-triggers"
         },
         {
           "path": "lib/common.sh",
-          "line": 663,
-          "end_line": 664,
+          "line": 1068,
+          "end_line": 1069,
           "label": "read-only or refused"
         }
       ]
@@ -270,8 +270,8 @@
         },
         {
           "path": "lib/common.sh",
-          "line": 649,
-          "end_line": 683,
+          "line": 1054,
+          "end_line": 1088,
           "label": "check_gmail_triggers"
         }
       ]

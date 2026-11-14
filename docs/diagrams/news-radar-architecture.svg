@@ -1167,7 +1167,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
         <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Stack lollo-&lt;name&gt;: one Docker Compose project per person">
-          <rect data-graph-role="structural-frame-label-mask" x="424" y="19" width="328.60003539999997" height="17" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="424" y="19" width="317.80003419999997" height="17" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="428" y="32.000001" class="t-cloud" font-size="9.000001" font-weight="600">Stack lollo-&lt;name&gt;: one Docker Compose project per person</text>
         </g>
 

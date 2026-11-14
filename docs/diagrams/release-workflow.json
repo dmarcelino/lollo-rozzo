@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "866cc351d27219d5df75ad2d346ea949007fe013"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     },
     "legend": {
       "entries": {
@@ -154,8 +154,8 @@
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 228,
-          "end_line": 232,
+          "line": 234,
+          "end_line": 238,
           "label": "not on both platforms"
         }
       ]
@@ -199,14 +199,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 151,
-          "end_line": 178,
+          "line": 157,
+          "end_line": 184,
           "label": "reuse, or tag both digests"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 179,
-          "end_line": 184,
+          "line": 185,
+          "end_line": 190,
           "label": "attestation"
         }
       ]
@@ -228,8 +228,8 @@
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 167,
-          "end_line": 178,
+          "line": 173,
+          "end_line": 184,
           "label": "tagged, full name with digest"
         }
       ]
@@ -244,14 +244,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 215,
-          "end_line": 232,
+          "line": 221,
+          "end_line": 238,
           "label": "write RELEASE"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 240,
-          "end_line": 282,
+          "line": 246,
+          "end_line": 288,
           "label": "lolloctl, one job per platform"
         },
         {
@@ -271,8 +271,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 316,
-          "end_line": 330,
+          "line": 322,
+          "end_line": 336,
           "label": "tagged on both digests"
         }
       ]
@@ -287,14 +287,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 336,
-          "end_line": 346,
+          "line": 342,
+          "end_line": 352,
           "label": "wrapper and SHA256SUMS"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 347,
-          "end_line": 373,
+          "line": 353,
+          "end_line": 379,
           "label": "notes: what restarts"
         }
       ]
@@ -309,8 +309,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 377,
-          "end_line": 383,
+          "line": 383,
+          "end_line": 389,
           "label": "gh release create"
         }
       ]

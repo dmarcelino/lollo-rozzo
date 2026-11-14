@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "878eedd44b4bc61d399f9f66545d2ed1cd111f38"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     }
   },
   "components": [
@@ -34,8 +34,8 @@
       "size": [170, 62],
       "sources": [
         { "path": "release/lolloctl-wrapper.sh", "line": 20, "end_line": 28, "label": "data directory is bin/'s parent" },
-        { "path": "release/lolloctl-wrapper.sh", "line": 43, "end_line": 52, "label": "docker run, same-path mounts" },
-        { "path": "release/lolloctl-wrapper.sh", "line": 146, "end_line": 168, "label": "self-upgrade, then run the image" }
+        { "path": "release/lolloctl-wrapper.sh", "line": 43, "end_line": 59, "label": "docker run, same-path mounts" },
+        { "path": "release/lolloctl-wrapper.sh", "line": 153, "end_line": 175, "label": "self-upgrade, then run the image" }
       ]
     },
     {
@@ -47,7 +47,7 @@
       "size": [160, 62],
       "sources": [
         { "path": "lolloctl", "line": 7, "end_line": 11, "label": "sources lib/*.sh" },
-        { "path": "lolloctl", "line": 2073, "end_line": 2099, "label": "data directory, mounts, dispatch" }
+        { "path": "lolloctl", "line": 2098, "end_line": 2124, "label": "data directory, mounts, dispatch" }
       ]
     },
     {
@@ -59,7 +59,7 @@
       "size": [160, 62],
       "sources": [
         { "path": "lib/cloudflare.sh", "line": 1, "end_line": 32, "label": "cf_api" },
-        { "path": "lib/cloudflare.sh", "line": 153, "end_line": 172, "label": "tunnel ingress" }
+        { "path": "lib/cloudflare.sh", "line": 154, "end_line": 173, "label": "tunnel ingress" }
       ]
     },
     {
@@ -71,7 +71,7 @@
       "size": [160, 62],
       "sources": [
         { "path": "lib/cloudflare.sh", "line": 55, "end_line": 112, "label": "policy, apps, tunnel" },
-        { "path": "lib/cloudflare.sh", "line": 174, "end_line": 180, "label": "DNS CNAME" }
+        { "path": "lib/cloudflare.sh", "line": 175, "end_line": 181, "label": "DNS CNAME" }
       ]
     },
     {
@@ -82,9 +82,9 @@
       "pos": [780, 220],
       "size": [200, 62],
       "sources": [
-        { "path": "lib/common.sh", "line": 55, "end_line": 109, "label": "release mode, data directory" },
-        { "path": "lib/common.sh", "line": 111, "end_line": 147, "label": "same-path check" },
-        { "path": "lib/common.sh", "line": 436, "end_line": 484, "label": "compose wrappers" }
+        { "path": "lib/common.sh", "line": 55, "end_line": 116, "label": "release mode, data directory" },
+        { "path": "lib/common.sh", "line": 118, "end_line": 154, "label": "same-path check" },
+        { "path": "lib/common.sh", "line": 443, "end_line": 517, "label": "compose wrappers" }
       ]
     },
     {
@@ -95,8 +95,8 @@
       "pos": [1100, 40],
       "size": [170, 62],
       "sources": [
-        { "path": "lib/common.sh", "line": 256, "end_line": 287, "label": "fetch_upstream" },
-        { "path": "lib/common.sh", "line": 302, "end_line": 327, "label": "upstream_image_ns" }
+        { "path": "lib/common.sh", "line": 263, "end_line": 294, "label": "fetch_upstream" },
+        { "path": "lib/common.sh", "line": 309, "end_line": 334, "label": "upstream_image_ns" }
       ]
     },
     {
@@ -107,9 +107,9 @@
       "pos": [1100, 220],
       "size": [170, 62],
       "sources": [
-        { "path": "lib/common.sh", "line": 486, "end_line": 497, "label": "compose_shared" },
-        { "path": "lib/common.sh", "line": 529, "end_line": 532, "label": "host_docker" },
-        { "path": "lolloctl", "line": 396, "end_line": 412, "label": "up --no-build --pull missing" }
+        { "path": "lib/common.sh", "line": 519, "end_line": 530, "label": "compose_shared" },
+        { "path": "lib/common.sh", "line": 562, "end_line": 565, "label": "host_docker" },
+        { "path": "lolloctl", "line": 406, "end_line": 423, "label": "up --no-build --pull missing" }
       ]
     },
     {
@@ -120,8 +120,8 @@
       "pos": [1350, 220],
       "size": [140, 62],
       "sources": [
-        { "path": "lolloctl", "line": 347, "end_line": 367, "label": "executor via exec" },
-        { "path": "lolloctl", "line": 676, "end_line": 677, "label": "mcp_servers" }
+        { "path": "lolloctl", "line": 357, "end_line": 377, "label": "executor via exec" },
+        { "path": "lolloctl", "line": 692, "end_line": 693, "label": "mcp_servers" }
       ]
     },
     {
@@ -133,7 +133,7 @@
       "size": [140, 62],
       "sources": [
         { "path": "lib/mcp-servers.mjs", "line": 1, "end_line": 21, "label": "what it owns" },
-        { "path": "lib/mcp-servers.mjs", "line": 36, "end_line": 53, "label": "groups" }
+        { "path": "lib/mcp-servers.mjs", "line": 45, "end_line": 57, "label": "groups" }
       ]
     },
     {
@@ -144,8 +144,8 @@
       "pos": [560, 420],
       "size": [140, 62],
       "sources": [
-        { "path": "lib/common.sh", "line": 219, "end_line": 220, "label": "cfg" },
-        { "path": "lolloctl", "line": 795, "end_line": 832, "label": "init caches ids" }
+        { "path": "lib/common.sh", "line": 226, "end_line": 227, "label": "cfg" },
+        { "path": "lolloctl", "line": 811, "end_line": 848, "label": "init caches ids" }
       ]
     },
     {
@@ -156,8 +156,8 @@
       "pos": [720, 420],
       "size": [130, 62],
       "sources": [
-        { "path": "lib/common.sh", "line": 149, "end_line": 210, "label": "conf_entries, conf_set" },
-        { "path": "lolloctl", "line": 973, "end_line": 1036, "label": "apply" }
+        { "path": "lib/common.sh", "line": 156, "end_line": 217, "label": "conf_entries, conf_set" },
+        { "path": "lolloctl", "line": 991, "end_line": 1054, "label": "apply" }
       ]
     },
     {
@@ -168,8 +168,8 @@
       "pos": [870, 420],
       "size": [150, 62],
       "sources": [
-        { "path": "lib/common.sh", "line": 256, "end_line": 287, "label": "unpacked by fetch_upstream" },
-        { "path": "lolloctl", "line": 1277, "end_line": 1288, "label": "upgrade" }
+        { "path": "lib/common.sh", "line": 263, "end_line": 294, "label": "unpacked by fetch_upstream" },
+        { "path": "lolloctl", "line": 1299, "end_line": 1310, "label": "upgrade" }
       ]
     },
     {
@@ -180,8 +180,8 @@
       "pos": [1100, 420],
       "size": [170, 62],
       "sources": [
-        { "path": "lolloctl", "line": 129, "end_line": 151, "label": "written by add" },
-        { "path": "lolloctl", "line": 834, "end_line": 923, "label": "ids stored as they exist" }
+        { "path": "lolloctl", "line": 129, "end_line": 153, "label": "written by add" },
+        { "path": "lolloctl", "line": 850, "end_line": 941, "label": "ids stored as they exist" }
       ]
     }
   ],

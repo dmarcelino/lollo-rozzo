@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "27e55f992e8bae65855edb05090f8482f08a8dd3"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     }
   },
   "components": [
@@ -103,7 +103,7 @@
       ]
     },
     {
-      "id": "lollo-alfred",
+      "id": "lettuce-alfred",
       "type": "frontend",
       "label": "Lettuce",
       "sublabel": "alfred.example.com",
@@ -224,7 +224,7 @@
       ]
     },
     {
-      "id": "lollo-hal",
+      "id": "lettuce-hal",
       "type": "frontend",
       "label": "Lettuce",
       "sublabel": "hal.example.com",
@@ -284,10 +284,10 @@
       "label": "Your host: no ports published",
       "pad": 48,
       "wraps": [
-        "lollo-alfred",
+        "lettuce-alfred",
         "lollo-alfred",
         "agents-alfred",
-        "lollo-hal",
+        "lettuce-hal",
         "lollo-hal",
         "agents-hal"
       ]
@@ -296,7 +296,7 @@
       "kind": "security-group",
       "label": "Stack lollo-alfred",
       "wraps": [
-        "lollo-alfred",
+        "lettuce-alfred",
         "lollo-alfred",
         "agents-alfred"
       ]
@@ -305,7 +305,7 @@
       "kind": "security-group",
       "label": "Stack lollo-hal",
       "wraps": [
-        "lollo-hal",
+        "lettuce-hal",
         "lollo-hal",
         "agents-hal"
       ]
@@ -313,7 +313,7 @@
   ],
   "connections": [
     {
-      "id": "alfred-to-lollo-access",
+      "id": "alfred-to-lettuce-access",
       "from": "alfred",
       "to": "access-alfred",
       "label": "HTTPS",
@@ -326,7 +326,7 @@
       "label": "HTTPS"
     },
     {
-      "id": "alfred-lollo-admitted",
+      "id": "alfred-lettuce-admitted",
       "from": "access-alfred",
       "to": "tunnel-alfred",
       "label": "signed in",
@@ -342,7 +342,7 @@
     {
       "id": "alfred-to-lettuce",
       "from": "tunnel-alfred",
-      "to": "lollo-alfred",
+      "to": "lettuce-alfred",
       "variant": "emphasis"
     },
     {
@@ -351,8 +351,8 @@
       "to": "lollo-alfred"
     },
     {
-      "id": "alfred-lollo-agents",
-      "from": "lollo-alfred",
+      "id": "alfred-lettuce-agents",
+      "from": "lettuce-alfred",
       "to": "agents-alfred",
       "label": "chat"
     },
@@ -364,7 +364,7 @@
       "variant": "dashed"
     },
     {
-      "id": "hal-to-lollo-access",
+      "id": "hal-to-lettuce-access",
       "from": "hal",
       "to": "access-hal",
       "label": "HTTPS",
@@ -377,7 +377,7 @@
       "label": "HTTPS"
     },
     {
-      "id": "hal-lollo-admitted",
+      "id": "hal-lettuce-admitted",
       "from": "access-hal",
       "to": "tunnel-hal",
       "label": "signed in",
@@ -393,7 +393,7 @@
     {
       "id": "hal-to-lettuce",
       "from": "tunnel-hal",
-      "to": "lollo-hal",
+      "to": "lettuce-hal",
       "variant": "emphasis"
     },
     {
@@ -402,8 +402,8 @@
       "to": "lollo-hal"
     },
     {
-      "id": "hal-lollo-agents",
-      "from": "lollo-hal",
+      "id": "hal-lettuce-agents",
+      "from": "lettuce-hal",
       "to": "agents-hal",
       "label": "chat"
     },

@@ -1077,7 +1077,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <!-- Connection paths (before components for correct z-order) -->
         <g data-graph-role="automatic-crossover" style="--step:0">
           <path data-graph-role="automatic-crossover-underlay" d="M 144 160 L 144 153 Q 144 146 151 146 L 240 146" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="alfred" data-edge-to="access-alfred" data-edge-label="HTTPS" data-edge-key="0" data-edge-id="alfred-to-lollo-access" data-composition-points="144,160;144,146;240,146" data-composition-crossover="halo" data-composition-independent="true" d="M 144 160 L 144 153 Q 144 146 151 146 L 240 146" class="a-emphasis" data-animate="edge" style="--step: 0;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-edge-from="alfred" data-edge-to="access-alfred" data-edge-label="HTTPS" data-edge-key="0" data-edge-id="alfred-to-lettuce-access" data-composition-points="144,160;144,146;240,146" data-composition-crossover="halo" data-composition-independent="true" d="M 144 160 L 144 153 Q 144 146 151 146 L 240 146" class="a-emphasis" data-animate="edge" style="--step: 0;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:1">
           <path data-graph-role="automatic-crossover-underlay" d="M 100 222 L 100 243 Q 100 251 108 251 L 240 251" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1085,7 +1085,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:2">
           <path data-graph-role="automatic-crossover-underlay" d="M 460 146 L 569 146 Q 576 146 576 153 L 576 160" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="access-alfred" data-edge-to="tunnel-alfred" data-edge-label="signed in" data-edge-key="2" data-edge-id="alfred-lollo-admitted" data-composition-points="460,146;576,146;576,160" data-composition-crossover="halo" data-composition-independent="true" d="M 460 146 L 569 146 Q 576 146 576 153 L 576 160" class="a-security" data-animate="edge" style="--step: 2;" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+          <path data-edge-from="access-alfred" data-edge-to="tunnel-alfred" data-edge-label="signed in" data-edge-key="2" data-edge-id="alfred-lettuce-admitted" data-composition-points="460,146;576,146;576,160" data-composition-crossover="halo" data-composition-independent="true" d="M 460 146 L 569 146 Q 576 146 576 153 L 576 160" class="a-security" data-animate="edge" style="--step: 2;" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:3">
           <path data-graph-role="automatic-crossover-underlay" d="M 460 236 L 569 236 Q 576 236 576 229 L 576 222" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1093,7 +1093,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:4">
           <path data-graph-role="automatic-crossover-underlay" d="M 730 176 L 829 176 Q 836 176 836 169 L 836 162" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="tunnel-alfred" data-edge-to="lollo-alfred" data-edge-key="4" data-edge-id="alfred-to-lettuce" data-composition-points="730,176;836,176;836,162" data-composition-crossover="halo" data-composition-independent="true" d="M 730 176 L 829 176 Q 836 176 836 169 L 836 162" class="a-emphasis" data-animate="edge" style="--step: 4;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-edge-from="tunnel-alfred" data-edge-to="lettuce-alfred" data-edge-key="4" data-edge-id="alfred-to-lettuce" data-composition-points="730,176;836,176;836,162" data-composition-crossover="halo" data-composition-independent="true" d="M 730 176 L 829 176 Q 836 176 836 169 L 836 162" class="a-emphasis" data-animate="edge" style="--step: 4;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:5">
           <path data-graph-role="automatic-crossover-underlay" d="M 730 206 L 829 206 Q 836 206 836 213 L 836 220" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1101,7 +1101,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:6">
           <path data-graph-role="automatic-crossover-underlay" d="M 974 162 L 974 169 Q 974 176 981 176 L 1070 176" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="lollo-alfred" data-edge-to="agents-alfred" data-edge-label="chat" data-edge-key="6" data-edge-id="alfred-lollo-agents" data-composition-points="974,162;974,176;1070,176" data-composition-crossover="halo" data-composition-independent="true" d="M 974 162 L 974 169 Q 974 176 981 176 L 1070 176" class="a-default" data-animate="edge" style="--step: 6;" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-edge-from="lettuce-alfred" data-edge-to="agents-alfred" data-edge-label="chat" data-edge-key="6" data-edge-id="alfred-lettuce-agents" data-composition-points="974,162;974,176;1070,176" data-composition-crossover="halo" data-composition-independent="true" d="M 974 162 L 974 169 Q 974 176 981 176 L 1070 176" class="a-default" data-animate="edge" style="--step: 6;" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:7">
           <path data-graph-role="automatic-crossover-underlay" d="M 1070 206 L 981 206 Q 974 206 974 213 L 974 220" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1109,7 +1109,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:8">
           <path data-graph-role="automatic-crossover-underlay" d="M 144 480 L 144 473 Q 144 466 151 466 L 240 466" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="hal" data-edge-to="access-hal" data-edge-label="HTTPS" data-edge-key="8" data-edge-id="hal-to-lollo-access" data-composition-points="144,480;144,466;240,466" data-composition-crossover="halo" data-composition-independent="true" d="M 144 480 L 144 473 Q 144 466 151 466 L 240 466" class="a-emphasis" data-animate="edge" style="--step: 8;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-edge-from="hal" data-edge-to="access-hal" data-edge-label="HTTPS" data-edge-key="8" data-edge-id="hal-to-lettuce-access" data-composition-points="144,480;144,466;240,466" data-composition-crossover="halo" data-composition-independent="true" d="M 144 480 L 144 473 Q 144 466 151 466 L 240 466" class="a-emphasis" data-animate="edge" style="--step: 8;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:9">
           <path data-graph-role="automatic-crossover-underlay" d="M 100 542 L 100 563 Q 100 571 108 571 L 240 571" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1117,7 +1117,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:10">
           <path data-graph-role="automatic-crossover-underlay" d="M 460 466 L 569 466 Q 576 466 576 473 L 576 480" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="access-hal" data-edge-to="tunnel-hal" data-edge-label="signed in" data-edge-key="10" data-edge-id="hal-lollo-admitted" data-composition-points="460,466;576,466;576,480" data-composition-crossover="halo" data-composition-independent="true" d="M 460 466 L 569 466 Q 576 466 576 473 L 576 480" class="a-security" data-animate="edge" style="--step: 10;" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+          <path data-edge-from="access-hal" data-edge-to="tunnel-hal" data-edge-label="signed in" data-edge-key="10" data-edge-id="hal-lettuce-admitted" data-composition-points="460,466;576,466;576,480" data-composition-crossover="halo" data-composition-independent="true" d="M 460 466 L 569 466 Q 576 466 576 473 L 576 480" class="a-security" data-animate="edge" style="--step: 10;" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:11">
           <path data-graph-role="automatic-crossover-underlay" d="M 460 556 L 569 556 Q 576 556 576 549 L 576 542" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1125,7 +1125,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:12">
           <path data-graph-role="automatic-crossover-underlay" d="M 730 496 L 829 496 Q 836 496 836 489 L 836 482" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="tunnel-hal" data-edge-to="lollo-hal" data-edge-key="12" data-edge-id="hal-to-lettuce" data-composition-points="730,496;836,496;836,482" data-composition-crossover="halo" data-composition-independent="true" d="M 730 496 L 829 496 Q 836 496 836 489 L 836 482" class="a-emphasis" data-animate="edge" style="--step: 12;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-edge-from="tunnel-hal" data-edge-to="lettuce-hal" data-edge-key="12" data-edge-id="hal-to-lettuce" data-composition-points="730,496;836,496;836,482" data-composition-crossover="halo" data-composition-independent="true" d="M 730 496 L 829 496 Q 836 496 836 489 L 836 482" class="a-emphasis" data-animate="edge" style="--step: 12;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:13">
           <path data-graph-role="automatic-crossover-underlay" d="M 730 526 L 829 526 Q 836 526 836 533 L 836 540" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1133,7 +1133,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:14">
           <path data-graph-role="automatic-crossover-underlay" d="M 974 482 L 974 489 Q 974 496 981 496 L 1070 496" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="lollo-hal" data-edge-to="agents-hal" data-edge-label="chat" data-edge-key="14" data-edge-id="hal-lollo-agents" data-composition-points="974,482;974,496;1070,496" data-composition-crossover="halo" data-composition-independent="true" d="M 974 482 L 974 489 Q 974 496 981 496 L 1070 496" class="a-default" data-animate="edge" style="--step: 12;" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-edge-from="lettuce-hal" data-edge-to="agents-hal" data-edge-label="chat" data-edge-key="14" data-edge-id="hal-lettuce-agents" data-composition-points="974,482;974,496;1070,496" data-composition-crossover="halo" data-composition-independent="true" d="M 974 482 L 974 489 Q 974 496 981 496 L 1070 496" class="a-default" data-animate="edge" style="--step: 12;" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:15">
           <path data-graph-role="automatic-crossover-underlay" d="M 1070 526 L 981 526 Q 974 526 974 533 L 974 540" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1187,7 +1187,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="645" y="205" class="t-muted" font-size="9" text-anchor="middle">outbound from the host</text>
         </g>
 
-        <g id="node-lollo-alfred" data-node-id="lollo-alfred" data-node-label="Lettuce" tabindex="0" role="button" aria-label="Focus Lettuce, alfred.example.com, Your host: no ports published › Stack lollo-alfred" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="alfred.example.com" data-node-context="Your host: no ports published › Stack lollo-alfred">
+        <g id="node-lettuce-alfred" data-node-id="lettuce-alfred" data-node-label="Lettuce" tabindex="0" role="button" aria-label="Focus Lettuce, alfred.example.com, Your host: no ports published › Stack lollo-alfred" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="alfred.example.com" data-node-context="Your host: no ports published › Stack lollo-alfred">
           <title>Lettuce · alfred.example.com · Your host: no ports published › Stack lollo-alfred</title>
           <rect x="820" y="100" width="170" height="62" rx="8" class="c-mask"/>
           <rect x="820" y="100" width="170" height="62" rx="8" class="c-frontend" data-animate="node" style="--step: 5; --flow-node-name: archify-relay-node-10;" stroke-width="1.5"/>
@@ -1273,7 +1273,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="645" y="525" class="t-muted" font-size="9" text-anchor="middle">outbound from the host</text>
         </g>
 
-        <g id="node-lollo-hal" data-node-id="lollo-hal" data-node-label="Lettuce" tabindex="0" role="button" aria-label="Focus Lettuce, hal.example.com, Your host: no ports published › Stack lollo-hal" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="hal.example.com" data-node-context="Your host: no ports published › Stack lollo-hal">
+        <g id="node-lettuce-hal" data-node-id="lettuce-hal" data-node-label="Lettuce" tabindex="0" role="button" aria-label="Focus Lettuce, hal.example.com, Your host: no ports published › Stack lollo-hal" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="hal.example.com" data-node-context="Your host: no ports published › Stack lollo-hal">
           <title>Lettuce · hal.example.com · Your host: no ports published › Stack lollo-hal</title>
           <rect x="820" y="420" width="170" height="62" rx="8" class="c-mask"/>
           <rect x="820" y="420" width="170" height="62" rx="8" class="c-frontend" data-animate="node" style="--step: 12; --flow-node-name: archify-relay-node-8;" stroke-width="1.5"/>
@@ -1314,7 +1314,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
 
         <!-- Connection labels -->
-        <g data-edge-from="alfred" data-edge-to="access-alfred" data-edge-label="HTTPS" data-edge-key="0" data-edge-id="alfred-to-lollo-access">
+        <g data-edge-from="alfred" data-edge-to="access-alfred" data-edge-label="HTTPS" data-edge-key="0" data-edge-id="alfred-to-lettuce-access">
           <rect x="175" y="126" width="34" height="14" rx="3" class="c-mask"/>
           <text x="192" y="136" class="t-edge-emphasis" font-size="8" text-anchor="middle">HTTPS</text>
         </g>
@@ -1322,7 +1322,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <rect x="153" y="231" width="34" height="14" rx="3" class="c-mask"/>
           <text x="170" y="241" class="t-edge-default" font-size="8" text-anchor="middle">HTTPS</text>
         </g>
-        <g data-edge-from="access-alfred" data-edge-to="tunnel-alfred" data-edge-label="signed in" data-edge-key="2" data-edge-id="alfred-lollo-admitted">
+        <g data-edge-from="access-alfred" data-edge-to="tunnel-alfred" data-edge-label="signed in" data-edge-key="2" data-edge-id="alfred-lettuce-admitted">
           <rect x="549.4" y="133" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
           <text x="576" y="143" class="t-edge-security" font-size="8" text-anchor="middle">signed in</text>
         </g>
@@ -1332,7 +1332,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
 
 
-        <g data-edge-from="lollo-alfred" data-edge-to="agents-alfred" data-edge-label="chat" data-edge-key="6" data-edge-id="alfred-lollo-agents">
+        <g data-edge-from="lettuce-alfred" data-edge-to="agents-alfred" data-edge-label="chat" data-edge-key="6" data-edge-id="alfred-lettuce-agents">
           <rect x="1007" y="156" width="30" height="14" rx="3" class="c-mask"/>
           <text x="1022" y="166" class="t-edge-default" font-size="8" text-anchor="middle">chat</text>
         </g>
@@ -1340,7 +1340,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <rect x="959" y="193" width="30" height="14" rx="3" class="c-mask"/>
           <text x="974" y="203" class="t-edge-dashed" font-size="8" text-anchor="middle">ask</text>
         </g>
-        <g data-edge-from="hal" data-edge-to="access-hal" data-edge-label="HTTPS" data-edge-key="8" data-edge-id="hal-to-lollo-access">
+        <g data-edge-from="hal" data-edge-to="access-hal" data-edge-label="HTTPS" data-edge-key="8" data-edge-id="hal-to-lettuce-access">
           <rect x="175" y="446" width="34" height="14" rx="3" class="c-mask"/>
           <text x="192" y="456" class="t-edge-emphasis" font-size="8" text-anchor="middle">HTTPS</text>
         </g>
@@ -1348,7 +1348,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <rect x="153" y="551" width="34" height="14" rx="3" class="c-mask"/>
           <text x="170" y="561" class="t-edge-default" font-size="8" text-anchor="middle">HTTPS</text>
         </g>
-        <g data-edge-from="access-hal" data-edge-to="tunnel-hal" data-edge-label="signed in" data-edge-key="10" data-edge-id="hal-lollo-admitted">
+        <g data-edge-from="access-hal" data-edge-to="tunnel-hal" data-edge-label="signed in" data-edge-key="10" data-edge-id="hal-lettuce-admitted">
           <rect x="549.4" y="453" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
           <text x="576" y="463" class="t-edge-security" font-size="8" text-anchor="middle">signed in</text>
         </g>
@@ -1358,7 +1358,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
 
 
-        <g data-edge-from="lollo-hal" data-edge-to="agents-hal" data-edge-label="chat" data-edge-key="14" data-edge-id="hal-lollo-agents">
+        <g data-edge-from="lettuce-hal" data-edge-to="agents-hal" data-edge-label="chat" data-edge-key="14" data-edge-id="hal-lettuce-agents">
           <rect x="1007" y="476" width="30" height="14" rx="3" class="c-mask"/>
           <text x="1022" y="486" class="t-edge-default" font-size="8" text-anchor="middle">chat</text>
         </g>
@@ -1379,12 +1379,12 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="security-group" data-composition-frame-label="Stack lollo-alfred">
-          <rect data-graph-role="structural-frame-label-mask" x="794" y="80" width="118" height="16" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="794" y="80" width="107.2" height="16" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="798" y="93" class="t-security" font-size="9" font-weight="600">Stack lollo-alfred</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="3" data-composition-frame-kind="security-group" data-composition-frame-label="Stack lollo-hal">
-          <rect data-graph-role="structural-frame-label-mask" x="794" y="400" width="101.8" height="16" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="794" y="400" width="91" height="16" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="798" y="413" class="t-security" font-size="9" font-weight="600">Stack lollo-hal</text>
         </g>
 

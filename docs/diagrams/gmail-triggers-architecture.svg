@@ -1127,7 +1127,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" x="880" y="610" class="t-primary" font-size="10.6" font-weight="600" text-anchor="middle">state/lollo/gmail-triggers</text>
+          <text data-node-label="" x="880" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">state/lollo/gmail-triggers</text>
         <text x="880" y="626" class="t-muted" font-size="8.6" text-anchor="middle">triggers.db: rules, request queue</text>
         </g>
 
@@ -1187,7 +1187,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
         <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Stack lollo-&lt;name&gt;: one Docker Compose project per person">
-          <rect data-graph-role="structural-frame-label-mask" x="424" y="18" width="377.70326120645154" height="18" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="424" y="18" width="365.23874387741927" height="18" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="428" y="32.38709777419355" class="t-cloud" font-size="10.387097774193547" font-weight="600">Stack lollo-&lt;name&gt;: one Docker Compose project per person</text>
         </g>
 

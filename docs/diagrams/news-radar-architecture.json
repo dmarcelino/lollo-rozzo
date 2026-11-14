@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "27e55f992e8bae65855edb05090f8482f08a8dd3"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     }
   },
   "components": [
@@ -144,13 +144,13 @@
         },
         {
           "path": "news-radar/src/lollo_news_radar/app.py",
-          "line": 296,
-          "end_line": 302,
+          "line": 349,
+          "end_line": 355,
           "label": "page, executor routes, /mcp"
         },
         {
           "path": "news-radar/src/lollo_news_radar/service.py",
-          "line": 423,
+          "line": 670,
           "label": "fire: a report only when something is new"
         }
       ]
@@ -225,7 +225,7 @@
       "sources": [
         {
           "path": "news-radar/src/lollo_news_radar/fetch.py",
-          "line": 95,
+          "line": 105,
           "label": "PublicOnlyBackend"
         }
       ]

@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "27e55f992e8bae65855edb05090f8482f08a8dd3"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     },
     "legend": {
       "entries": {
@@ -132,8 +132,8 @@
       "sources": [
         {
           "path": "landing/executor/run.mjs",
-          "line": 283,
-          "end_line": 301,
+          "line": 285,
+          "end_line": 303,
           "label": "Bearer token, no Origin"
         },
         {

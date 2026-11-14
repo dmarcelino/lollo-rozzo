@@ -1347,17 +1347,17 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
         <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="LOLLO_HOME: the lolloctl image, or a clone">
-          <rect data-graph-role="structural-frame-label-mask" x="474" y="18" width="287.7806727612903" height="18" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="474" y="18" width="263.6258316516129" height="18" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="478" y="32.064517129032254" class="t-cloud" font-size="10.064517129032257" font-weight="600">LOLLO_HOME: the lolloctl image, or a clone</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="LOLLO_DATA: /srv/lollo-rozzo, or a clone's data/">
-          <rect data-graph-role="structural-frame-label-mask" x="534" y="398" width="330.05164470322575" height="18" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="534" y="398" width="299.858093316129" height="18" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="538" y="412.06451712903225" class="t-cloud" font-size="10.064517129032257" font-weight="600">LOLLO_DATA: /srv/lollo-rozzo, or a clone's data/</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="security-group" data-composition-frame-label="Stack lollo-&lt;name&gt;">
-          <rect data-graph-role="structural-frame-label-mask" x="1324" y="198" width="130.77420554838707" height="18" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="1324" y="198" width="118.69678499354838" height="18" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="1328" y="212.06451712903225" class="t-security" font-size="10.064517129032257" font-weight="600">Stack lollo-&lt;name&gt;</text>
         </g>
 

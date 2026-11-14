@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "27e55f992e8bae65855edb05090f8482f08a8dd3"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     }
   },
   "components": [
@@ -181,7 +181,7 @@
         },
         {
           "path": "news-radar/src/lollo_news_radar/app.py",
-          "line": 299,
+          "line": 352,
           "label": "news-radar's queue"
         }
       ]
@@ -230,14 +230,14 @@
         },
         {
           "path": "landing/executor/run.mjs",
-          "line": 504,
-          "end_line": 559,
+          "line": 508,
+          "end_line": 563,
           "label": "run order"
         },
         {
           "path": "landing/executor/run.mjs",
-          "line": 283,
-          "end_line": 300,
+          "line": 285,
+          "end_line": 302,
           "label": "bearer token calls"
         }
       ]
@@ -264,8 +264,8 @@
         },
         {
           "path": "landing/executor/run.mjs",
-          "line": 156,
-          "end_line": 166,
+          "line": 158,
+          "end_line": 168,
           "label": "readToken"
         }
       ]
@@ -286,20 +286,20 @@
       "sources": [
         {
           "path": "landing/executor/run.mjs",
-          "line": 196,
-          "end_line": 249,
+          "line": 198,
+          "end_line": 251,
           "label": "argv, no shell"
         },
         {
           "path": "landing/executor/run.mjs",
-          "line": 422,
-          "end_line": 452,
+          "line": 426,
+          "end_line": 456,
           "label": "cron add --once"
         },
         {
           "path": "landing/executor/run.mjs",
-          "line": 458,
-          "end_line": 480,
+          "line": 462,
+          "end_line": 484,
           "label": "agents list"
         }
       ]

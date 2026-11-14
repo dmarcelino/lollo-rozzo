@@ -1455,7 +1455,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="1115" y="685" class="t-muted" font-size="9" text-anchor="middle">lollo-doc-tools-*</text>
         </g>
 
-        <g id="node-lollo" data-node-id="lollo" data-node-label="landing" tabindex="0" role="button" aria-label="Focus lollo, / landing page, lollo host" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="/ landing page" data-node-context="lollo host">
+        <g id="node-lollo" data-node-id="lollo" data-node-label="landing" tabindex="0" role="button" aria-label="Focus landing, / landing page, lollo host" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="/ landing page" data-node-context="lollo host">
           <title>landing · / landing page · lollo host</title>
           <rect x="560" y="260" width="170" height="62" rx="8" class="c-mask"/>
           <rect x="560" y="260" width="170" height="62" rx="8" class="c-frontend" data-animate="node" style="--step: 6; --flow-node-name: archify-relay-node-5;" stroke-width="1.5"/>
@@ -1651,7 +1651,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="region" data-composition-frame-label="lollo host">
-          <rect data-graph-role="structural-frame-label-mask" x="550" y="240" width="69.4" height="16" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="550" y="240" width="64" height="16" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="554" y="253" class="t-cloud" font-size="9" font-weight="600">lollo host</text>
         </g>
 

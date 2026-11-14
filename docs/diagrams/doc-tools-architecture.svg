@@ -1128,16 +1128,16 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <text x="857.5" y="62" class="t-edge-emphasis" font-size="8" text-anchor="middle">untar, then marker</text>
         </g>
         <g data-edge-from="volume" data-edge-to="servers" data-edge-label="read-only at /opt/lollo-doc-tools" data-edge-key="3">
-          <rect x="846" y="170" width="178" height="14" rx="3" class="c-mask"/>
-          <text x="935" y="180" class="t-edge-emphasis" font-size="8" text-anchor="middle">read-only at /opt/lollo-doc-tools</text>
+          <rect x="855.5999999999999" y="170" width="168.4" height="14" rx="3" class="c-mask"/>
+          <text x="939.8" y="180" class="t-edge-emphasis" font-size="8" text-anchor="middle">read-only at /opt/lollo-doc-tools</text>
         </g>
         <g data-edge-from="app" data-edge-to="servers" data-edge-label="letta mcp call" data-edge-key="4">
           <rect x="811.4" y="262" width="77.2" height="14" rx="3" class="c-mask"/>
           <text x="850" y="272" class="t-edge-emphasis" font-size="8" text-anchor="middle">letta mcp call</text>
         </g>
         <g data-edge-from="servers" data-edge-to="gotenberg" data-edge-label="pdf uploads, lollo-doc-tools-&lt;name&gt;" data-edge-key="5">
-          <rect x="836.4000000000001" y="385" width="187.6" height="14" rx="3" class="c-mask"/>
-          <text x="930.2" y="395" class="t-edge-security" font-size="8" text-anchor="middle">pdf uploads, lollo-doc-tools-&lt;name&gt;</text>
+          <rect x="846" y="385" width="178" height="14" rx="3" class="c-mask"/>
+          <text x="935" y="395" class="t-edge-security" font-size="8" text-anchor="middle">pdf uploads, lollo-doc-tools-&lt;name&gt;</text>
         </g>
         <g data-edge-from="ctl" data-edge-to="bff" data-edge-label="restart --no-deps" data-edge-key="6">
           <rect x="244.2" y="269" width="91.6" height="14" rx="3" class="c-mask"/>
@@ -1164,7 +1164,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="region" data-composition-frame-label="lollo_shared (one per host)">
-          <rect data-graph-role="structural-frame-label-mask" x="918" y="450" width="166.6" height="16" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="918" y="450" width="155.79999999999998" height="16" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="922" y="463" class="t-cloud" font-size="9" font-weight="600">lollo_shared (one per host)</text>
         </g>
 

@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "27e55f992e8bae65855edb05090f8482f08a8dd3"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     }
   },
   "components": [
@@ -326,7 +326,7 @@
         {
           "path": "agent-skills/news-radar-sources/SKILL.md",
           "line": 8,
-          "end_line": 23,
+          "end_line": 24,
           "label": "the News Radar server, through the wrapper"
         }
       ]
@@ -347,8 +347,8 @@
       "sources": [
         {
           "path": "news-radar/src/lollo_news_radar/app.py",
-          "line": 253,
-          "end_line": 264,
+          "line": 306,
+          "end_line": 317,
           "label": "internal /mcp only"
         }
       ]

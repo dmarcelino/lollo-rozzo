@@ -10,19 +10,19 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "c9d5094283236533ca0c8bdd6b405640ea5dab5a"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     }
   },
   "participants": [
     { "id": "you", "type": "external", "icon": "person", "label": "You", "sublabel": "in Lettuce" },
     { "id": "agent", "type": "backend", "label": "Your agent", "sublabel": "working-with-documents skill",
-      "sources": [{ "path": "docs/doc-tools.md", "line": 104, "end_line": 110, "label": "what agents do with it" }] },
+      "sources": [{ "path": "docs/doc-tools.md", "line": 27, "end_line": 34, "label": "what agents do with it" }] },
     { "id": "tools", "type": "backend", "label": "office / pdf", "sublabel": "started for each call",
       "sources": [{ "path": "docs/doc-tools.md", "line": 3, "end_line": 17, "label": "the two MCP servers" }] },
     { "id": "workspace", "type": "database", "label": "Agent's workspace", "sublabel": "/work/<agent-id>",
-      "sources": [{ "path": "docs/doc-tools.md", "line": 131, "end_line": 136, "label": "confined to the workspace" }] },
+      "sources": [{ "path": "docs/doc-tools.md", "line": 185, "end_line": 190, "label": "confined to the workspace" }] },
     { "id": "gotenberg", "type": "cloud", "label": "Gotenberg", "sublabel": "one per host, no way out",
-      "sources": [{ "path": "docs/doc-tools.md", "line": 141, "end_line": 148, "label": "sees only uploads" }] }
+      "sources": [{ "path": "docs/doc-tools.md", "line": 195, "end_line": 202, "label": "sees only uploads" }] }
   ],
   "segments": [
     { "from": 155, "to": 260, "label": "Create" },

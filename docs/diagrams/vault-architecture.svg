@@ -1142,7 +1142,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="545" y="345" class="t-muted" font-size="9" text-anchor="middle">routes by host + path</text>
         </g>
 
-        <g id="node-lollo" data-node-id="lollo" data-node-label="landing" tabindex="0" role="button" aria-label="Focus lollo, landing page, links /vault/, Compose project lollo-&lt;name&gt; (one per person)" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="landing page, links /vault/" data-node-context="Compose project lollo-&lt;name&gt; (one per person)">
+        <g id="node-lollo" data-node-id="lollo" data-node-label="landing" tabindex="0" role="button" aria-label="Focus landing, landing page, links /vault/, Compose project lollo-&lt;name&gt; (one per person)" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="landing page, links /vault/" data-node-context="Compose project lollo-&lt;name&gt; (one per person)">
           <title>landing · landing page, links /vault/ · Compose project lollo-&lt;name&gt; (one per person)</title>
           <rect x="470" y="130" width="150" height="62" rx="8" class="c-mask"/>
           <rect x="470" y="130" width="150" height="62" rx="8" class="c-frontend" data-animate="node" style="--step: 3; --flow-node-name: archify-relay-node-3;" stroke-width="1.5"/>
@@ -1238,7 +1238,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <text x="435" y="321" class="t-edge-emphasis" font-size="8" text-anchor="middle">tunnel</text>
         </g>
         <g data-edge-from="cloudflared" data-edge-to="lollo" data-edge-label="lollo host /" data-edge-key="2">
-          <rect x="508.8" y="280" width="72.4" height="14" rx="3" class="c-mask"/>
+          <rect x="511.2" y="280" width="67.6" height="14" rx="3" class="c-mask"/>
           <text x="545" y="290" class="t-edge-default" font-size="8" text-anchor="middle">lollo host /</text>
         </g>
         <g data-edge-from="cloudflared" data-edge-to="bff" data-edge-label="Lettuce host + Lettuce JWT" data-edge-key="3">
@@ -1246,8 +1246,8 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <text x="672.6" y="257" class="t-edge-default" font-size="8" text-anchor="middle">Lettuce host + Lettuce JWT</text>
         </g>
         <g data-edge-from="cloudflared" data-edge-to="vault" data-edge-label="lollo host /vault/ + lollo JWT" data-edge-key="4">
-          <rect x="368.4" y="409" width="163.6" height="14" rx="3" class="c-mask"/>
-          <text x="450.2" y="419" class="t-edge-security" font-size="8" text-anchor="middle">lollo host /vault/ + lollo JWT</text>
+          <rect x="378" y="409" width="154" height="14" rx="3" class="c-mask"/>
+          <text x="455" y="419" class="t-edge-security" font-size="8" text-anchor="middle">lollo host /vault/ + lollo JWT</text>
         </g>
         <g data-edge-from="bff" data-edge-to="appserver" data-edge-label="WebSocket 127.0.0.1:4500" data-edge-key="5">
           <rect x="912.4" y="141" width="125.19999999999999" height="14" rx="3" class="c-mask"/>
@@ -1258,7 +1258,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <text x="975" y="86" class="t-edge-default" font-size="8" text-anchor="middle">mcp_call (vault tool)</text>
         </g>
         <g data-edge-from="bff" data-edge-to="vault" data-edge-label="POST /mcp, Host lollo-vault" data-edge-key="7">
-          <rect x="645.3" y="467" width="144.4" height="14" rx="3" class="c-mask"/>
+          <rect x="647.7" y="467" width="139.6" height="14" rx="3" class="c-mask"/>
           <text x="717.5" y="477" class="t-edge-default" font-size="8" text-anchor="middle">POST /mcp, Host lollo-vault</text>
         </g>
         <g data-edge-from="appserver" data-edge-to="vaultrun" data-edge-label="agent shell runs" data-edge-key="8">
@@ -1293,7 +1293,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="Compose project lollo-&lt;name&gt; (one per person)">
-          <rect data-graph-role="structural-frame-label-mask" x="448" y="110" width="263.79999999999995" height="16" rx="3" class="c-mask"/>
+          <rect data-graph-role="structural-frame-label-mask" x="448" y="110" width="253" height="16" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="452" y="123" class="t-cloud" font-size="9" font-weight="600">Compose project lollo-&lt;name&gt; (one per person)</text>
         </g>
 

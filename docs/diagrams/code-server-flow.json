@@ -10,26 +10,26 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "c9d5094283236533ca0c8bdd6b405640ea5dab5a"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     }
   },
   "components": [
     { "id": "browser", "type": "external", "icon": "person", "label": "Your browser", "sublabel": "<lollo>/code-server/", "pos": [40, 150], "size": [140, 62],
-      "sources": [{ "path": "docs/code-server.md", "line": 17, "end_line": 30, "label": "using the editor" }] },
+      "sources": [{ "path": "docs/code-server.md", "line": 11, "end_line": 24, "label": "using the editor" }] },
     { "id": "access", "type": "security", "label": "Cloudflare Access", "sublabel": "the lollo's sign-in", "pos": [250, 150], "size": [150, 62],
-      "sources": [{ "path": "docs/code-server.md", "line": 50, "label": "the gate is the only way in" }] },
+      "sources": [{ "path": "docs/code-server.md", "line": 42, "label": "the gate is the only way in" }] },
     { "id": "gate", "type": "security", "label": "Gate", "sublabel": "checks every request", "pos": [490, 150], "size": [150, 62],
-      "sources": [{ "path": "docs/code-server.md", "line": 50, "label": "sign-in on every request" }] },
+      "sources": [{ "path": "docs/code-server.md", "line": 42, "label": "sign-in on every request" }] },
     { "id": "editor", "type": "frontend", "label": "Editor (VS Code)", "sublabel": "Restricted Mode: runs nothing", "pos": [740, 150], "size": [180, 62],
-      "sources": [{ "path": "docs/code-server.md", "line": 45, "end_line": 46, "label": "never trusts a workspace" }] },
+      "sources": [{ "path": "docs/code-server.md", "line": 38, "end_line": 38, "label": "never trusts a workspace" }] },
     { "id": "shell", "type": "backend", "label": "Shell", "sublabel": "terminals and git", "pos": [1010, 150], "size": [150, 62],
-      "sources": [{ "path": "docs/code-server.md", "line": 47, "end_line": 49, "label": "git and terminals run here" }] },
+      "sources": [{ "path": "docs/code-server.md", "line": 40, "end_line": 40, "label": "git and terminals run here" }] },
     { "id": "internet", "type": "external", "label": "Internet", "sublabel": "direct, not through pipelock", "pos": [1000, 20], "size": [170, 62],
-      "sources": [{ "path": "docs/code-server.md", "line": 49, "label": "reaches the internet directly" }] },
+      "sources": [{ "path": "docs/code-server.md", "line": 41, "label": "reaches the internet directly" }] },
     { "id": "workspaces", "type": "database", "label": "Workspaces", "sublabel": "/work/<agent-id>", "pos": [740, 310], "size": [180, 62],
-      "sources": [{ "path": "docs/code-server.md", "line": 22, "label": "the agents' folders" }] },
+      "sources": [{ "path": "docs/code-server.md", "line": 16, "label": "the agents' folders" }] },
     { "id": "agents", "type": "backend", "label": "Your agents", "sublabel": "write the workspaces", "pos": [490, 310], "size": [150, 62],
-      "sources": [{ "path": "docs/code-server.md", "line": 20, "label": "agents write these folders" }] }
+      "sources": [{ "path": "docs/code-server.md", "line": 14, "label": "agents write these folders" }] }
   ],
   "connections": [
     { "id": "open", "from": "browser", "to": "access", "label": "HTTPS", "variant": "emphasis" },
