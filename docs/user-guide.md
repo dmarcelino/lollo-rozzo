@@ -1,11 +1,11 @@
-# Your Lettuce stack
+# Your stack
 
-This page is for you if someone runs lollo-rozzo and has given you a stack. It covers what you get, how to sign in and where to start. Whoever runs the server is called the *admin* below.
+This page is for you if someone runs Lollo Rozzo and has given you a stack: your own AI agents, with memory, that learn and improve over time. It covers what you get, how to sign in and where to start. Whoever runs the server is called the *admin* below.
 
 ## What you get
-- **Your own agent server.** Letta agents with their own memory, conversations, workspaces and secrets. Nobody else's agents can reach yours, and yours can't reach theirs.
+- **Your own agents**, on a private agent server: [Letta Code](https://github.com/letta-ai/letta-code) agents with their own memory, conversations, workspaces and secrets. They remember what you tell them and improve over time by rewriting their own memory and skills. Nobody else's agents can reach yours, and yours can't reach theirs.
 - **Lettuce**, the web app for talking to your agents, at `https://<name>.<domain>`. It is a PWA: on a phone, add it to the Home Screen.
-- **Your lollo** at `https://<name>-lollo.<domain>/`, when the admin has turned on any of its pages. Its home page links to each one that is on:
+- **Your lollo**, the extras' pages, at `https://<name>-lollo.<domain>/`, when the admin has turned on any of them. Its home page links to each one that is on:
 
   | Page | What it does | Guide |
   |---|---|---|

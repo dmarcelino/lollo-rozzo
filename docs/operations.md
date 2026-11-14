@@ -150,7 +150,7 @@ lolloctl version                    # this release, and the Lettuce tag it was t
 lolloctl self-upgrade vX.Y.Z        # fetch that release's wrapper, pull its image, swap, then up all
 /srv/lollo-rozzo/bin/lolloctl.previous version   # the previous release, kept to go back to
 ```
-`self-upgrade` checks the new wrapper against its release's `SHA256SUMS` and pulls its image before it replaces anything, so a typo or a failed download leaves the install as it was. It then moves Lettuce forward to the tag the new release was tested with, never back. To go back, run `bin/lolloctl.previous`, or move it to `bin/lolloctl`. To check where a wrapper comes from: `gh attestation verify /srv/lollo-rozzo/bin/lolloctl --repo <owner>/lollo-rozzo`.
+`self-upgrade` checks the new wrapper against its release's `SHA256SUMS` and pulls its image before it replaces anything, so a typo or a failed download leaves the install as it was. It then moves Lettuce forward to the tag the new release was tested with, never back. To go back, run `bin/lolloctl.previous`, or move it to `bin/lolloctl`. To check where a wrapper comes from: `gh attestation verify /srv/lollo-rozzo/bin/lolloctl --repo dmarcelino/lollo-rozzo`.
 
 In release mode, `toolbox` sees your home read-only, plus your toolbox file and Claude Code config (`CLAUDE_CONFIG_DIR`) wherever they are; a `mount` line in the toolbox file must name something under your home. The toolbox file's `secret` commands run on the host, in the wrapper, which first checks that the file is yours and that nobody else can write it.
 
