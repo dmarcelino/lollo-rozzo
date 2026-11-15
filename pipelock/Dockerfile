@@ -4,8 +4,8 @@
 # enterprise/ tree. Built by lolloctl; needs no build context beyond this dir.
 FROM golang:1.27.2-bookworm AS build
 # A tag can be moved; the commit it pointed to when we pinned it cannot.
-ARG PIPELOCK_VERSION=3.6.0
-ARG PIPELOCK_COMMIT=3e868ac5d5b62d3a2790958542171143af8a0e38
+ARG PIPELOCK_VERSION=3.8.0
+ARG PIPELOCK_COMMIT=556048c1c18d84f7d61d28f686220178a4ff2c4d
 WORKDIR /src
 RUN git clone --quiet --depth 1 --branch "v${PIPELOCK_VERSION}" \
       https://github.com/pipelab-org/pipelock.git . \
