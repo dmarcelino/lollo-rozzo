@@ -56,7 +56,7 @@ It has no script (its CSP allows none), touches no other sidecar and opens no co
 
 ```bash
 tests/run-sidecar.sh landing                      # the landing page and its executor API (pytest), plus the executor's tests
-                                                 # (node --test in node:22.22.0-slim) when no args are given
+                                                 # (node --test in `tests/run-sidecar.sh`'s `NODE_IMAGE`) when no args are given
 node --test 'landing/executor/tests/*.test.mjs'   # the executor's tests on the host
 ```
 
