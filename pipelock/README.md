@@ -45,7 +45,7 @@ tests/run.sh pipelock       # the CLI's checks and wiring (stubbed docker)
 tests/run.sh receipts
 shellcheck -x pipelock/entrypoint.sh
 ```
-`tests/run-pipelock.sh` runs the image with this `pipelock.yaml` plus a `trusted_domains` entry on an internal Docker network, and checks that a clean page passes, a page with prompt injection and a private address get a 403, the injection's receipt is a signed block, and the chain verifies. `up` rebuilds the image after a change to this directory.
+`tests/run-pipelock.sh` runs the image with this `pipelock.yaml` plus a `trusted_domains` entry on an internal Docker network, and checks that a clean page passes, a page with prompt injection and a private address get a 403, the injection's receipt is a signed block, the live chain verifies as a prefix (what `receipts` checks), and once pipelock stops the whole chain verifies with its end sealed. `up` rebuilds the image after a change to this directory.
 
 ## Upstream seams
 Listed in [CONTRIBUTING.md](../CONTRIBUTING.md#upstream-seams), under `compose/pipelock-proxy.yml`:

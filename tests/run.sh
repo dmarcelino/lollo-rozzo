@@ -2822,7 +2822,7 @@ test_receipts_verifies_and_lists_sessions_newest_first() {
   receipt_files
   ctl receipts alfred
   ok_rc
-  log_has "$PIPELOCK_RUN --entrypoint pipelock lollo-pipelock:local verify-receipt --whole-recorder --chain /data/evidence --key /data/keys/receipt-signing.json.pub"
+  log_has "$PIPELOCK_RUN --entrypoint pipelock lollo-pipelock:local verify-receipt --whole-recorder --chain /data/evidence --key /data/keys/receipt-signing.json.pub --allow-prefix"
   eq "$(grep -o 'proxy\.run\.[ab]$' "$OUT" | paste -sd' ')" "proxy.run.b proxy.run.a"
 }
 
