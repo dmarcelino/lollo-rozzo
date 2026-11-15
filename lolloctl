@@ -1952,13 +1952,16 @@ pipelock_run() {
 }
 
 # receipts_verify NAME -> verifies every receipt and prints pipelock's report.
+# A run pipelock has not sealed yet (it is running, or was killed) has no
+# proven end, so --allow-prefix accepts a valid prefix; the report still
+# labels it VALID PREFIX, END UNPROVEN.
 # pipelock refuses a file that changes while it reads it, which a running
 # pipelock does with every request, so a failure is retried twice.
 receipts_verify() {
   local name=$1 out i
   for i in 1 2 3; do
     ((i == 1)) || sleep 1
-    if out=$(pipelock_run pipelock verify-receipt --whole-recorder --chain /data/evidence --key "$PIPELOCK_KEY_PUB" 2>&1); then
+    if out=$(pipelock_run pipelock verify-receipt --whole-recorder --chain /data/evidence --key "$PIPELOCK_KEY_PUB" --allow-prefix 2>&1); then
       printf '%s\n' "$out"
       return 0
     fi

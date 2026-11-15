@@ -85,6 +85,10 @@ Pipelock refuses to verify a file that changes while it reads it, which a runnin
 does with every request, so `receipts` tries three times. If it still fails while pipelock is
 running, retry when the stack is quiet, or after `lolloctl down alfred`.
 
+Pipelock seals a session when it stops. The running session, and any session whose pipelock
+was killed rather than stopped, has no seal: `receipts` verifies it as far as it goes and labels
+it `VALID PREFIX, END UNPROVEN`, since receipts lost at its end could not be noticed.
+
 Each start of pipelock is a session. The report shows each decision with its time, destination
 and reason, and checks the signatures against the stack's public key. Both run in a one-off
 container with no network and the receipts mounted read-only. Reports name every site the
