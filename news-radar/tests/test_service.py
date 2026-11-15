@@ -138,6 +138,8 @@ async def test_a_report_carries_new_items_once(service, web, store, clock):
     assert request["name"] == "News Radar: at 09:00, Monday to Friday"
     assert "The Long Night" in request["prompt"] and "untrusted" in request["prompt"]
     assert len(request["prompt"]) <= MAX_PROMPT
+    # Rows not worth telling make the agent propose a filter change and ask before saving it.
+    assert "ask the person" in request["prompt"] and "only once they agree" in request["prompt"]
     # Still on its way: the next fire queues nothing.
     assert fire_at(service, "2027-01-18T09:00") == []
     assert store.finish(rid, True, "task-1", "")
@@ -803,6 +805,84 @@ async def test_monitors_take_up_to_sixty_terms(service, web):
     service.monitor_put(AGENT, "many", ["city-agenda"], include=[f"t{i}" for i in range(60)])
     with pytest.raises(ToolError, match="at most 60"):
         service.monitor_put(AGENT, "many", ["city-agenda"], include=[f"t{i}" for i in range(61)])
+
+
+# -- warnings about loose filters ------------------------------------------------------------
+LIVE_TITLES = [
+    "Jazz live at the pier",
+    "Live: the quartet",
+    "Live strings",
+    "Live in the park",
+    "Choir live",
+    "Live opera night",
+    "The Example Band announces a tour",
+]
+
+
+def warnings_of(service, sources=("city-agenda",), **filters):
+    return service.monitor_preview(AGENT, "x", sources=list(sources), **filters).get("warnings", [])
+
+
+async def test_a_preview_warns_about_an_include_term_that_lets_most_through(service, web):
+    await add_titles(service, web, titles=LIVE_TITLES)
+    [warning] = warnings_of(service, include=["live", "The Example Band"])
+    assert '"live" alone lets through 6 of the 7 rows' in warning and "Example Band" not in warning
+    assert warnings_of(service, include=["live"]) == []  # the only term: all it finds is its own
+
+
+async def test_a_loose_term_needs_enough_rows_to_warn(service, web):
+    await add_titles(service, web, titles=[*LIVE_TITLES[:4], LIVE_TITLES[-1]])
+    assert warnings_of(service, include=["live", "The Example Band"]) == []
+
+
+async def test_terms_that_share_what_passes_evenly_do_not_warn(service, web):
+    titles = [f"Radiohead in {c}" for c in "ABC"] + [f"Bjork night {c}" for c in "ABC"]
+    await add_titles(service, web, titles=titles)
+    assert warnings_of(service, include=["Radiohead", "Bjork"]) == []
+
+
+async def test_a_loose_term_is_judged_on_report_rows_not_listings(service, web):
+    # One film in six sessions is one row: its name is not a loose term.
+    items = [{"name": "Dune", "date": f"2027-02-0{d}", "link": f"/d/{d}"} for d in range(1, 7)]
+    items.append({"name": "A Nolan night", "date": "2027-02-08", "link": "/n"})
+    await add_source(service, web, body=json.dumps({"data": {"list": {"items": items}}}), group_by="title")
+    await service.fetch_source("city-agenda")
+    assert warnings_of(service, include=["Dune", "Nolan"]) == []
+
+
+NEWS_URL = "https://news.example.org/api/stories"
+
+
+async def add_articles(service, web):
+    items = [{"name": f"Story {i}", "link": f"/s/{i}"} for i in range(3)]
+    web.add(NEWS_URL, json.dumps({"data": {"list": {"items": items}}}), "application/json")
+    spec = json_spec(name="city-news", url=NEWS_URL, item_kind="article")
+    assert (await service.source_test(spec))["passed"]
+    service.source_put(spec)
+    await service.fetch_source("city-news")
+
+
+async def test_a_preview_warns_about_articles_in_an_events_monitor(service, web):
+    await add_titles(service, web)
+    await add_articles(service, web)
+    [warning] = warnings_of(service, sources=["city-agenda", "city-news"])
+    assert "3 article(s) from city-news pass" in warning and "days_ahead and where" in warning
+    assert warnings_of(service, sources=["city-agenda", "city-news"], include=["tool"]) == []  # none passes
+    assert warnings_of(service, sources=["city-agenda", "city-news"], news=True) == []
+    assert warnings_of(service, sources=["city-news"]) == []
+    assert len(warnings_of(service, sources=["city-news"], days_ahead=30)) == 1
+
+
+async def test_monitor_put_returns_the_warnings_and_still_saves(service, web):
+    await add_titles(service, web)
+    await add_articles(service, web)
+    out = service.monitor_put(AGENT, "mixed", ["city-agenda", "city-news"], schedule="0 9 * * *")
+    assert out["saved"] == "mixed" and "article(s) from city-news" in out["warnings"][0]
+    assert "warnings" in out["next"]
+    clean = service.monitor_put(AGENT, "plain", ["city-agenda"], schedule="0 9 * * *")
+    assert "warnings" not in clean and "warnings" not in clean["next"]
+    saved = service.monitor_preview(AGENT, "mixed")
+    assert saved["warnings"] == out["warnings"]
 
 
 def test_a_store_from_before_where_gains_the_column(settings, clock):

@@ -34,13 +34,23 @@ from .config import (
     Settings,
 )
 from .cron import Schedule, ScheduleError, max_fires_per_day
-from .digest import MonitorDigest, considered_since, group_value, monitor_digest, more, render, term_counts
+from .digest import (
+    MonitorDigest,
+    considered,
+    considered_since,
+    filter_warnings,
+    group_value,
+    monitor_digest,
+    more,
+    render,
+    term_counts,
+)
 from .extract import fill_rates, run_problem, window_warning
 from .fetch import Fetcher
 from .inspect import inspect
 from .runner import RunResult, run_source
 from .spec import Spec, SpecError, parse_spec
-from .store import QUEUED, Monitor, Report, Store, new_report_id
+from .store import QUEUED, Monitor, Report, Store, StoredItem, new_report_id
 
 log = logging.getLogger("lollo_news_radar.service")
 
@@ -453,6 +463,10 @@ class Service:
             "next": "show the person monitor_preview, and tell them the schedule and where reports go, in words; "
             "they can change where reports go on the News Radar page",
         }
+        warnings = filter_warnings(*self._draft_view(stored, now), stored, self.store.source_specs())
+        if warnings:
+            out["warnings"] = warnings
+            out["next"] += ". Fix what warnings says, or tell the person why not"
         if from_now:
             at = self._local(now)
             out["from_now"] = (
@@ -524,8 +538,14 @@ class Service:
         states = self.store.source_states()
         skipped = 0
         # What each term does is told on the items the sources hold now, even when
-        # from_now leaves them out: otherwise every term finds nothing.
-        terms = term_counts(self.store, m, now, self.settings.tz)
+        # from_now leaves them out: otherwise every term finds nothing. A draft, or a
+        # monitor that delivered nothing lately, considers what warnings are judged on.
+        wide = self._draft_view(m, now)
+        if considered_since(m, now) == now - CARRY_SECONDS:
+            terms = term_counts(*wide, m)
+        else:
+            terms = term_counts(*considered(self.store, m, now, self.settings.tz), m)
+        warnings = filter_warnings(*wide, m, self.store.source_specs())
         if from_now:
             before = monitor_digest(self.store, m, now, self.settings.tz, states)
             skipped = len(before.rows) + before.left_out
@@ -541,6 +561,8 @@ class Service:
             "needs_repair": [{"source": a.source, "reason": a.reason} for a in d.alerts],
             "terms": terms,
         }
+        if warnings:
+            out["warnings"] = warnings
         if from_now:
             out["existing_skipped"] = skipped
         if since is not None:
@@ -572,6 +594,11 @@ class Service:
             notes.append("sources are fetched within a minute of source_put: preview again then")
         out["note"] = "; ".join(notes)
         return out
+
+    def _draft_view(self, m: Monitor, now: int) -> tuple[list[StoredItem], date]:
+        """What a draft of the monitor considers, whatever it delivered: the items
+        filter warnings are judged on."""
+        return considered(self.store, dataclasses.replace(m, delivered_upto=0), now, self.settings.tz)
 
     def _local(self, ts: int) -> datetime:
         """A timestamp in the stack's timezone, the one people and schedules use."""

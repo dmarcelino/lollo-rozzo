@@ -140,7 +140,8 @@ def build_server(service: Service) -> MCPServer:
         "venue are kept. days_ahead: only events starting within that many days. from_now: true to report only what "
         "the sources list or change from now on, not what they already hold (for 'tell me about new announcements'); "
         "refused until every source has been fetched once (not_fetched_yet). news: true to group articles into stories "
-        "by how many outlets carry them. Preview it as a draft with monitor_preview first.",
+        "by how many outlets carry them. Preview it as a draft with monitor_preview first. warnings: filters that let "
+        "too much through, as monitor_preview gives them; saving goes ahead.",
         annotations=ToolAnnotations(title="Save a monitor", read_only_hint=False, open_world_hint=False),
     )
     async def monitor_put(
@@ -194,6 +195,8 @@ def build_server(service: Service) -> MCPServer:
         "saving nothing: test a filter before monitor_put. A draft's rows are what its first report would hold; a row "
         "with also_in is one event other sources list too. terms says what each term did: items each include and where "
         "term finds, and items each exclude term removes, with examples; read it rather than trying term after term. "
+        "warnings: an include term that alone lets through most of the rows (a word too common to choose by), or "
+        "articles that pass in an events monitor, which days_ahead and where can't narrow. "
         "over_cap: more rows than a report holds. not_fetched_yet: sources whose items aren't in yet; preview again in "
         "a minute. existing_skipped (with from_now): rows left out as already there. A saved monitor's preview shows "
         "only what is new or changed since shows_since (its last report, or at most 7 days back), so an empty preview "

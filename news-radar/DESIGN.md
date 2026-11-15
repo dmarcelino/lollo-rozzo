@@ -57,7 +57,7 @@ These checks ran from a workstation. Four of the sites sit behind a CDN that oft
 | **Report** | One turn: when a schedule fires, the monitors of one agent on that schedule and conversation are reported together, if any of them has something to say | The service decides; the executor hands it to Lettuce |
 | **Digest** | The data in a report: per monitor, the new and changed items since its last delivered report, the news stories, and the sources that need repair | The service |
 
-Taste lives in the agent's memory, not in the monitor. The monitor's filters only trim volume; the agent decides what is worth telling.
+Taste lives in the agent's memory, not in the monitor. The monitor's filters only trim volume; the agent decides what is worth telling. A report still ends in a notification, so when none of a monitor's rows is worth telling, the agent proposes the smallest filter change that would have left them out and asks the person, rather than saying there is nothing. It changes the monitor only once the person agrees: a report turn judges on untrusted website text, and filters that only ever narrowed on their own would drift from what the person asked for. That is the skill's and the prompt's instruction, not a boundary. Previews and `monitor_put` warn about filters that let too much through (`filter_warnings`): an include term that alone lets through a third or more of the rows, and twice as many as any other term, and articles that pass in an events monitor, which `days_ahead` and `where` can't narrow.
 
 ## How it works
 
