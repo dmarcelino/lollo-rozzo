@@ -221,6 +221,10 @@ class StoredItem:
     last_seen: int
 
 
+def _stored_item(r: sqlite3.Row) -> StoredItem:
+    return StoredItem(r["source"], r["key"], json.loads(r["data"]), r["first_seen"], r["changed_at"], r["last_seen"])
+
+
 @dataclass(frozen=True)
 class Agent:
     id: str
@@ -381,9 +385,11 @@ class Store:
             reason = ""
             if error:
                 failures = state.failures + 1
+                # An error without an answer (a timeout, a challenge) keeps the last error's sample.
+                kept = sample or (state.sample if state.failures else "")
                 self._db.execute(
                     "UPDATE source_state SET last_run=?, failures=?, last_error=?, sample=? WHERE name=?",
-                    (now, failures, error, sample, name),
+                    (now, failures, error, kept, name),
                 )
                 if failures >= UNHEALTHY_FAILURES:
                     reason = f"{failures} failed runs in a row; the last: {error}"
@@ -465,10 +471,30 @@ class Store:
             f"SELECT * FROM items WHERE source IN ({marks}) AND changed_at > ? ORDER BY changed_at DESC, rowid DESC",
             (*sources, since),
         )
-        return [
-            StoredItem(r["source"], r["key"], json.loads(r["data"]), r["first_seen"], r["changed_at"], r["last_seen"])
-            for r in rows
-        ]
+        return [_stored_item(r) for r in rows]
+
+    def alert_delivered(self, monitor_id: str, source: str, since: int) -> bool:
+        """Whether a delivered report of this monitor carried this source's alert
+        since then (as long as reports are kept: REPORTS_KEEP_PER_GROUP)."""
+        row = self._db.execute(
+            "SELECT 1 FROM reports, json_each(reports.monitors) m, json_each(reports.alerted) a "
+            "WHERE reports.status = ? AND reports.at >= ? AND m.value = ? AND a.value = ? LIMIT 1",
+            (OK, since, monitor_id, source),
+        ).fetchone()
+        return row is not None
+
+    def items_starting_on(self, sources: Sequence[str], days: Sequence[str], seen_by: int) -> list[StoredItem]:
+        """The items of these sources that start on one of these days (YYYY-MM-DD)
+        and were first seen by then: what a monitor already had of those days."""
+        if not sources or not days:
+            return []
+        source_marks, day_marks = ",".join("?" * len(sources)), ",".join("?" * len(days))
+        rows = self._db.execute(
+            f"SELECT * FROM items WHERE source IN ({source_marks}) AND first_seen <= ? "
+            f"AND substr(json_extract(data, '$.start'), 1, 10) IN ({day_marks}) ORDER BY first_seen, rowid",
+            (*sources, seen_by, *days),
+        )
+        return [_stored_item(r) for r in rows]
 
     def count_items(self, source: str) -> int:
         return self._db.execute("SELECT COUNT(*) FROM items WHERE source = ?", (source,)).fetchone()[0]

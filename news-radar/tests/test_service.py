@@ -1163,3 +1163,188 @@ async def test_from_now_waits_for_a_source_fetched_long_ago(service, web, store,
     await service.fetch_source("city-agenda")
     out = service.monitor_put(AGENT, "news", ["city-agenda"], schedule="0 9 * * *", from_now=True)
     assert "from now" in out["from_now"]
+
+
+# -- events a monitor already had, and sources broken for days ---------------------------------
+async def known_setup(service, web, store, clock, first, later):
+    """A from_now monitor over city-agenda (listing `first`) and other, which then lists
+    `later`; the report's rows."""
+    await add_named(service, web, "city-agenda", URL, sessions_body(first))
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-03-01", "/o/old", "Hall A")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    web.add(URL2, sessions_body([("Old", "2027-03-01", "/o/old", "Hall A"), *later]), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    return {r["title"] + " " + r["when"]: r for r in service.digest_more(rid, 0)["rows"]}
+
+
+async def test_an_event_another_source_already_had_is_known(service, web, store, clock):
+    rows = await known_setup(
+        service,
+        web,
+        store,
+        clock,
+        [("Winter Concert", "2027-02-01T21:00", "/f/wc", "Opera House")],
+        [
+            ("Winter Concert", "2027-02-01T21:00", "/o/wc", "Ópera House"),
+            ("Spring Gig", "2027-02-05", "/o/sg", "Hall A"),
+        ],
+    )
+    known = rows["Winter Concert 2027-02-01T21:00"]
+    assert known["status"] == "known" and known["source"] == "other"
+    assert known["also_in"] == [{"source": "city-agenda", "url": "https://agenda.example.org/f/wc"}]
+    assert rows["Spring Gig 2027-02-05"]["status"] == "new"
+    assert "also_in" not in rows["Spring Gig 2027-02-05"]
+
+
+async def test_known_needs_the_same_event(service, web, store, clock):
+    rows = await known_setup(
+        service,
+        web,
+        store,
+        clock,
+        [("Gig", "2027-02-01T21:00", "/f/gig", "Hall A"), ("Talk", "2027-02-02", "/f/talk", "Hall A")],
+        [
+            ("Gig", "2027-02-01T18:00", "/o/gig", "Hall A"),  # another session
+            ("Gig", "2027-02-03T21:00", "/o/gig3", "Hall A"),  # another day
+            ("Talk", "2027-02-02", "/o/talk", "Hall B"),  # another venue
+        ],
+    )
+    assert sorted(rows) == ["Gig 2027-02-01T18:00", "Gig 2027-02-03T21:00", "Talk 2027-02-02"]
+    assert all(r["status"] == "new" and "also_in" not in r for r in rows.values())
+
+
+def needs_repair(prompt):
+    lines = prompt.splitlines()
+    return [json.loads(line.removeprefix("needs_repair ")) for line in lines if line.startswith("needs_repair ")]
+
+
+async def test_a_source_broken_for_days_is_asked_about_once(service, web, store, clock):
+    await add_named(service, web, "city-agenda", URL, events_body(["2027-02-01"]))
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-03-01", "/o/old", "Hall A")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    web.add(URL, "Payment required\n\nDEPLOYMENT_DISABLED", "text/plain", status=402)
+    out = await service.source_test(json_spec())
+    assert not out["passed"] and "DEPLOYMENT_DISABLED" in out["sample"]
+    for _ in range(3):
+        clock.t += 60
+        await service.fetch_source("city-agenda")
+    st = store.source_state("city-agenda")
+    assert st.last_error == "HTTP 402" and "DEPLOYMENT_DISABLED" in st.sample
+
+    def report():
+        rids = fire_at(service, "2027-01-15T09:00")
+        if not rids:
+            return None
+        [request] = store.claim(20)
+        store.finish(rids[0], True, "t", "")
+        return request["prompt"]
+
+    clock.t += 60
+    [first] = needs_repair(report())  # broken a few minutes: repair it
+    assert "broken_for_days" not in first and "already_asked" not in first
+    assert "DEPLOYMENT_DISABLED" in first["sample"]
+    clock.t += 3 * 86400
+    await service.fetch_source("city-agenda")
+    prompt = report()
+    [stuck] = needs_repair(prompt)  # three days: propose removing it from the monitor
+    assert stuck["broken_for_days"] == 3 and "already_asked" not in stuck
+    assert "propose removing it from the monitor" in prompt
+    clock.t += 86400
+    assert report() is None  # asked: never a report on its own again
+    later = [("Old", "2027-03-01", "/o/old", "Hall A"), ("New", "2027-03-02", "/o/new", "Hall A")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [asked] = needs_repair(report())  # rides along with something new
+    assert asked["already_asked"] is True and asked["broken_for_days"] == 4
+
+
+async def test_only_known_rows_start_no_turn(service, web, store, clock):
+    await add_named(service, web, "city-agenda", URL, sessions_body([("Gig", "2027-02-01T21:00", "/f/gig", "Hall")]))
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-03-01", "/o/old", "Hall A")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    later = [("Old", "2027-03-01", "/o/old", "Hall A"), ("Gig", "2027-02-01T21:00", "/o/gig", "Hall")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    assert fire_at(service, "2027-01-15T09:00") == []
+
+
+async def test_an_event_outside_the_window_when_first_seen_is_not_known(service, web, store, clock):
+    # T0 is 2027-01-15: 30 days out, past days_ahead, so the first listing was never reported.
+    await add_named(service, web, "city-agenda", URL, sessions_body([("Gig", "2027-02-14T21:00", "/f/gig", "Hall")]))
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-02-20", "/o/old", "Hall A")]))
+    service.monitor_put(
+        AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", days_ahead=7, from_now=True
+    )
+    clock.t += 25 * 86400
+    later = [("Old", "2027-02-20", "/o/old", "Hall A"), ("Gig", "2027-02-14T21:00", "/o/gig", "Hall")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    [row] = service.digest_more(rid, 0)["rows"]
+    assert row["title"] == "Gig" and row["status"] == "new"
+
+
+async def test_a_row_holding_an_earlier_listing_is_not_known_by_it(service, web, store, clock):
+    spec = json_spec(group_by="title")
+    web.add(URL, sessions_body([("Play", "2027-02-01T21:00", "/p/1", "Hall")]), "application/json")
+    assert (await service.source_test(spec))["passed"]
+    service.source_put(spec)
+    await service.fetch_source("city-agenda")
+    service.monitor_put(AGENT, "shows", ["city-agenda"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    sessions = [("Play", "2027-02-01T21:00", "/p/1", "Hall"), ("Play", "2027-02-08T21:00", "/p/2", "Hall")]
+    web.add(URL, sessions_body(sessions), "application/json")
+    await service.fetch_source("city-agenda")  # a new session
+    clock.t += 7 * 3600
+    sessions[0] = ("Play", "2027-02-01T21:00", "/p/1", "Main Hall")
+    web.add(URL, sessions_body(sessions), "application/json")
+    await service.fetch_source("city-agenda")  # the first one changes, and leads the row
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    [row] = service.digest_more(rid, 0)["rows"]
+    assert row["when"].startswith("2027-02-01") and row["status"] == "new"
+
+
+async def test_asking_about_a_shared_source_is_per_monitor(service, web, store, clock):
+    await add_named(service, web, "city-agenda", URL, events_body(["2027-02-01"]))
+    service.monitor_put(AGENT, "a", ["city-agenda"], schedule="0 9 * * *", from_now=True)
+    service.monitor_put(OTHER_AGENT, "b", ["city-agenda"], schedule="0 10 * * *", from_now=True)
+    web.add(URL, "Payment required", "text/plain", status=402)
+    for _ in range(3):
+        clock.t += 60
+        await service.fetch_source("city-agenda")
+    clock.t += 3 * 86400
+
+    def report(minute):
+        rids = fire_at(service, f"2027-01-15T{minute}")
+        if not rids:
+            return None
+        [request] = store.claim(20)
+        store.finish(rids[0], True, "t", "")
+        return needs_repair(request["prompt"])
+
+    assert "already_asked" not in report("09:00")[0]  # a asks
+    clock.t += 3600
+    assert report("10:00") is None  # b: told an hour ago, nothing new
+    clock.t += 86400
+    assert report("09:00") is None  # a: asked, never alone again
+    assert "already_asked" not in report("10:00")[0]  # b was never asked
+
+
+async def test_an_error_without_an_answer_keeps_the_last_errors_sample(service, web, store, clock):
+    await add_source(service, web)
+    web.add(URL, "Payment required\n\nDEPLOYMENT_DISABLED", "text/plain", status=402)
+    await service.fetch_source("city-agenda")
+    challenge = '<html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x"></script>'
+    web.add(URL, challenge, status=403)
+    clock.t += 60
+    await service.fetch_source("city-agenda")
+    st = store.source_state("city-agenda")
+    assert "challenge" in st.last_error and "DEPLOYMENT_DISABLED" in st.sample

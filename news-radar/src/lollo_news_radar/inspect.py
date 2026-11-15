@@ -79,6 +79,8 @@ async def inspect(fetcher: Fetcher, url: str, max_wait: float | None = None) -> 
         out_error: dict[str, Any] = {"url": url, "error": str(e)}
         if e.retry_after:
             out_error["retry_after"] = e.retry_after
+        if e.page is not None:
+            out_error["sample"] = sample_of(e.page)
         return out_error
     out: dict[str, Any] = {"url": page.url, "status": page.status, "content_type": page.content_type}
     if page.content_type in ("application/json", "application/ld+json") or page.content_type.endswith("+json"):

@@ -35,6 +35,7 @@ import httpcore
 import httpx
 
 from .config import (
+    ERROR_BODY,
     HOST_BACKOFF,
     HOST_SPACING,
     MAX_CRAWL_DELAY,
@@ -67,11 +68,14 @@ WAITING_ROOM_HOSTS = ("queue-it.net",)
 
 class FetchError(Exception):
     """A fetch that yields nothing; the message says why, in a few words.
-    retry_after: the seconds the site asked to be left alone, when it asked."""
+    retry_after: the seconds the site asked to be left alone, when it asked.
+    page: what the site answered with an error status, its body cut to
+    ERROR_BODY: website text for an agent repairing the source, never for logs."""
 
-    def __init__(self, message: str, retry_after: int = 0):
+    def __init__(self, message: str, retry_after: int = 0, page: Page | None = None):
         super().__init__(message)
         self.retry_after = retry_after
+        self.page = page
 
 
 class HostBusy(FetchError):
@@ -329,12 +333,13 @@ class Fetcher:
             pause = 0
             if status in (429, 503):
                 pause = self._back_off(url, response_headers.get("retry-after", ""))
+            header = response_headers.get("content-type", "")
+            content_type = header.split(";")[0].strip().lower()
             if status in (401, 402, 403, 407, 429, 503) and looks_challenged(body):
                 raise FetchError(f"HTTP {status}: a challenge or waiting room", retry_after=pause)
             if not 200 <= status < 300:
-                raise FetchError(f"HTTP {status}", retry_after=pause)
-            header = response_headers.get("content-type", "")
-            content_type = header.split(";")[0].strip().lower()
+                answer = Page(url, status, content_type, body[:ERROR_BODY], charset=charset_of(header))
+                raise FetchError(f"HTTP {status}", retry_after=pause, page=answer)
             if content_type in ("text/html", "application/xhtml+xml") and looks_challenged(body):
                 raise FetchError("a challenge or waiting room instead of the page")
             return Page(
