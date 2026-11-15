@@ -8,7 +8,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SERVER_IMAGE=busybox:1.38.0
-CLIENT_IMAGE=curlimages/curl:8.11.1
+CLIENT_IMAGE=curlimages/curl:8.23.0
 image=lollo-pipelock:test
 id=lollo-pipelock-test-$$
 tmp=$(mktemp -d)
