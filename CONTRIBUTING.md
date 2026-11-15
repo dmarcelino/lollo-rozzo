@@ -199,7 +199,7 @@ Renovate keeps the pinned versions current. It runs from `.github/workflows/reno
 - **What a merge costs at the next release.** A changed Dockerfile, `pyproject.toml` or lock changes that image's content tag ([release/README.md](release/README.md#images-are-named-by-their-content-never-by-the-release)), so the release restarts that sidecar, and an update to the vault's locks the vault.
 - **One-time setup**, by a repository admin:
   1. A GitHub App with no webhook, with read and write on Contents, Pull requests, Issues (Renovate's dashboard issue), Workflows, Commit statuses (Renovate's own checks; without it a run stops after its first branch) and Checks, and read on Metadata, installed on this repository only.
-  2. Its id as the repository variable `RENOVATE_APP_ID`, and its private key as the secret `RENOVATE_APP_PRIVATE_KEY`.
+  2. Its Client ID (on the App's settings page, under "About") as the repository variable `RENOVATE_CLIENT_ID`, and its private key as the secret `RENOVATE_APP_PRIVATE_KEY`.
   3. "Allow auto-merge" on in the repository's settings.
   4. The `Main branch` ruleset requiring CI's jobs (`shellcheck`, `cli`, each `sidecar (<dir>)`, `pipelock`, `docs`), with repository admins allowed to bypass it so pushes to `main` still work. Without the required checks, GitHub's auto-merge would merge before CI ends.
 
