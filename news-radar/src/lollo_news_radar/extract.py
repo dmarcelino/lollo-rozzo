@@ -122,15 +122,22 @@ def parse_date(value: str, languages: tuple[str, ...], now: datetime | None = No
         earlier = _dateparser(text, languages, now - REREAD_SHIFT)
         if earlier is not None and earlier != parsed and earlier.timetuple()[1:6] == parsed.timetuple()[1:6]:
             parsed = _nearest_year(parsed, now.date())
+        elif earlier is not None and earlier != parsed:
+            # Relative: "4 months ago" is `now` less four months. dateparser 1.5
+            # also moves a relative month or year to PREFER_DAY_OF_MONTH, which is
+            # there for a month without a day ("Outubro 2026").
+            parsed = _dateparser(text, languages, now, day_of_month="current") or parsed
     if parsed.hour == 0 and parsed.minute == 0 and not re.search(r"\d:\d", text):
         return parsed.date().isoformat()
     return parsed.isoformat(timespec="minutes")
 
 
-def _dateparser(text: str, languages: tuple[str, ...], base: datetime) -> datetime | None:
+def _dateparser(
+    text: str, languages: tuple[str, ...], base: datetime, day_of_month: str = "first"
+) -> datetime | None:
     import dateparser  # slow to import; only text dates need it
 
-    settings = {"RETURN_AS_TIMEZONE_AWARE": False, "PREFER_DAY_OF_MONTH": "first", "RELATIVE_BASE": base}
+    settings = {"RETURN_AS_TIMEZONE_AWARE": False, "PREFER_DAY_OF_MONTH": day_of_month, "RELATIVE_BASE": base}
     return dateparser.parse(text[:120], languages=list(languages) or None, settings=settings)
 
 

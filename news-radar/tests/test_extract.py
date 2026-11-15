@@ -739,7 +739,10 @@ async def test_an_undated_newest_file_comes_before_a_dated_older_one(fetcher, we
         ("há 2 horas", ("pt",), "2026-11-13T13:00"),
         ("4 months ago", ("en",), "2026-07-13T15:00"),  # relative: never moved a year on
         ("há 4 meses", ("pt",), "2026-07-13T15:00"),
+        ("2 years ago", ("en",), "2024-11-13T15:00"),
         ("01.03.26", ("de",), "2026-03-01"),  # a two-digit year is a year given
+        ("Outubro 2026", ("pt",), "2026-10-01"),  # a month without a day: its first
+        ("Outubro", ("pt",), "2026-10-01"),
     ],
 )
 def test_relative_dates_and_short_years_are_kept_as_written(text, languages, expected):
