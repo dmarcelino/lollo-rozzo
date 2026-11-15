@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 # Pinned: this is an application image, rebuilt on every `lolloctl up`.
 dependencies = [
   "mcp==2.3.0",
-  "anyio==4.15.1",
+  "anyio==4.16.0",
   "starlette==1.7.0",
   "uvicorn==0.54.0",
   "python-multipart==0.0.33",
