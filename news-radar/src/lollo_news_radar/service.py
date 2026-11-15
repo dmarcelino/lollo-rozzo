@@ -728,7 +728,7 @@ class Service:
     def _queue(self, agent: str, schedule: str, conversation: str, digests: list[MonitorDigest], now: int) -> str:
         report_id = new_report_id()
         words = Schedule.parse(schedule).describe()
-        prompt, rows = render(digests, words, report_id)
+        prompt, rows, alerted = render(digests, words, report_id)
         names = ", ".join(d.monitor.name for d in digests)
         request = {
             "id": report_id,
@@ -745,7 +745,7 @@ class Service:
                 schedule=schedule,
                 conversation=conversation,
                 monitors=[d.monitor.id for d in digests],
-                alerted=sorted({a.source for d in digests for a in d.alerts}),
+                alerted=alerted,
                 at=now,
                 # A second early: an item a fetch records later in this same second
                 # comes again rather than never (a repeat beats a gap).

@@ -1194,7 +1194,14 @@ async def test_an_event_another_source_already_had_is_known(service, web, store,
     )
     known = rows["Winter Concert 2027-02-01T21:00"]
     assert known["status"] == "known" and known["source"] == "other"
-    assert known["also_in"] == [{"source": "city-agenda", "url": "https://agenda.example.org/f/wc"}]
+    assert known["also_in"] == [
+        {
+            "source": "city-agenda",
+            "url": "https://agenda.example.org/f/wc",
+            "when": "2027-02-01T21:00",
+            "where": "Opera House",
+        }
+    ]
     assert rows["Spring Gig 2027-02-05"]["status"] == "new"
     assert "also_in" not in rows["Spring Gig 2027-02-05"]
 
@@ -1312,7 +1319,7 @@ async def test_a_row_holding_an_earlier_listing_is_not_known_by_it(service, web,
     assert row["when"].startswith("2027-02-01") and row["status"] == "new"
 
 
-async def test_asking_about_a_shared_source_is_per_monitor(service, web, store, clock):
+async def test_alerts_about_a_shared_source_are_per_monitor(service, web, store, clock):
     await add_named(service, web, "city-agenda", URL, events_body(["2027-02-01"]))
     service.monitor_put(AGENT, "a", ["city-agenda"], schedule="0 9 * * *", from_now=True)
     service.monitor_put(OTHER_AGENT, "b", ["city-agenda"], schedule="0 10 * * *", from_now=True)
@@ -1320,7 +1327,6 @@ async def test_asking_about_a_shared_source_is_per_monitor(service, web, store, 
     for _ in range(3):
         clock.t += 60
         await service.fetch_source("city-agenda")
-    clock.t += 3 * 86400
 
     def report(minute):
         rids = fire_at(service, f"2027-01-15T{minute}")
@@ -1330,12 +1336,16 @@ async def test_asking_about_a_shared_source_is_per_monitor(service, web, store, 
         store.finish(rids[0], True, "t", "")
         return needs_repair(request["prompt"])
 
+    clock.t += 60
+    assert report("09:00")  # a is told
+    clock.t += 3600
+    assert report("10:00")  # so is b: a's report says nothing to b's person
+    clock.t += 3 * 86400
     assert "already_asked" not in report("09:00")[0]  # a asks
     clock.t += 3600
-    assert report("10:00") is None  # b: told an hour ago, nothing new
+    assert "already_asked" not in report("10:00")[0]  # and so does b
     clock.t += 86400
-    assert report("09:00") is None  # a: asked, never alone again
-    assert "already_asked" not in report("10:00")[0]  # b was never asked
+    assert report("09:00") is None and report("10:00") is None  # both asked: never alone again
 
 
 async def test_an_error_without_an_answer_keeps_the_last_errors_sample(service, web, store, clock):
@@ -1348,3 +1358,89 @@ async def test_an_error_without_an_answer_keeps_the_last_errors_sample(service, 
     await service.fetch_source("city-agenda")
     st = store.source_state("city-agenda")
     assert "challenge" in st.last_error and "DEPLOYMENT_DISABLED" in st.sample
+
+
+async def test_an_event_never_told_is_not_known(service, web, store, clock):
+    # First seen 20 days before the monitor's first report, which reaches back 7: never told.
+    await add_named(service, web, "city-agenda", URL, sessions_body([("Gig", "2027-03-20T21:00", "/f/gig", "Hall")]))
+    clock.t += 20 * 86400
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-03-25", "/o/old", "Hall A")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    assert [r["title"] for r in service.digest_more(rid, 0)["rows"]] == ["Old"]
+    store.claim(20)
+    store.finish(rid, True, "t", "")
+    clock.t += 60
+    later = [("Old", "2027-03-25", "/o/old", "Hall A"), ("Gig", "2027-03-20T21:00", "/o/gig", "Hall")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    [row] = service.digest_more(rid, 0)["rows"]
+    assert row["title"] == "Gig" and row["status"] == "new"
+
+
+async def test_an_event_told_in_a_report_is_known_when_listed_again(service, web, store, clock):
+    await add_named(service, web, "city-agenda", URL, sessions_body([("Old", "2027-03-01", "/f/old", "Hall")]))
+    await add_named(service, web, "other", URL2, sessions_body([("Old2", "2027-03-02", "/o/old", "Hall")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    gig = ("Gig", "2027-02-01T21:00", "/f/gig", "Hall")
+    web.add(URL, sessions_body([("Old", "2027-03-01", "/f/old", "Hall"), gig]), "application/json")
+    await service.fetch_source("city-agenda")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    store.claim(20)
+    store.finish(rid, True, "t", "")
+    clock.t += 60
+    later = [("Old2", "2027-03-02", "/o/old", "Hall"), ("Gig", "2027-02-01T21:00", "/o/gig", "")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [row] = service.monitor_preview(AGENT, "shows")["rows"]
+    assert row["status"] == "known" and row["also_in"][0]["source"] == "city-agenda"
+    assert fire_at(service, "2027-01-15T09:00") == []  # known alone: no turn
+
+
+async def test_a_grouped_row_with_new_sessions_is_not_known_by_its_first(service, web, store, clock):
+    spec = json_spec(group_by="title")
+    web.add(URL, sessions_body([("Old", "2027-03-01", "/c/old", "Hall")]), "application/json")
+    assert (await service.source_test(spec))["passed"]
+    service.source_put(spec)
+    await service.fetch_source("city-agenda")
+    await add_named(service, web, "other", URL2, sessions_body([("Film", "2027-02-01T21:00", "/o/film", "Hall")]))
+    service.monitor_put(AGENT, "films", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    sessions = [
+        ("Old", "2027-03-01", "/c/old", "Hall"),
+        ("Film", "2027-02-08T21:00", "/c/f2", "Hall"),
+        ("Film", "2027-02-01T21:00", "/c/f1", "Hall"),
+    ]
+    web.add(URL, sessions_body(sessions), "application/json")
+    await service.fetch_source("city-agenda")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    [row] = service.digest_more(rid, 0)["rows"]
+    assert row["when"].startswith("2027-02-01") and row["variants"] and row["status"] == "new"
+
+
+def test_a_cut_prompt_counts_as_told_only_the_repairs_it_holds():
+    from lollo_news_radar.digest import Alert, MonitorDigest, render
+    from lollo_news_radar.store import Monitor
+
+    names = [f"source-{i}" for i in range(40)]
+    alerts = [Alert(n, "3 failed runs in a row; the last: HTTP 500", 0, "x" * 300, True) for n in names]
+    digest = MonitorDigest(Monitor(AGENT, "m", names, "0 9 * * *", id="m1"), [], 0, alerts)
+    prompt, _, alerted = render([digest], "at 09:00", "d1")
+    assert 0 < len(alerted) < len(names)
+    assert all(f'"source": "{n}"' in prompt for n in alerted)
+
+
+def test_rows_left_out_are_not_called_older():
+    from lollo_news_radar.digest import MonitorDigest, render
+    from lollo_news_radar.store import Monitor
+
+    digest = MonitorDigest(Monitor(AGENT, "m", ["s"], "0 9 * * *", id="m1"), [{"source": "s", "status": "new"}], 3)
+    prompt, _, _ = render([digest], "at 09:00", "d1")
+    assert "3 row(s) left out" in prompt and "older" not in prompt

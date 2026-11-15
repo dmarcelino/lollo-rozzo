@@ -293,6 +293,8 @@ class Fetcher:
         self._locks: dict[str, anyio.Lock] = {}
         # Per host: when read, the parser (None when nothing may be fetched), the crawl delay, why not.
         self._robots: dict[str, tuple[float, robotparser.RobotFileParser | None, float, str]] = {}
+        # Per host: what robots.txt answered when it could not be read, for the repair's sample.
+        self._robots_answers: dict[str, Page] = {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -425,7 +427,7 @@ class Fetcher:
             self._robots[host] = entry
         parser = entry[1]
         if parser is None:
-            raise FetchError(entry[3])
+            raise FetchError(entry[3], page=self._robots_answers.get(host))
         if not parser.can_fetch(USER_AGENT_NAME, url):
             raise FetchError("robots.txt disallows it")
 
@@ -434,6 +436,7 @@ class Fetcher:
     ) -> tuple[float, robotparser.RobotFileParser | None, float, str]:
         parser = robotparser.RobotFileParser()
         url = host + "/robots.txt"
+        self._robots_answers.pop(host, None)
         unreadable = "robots.txt could not be read, so nothing is fetched (RFC 9309)"
         for _ in range(MAX_REDIRECTS + 1):
             try:
@@ -459,6 +462,9 @@ class Fetcher:
             parser.allow_all = True
             parser.modified()
         else:
+            header = headers.get("content-type", "")
+            content_type = header.split(";")[0].strip().lower()
+            self._robots_answers[host] = Page(url, status, content_type, body[:ERROR_BODY], charset=charset_of(header))
             return self._clock(), None, 0.0, f"{unreadable}: HTTP {status}"
         delay = parser.crawl_delay(USER_AGENT_NAME)
         return self._clock(), parser, min(float(delay or 0), MAX_CRAWL_DELAY), ""

@@ -56,8 +56,7 @@ CREATE TABLE IF NOT EXISTS source_state (
   fill TEXT NOT NULL DEFAULT '{}',
   sample TEXT NOT NULL DEFAULT '',
   unhealthy_since INTEGER,
-  unhealthy_reason TEXT NOT NULL DEFAULT '',
-  alerted_at INTEGER
+  unhealthy_reason TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS items (
   source TEXT NOT NULL,
@@ -89,6 +88,7 @@ CREATE TABLE IF NOT EXISTS monitors (
   last_empty INTEGER,
   set_up_in TEXT NOT NULL DEFAULT '',
   where_terms TEXT NOT NULL DEFAULT '[]',
+  from_now_at INTEGER,
   UNIQUE (agent_id, name)
 );
 CREATE TABLE IF NOT EXISTS reports (
@@ -145,6 +145,8 @@ class Monitor:
     # The conversation the agent saved it from, when it said: one of the choices
     # the page offers for where reports go.
     set_up_in: str = ""
+    # When it was last saved with from_now: what its sources held then is its baseline.
+    from_now_at: int | None = None
 
     @property
     def reports_to(self) -> str:
@@ -185,7 +187,6 @@ class SourceState:
     sample: str = ""
     unhealthy_since: int | None = None
     unhealthy_reason: str = ""
-    alerted_at: int | None = None
 
     @property
     def healthy(self) -> bool:
@@ -254,6 +255,7 @@ class Store:
         for name, definition in (
             ("set_up_in", "TEXT NOT NULL DEFAULT ''"),
             ("where_terms", "TEXT NOT NULL DEFAULT '[]'"),
+            ("from_now_at", "INTEGER"),
         ):
             if name not in columns:
                 with self._db:
@@ -351,7 +353,6 @@ class Store:
             sample=row["sample"],
             unhealthy_since=row["unhealthy_since"],
             unhealthy_reason=row["unhealthy_reason"],
-            alerted_at=row["alerted_at"],
         )
 
     def source_state(self, name: str) -> SourceState:
@@ -424,8 +425,7 @@ class Store:
                 pass  # a failure or two: not unhealthy yet
             else:
                 self._db.execute(
-                    "UPDATE source_state SET unhealthy_since = NULL, unhealthy_reason = '', alerted_at = NULL "
-                    "WHERE name = ?",
+                    "UPDATE source_state SET unhealthy_since = NULL, unhealthy_reason = '' WHERE name = ?",
                     (name,),
                 )
             self._db.execute("DELETE FROM items WHERE last_seen < ?", (now - ITEMS_KEEP_SECONDS,))
@@ -483,16 +483,37 @@ class Store:
         ).fetchone()
         return row is not None
 
-    def items_starting_on(self, sources: Sequence[str], days: Sequence[str], seen_by: int) -> list[StoredItem]:
+    def delivered_rows(self, monitor: Monitor, days: Sequence[str]) -> list[dict[str, Any]]:
+        """The rows of this monitor's delivered reports (as long as they are kept:
+        REPORTS_KEEP_PER_GROUP) of events starting on one of these days: what its
+        person was told."""
+        if not days:
+            return []
+        rows = self._db.execute(
+            "SELECT reports.digest FROM reports, json_each(reports.monitors) m WHERE reports.status = ? "
+            "AND m.value = ? AND reports.upto <= ? ORDER BY reports.at",
+            (OK, monitor.id, monitor.delivered_upto),
+        )
+        wanted = set(days)
+        return [
+            row
+            for (digest,) in rows
+            for row in json.loads(digest)
+            if row.get("monitor") == monitor.name and str(row.get("when", ""))[:10] in wanted
+        ]
+
+    def items_starting_on(
+        self, sources: Sequence[str], days: Sequence[str], seen_from: int, seen_by: int
+    ) -> list[StoredItem]:
         """The items of these sources that start on one of these days (YYYY-MM-DD)
-        and were first seen by then: what a monitor already had of those days."""
+        and were first seen between those times."""
         if not sources or not days:
             return []
         source_marks, day_marks = ",".join("?" * len(sources)), ",".join("?" * len(days))
         rows = self._db.execute(
-            f"SELECT * FROM items WHERE source IN ({source_marks}) AND first_seen <= ? "
+            f"SELECT * FROM items WHERE source IN ({source_marks}) AND first_seen BETWEEN ? AND ? "
             f"AND substr(json_extract(data, '$.start'), 1, 10) IN ({day_marks}) ORDER BY first_seen, rowid",
-            (*sources, seen_by, *days),
+            (*sources, seen_from, seen_by, *days),
         )
         return [_stored_item(r) for r in rows]
 
@@ -535,6 +556,7 @@ class Store:
             paused=bool(row["paused"]),
             last_empty=row["last_empty"],
             set_up_in=row["set_up_in"],
+            from_now_at=row["from_now_at"],
         )
 
     def monitors(self, agent_id: str | None = None) -> list[Monitor]:
@@ -590,7 +612,10 @@ class Store:
                     (*values, m.set_up_in, now, now, monitor_id, m.agent_id, m.name),
                 )
             if delivered_upto is not None:
-                self._db.execute("UPDATE monitors SET delivered_upto = ? WHERE id = ?", (delivered_upto, monitor_id))
+                self._db.execute(
+                    "UPDATE monitors SET delivered_upto = ?, from_now_at = ? WHERE id = ?",
+                    (delivered_upto, delivered_upto, monitor_id),
+                )
         stored = self.monitor(monitor_id)
         assert stored is not None
         return stored
@@ -747,10 +772,6 @@ class Store:
                 self._db.execute(
                     f"UPDATE monitors SET delivered_upto = MAX(delivered_upto, ?), failures = 0 WHERE id IN ({marks})",
                     (report.upto, *report.monitors),
-                )
-                self._db.executemany(
-                    "UPDATE source_state SET alerted_at = ? WHERE name = ? AND unhealthy_since IS NOT NULL",
-                    [(report.at, n) for n in report.alerted],
                 )
             else:
                 self._db.execute(

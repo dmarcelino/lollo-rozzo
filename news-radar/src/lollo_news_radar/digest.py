@@ -175,7 +175,8 @@ def filter_warnings(
 ) -> list[str]:
     """Hints about filters that let too much through, judged on what a draft of the
     monitor considers (first seen or changed in the last CARRY_SECONDS, whatever was
-    delivered): an include term that alone lets through most of the rows, and
+    delivered): an include term that alone lets through a third or more of the rows,
+    twice as many as any other, and
     articles that pass in an events monitor, which days_ahead and where can't narrow.
     No website text: the preview's rows and terms show the items."""
     out = []
@@ -337,14 +338,15 @@ def _own_listings(row: dict[str, Any]) -> list[dict[str, Any]]:
     """The listings a row is made of: its own, its variants' and also_in's."""
     source, url = row["source"], row.get("url")
     variants = [_listing({"source": source, "url": v.get("url") or url}) for v in row.get("variants", [])]
-    return [_listing(row), *variants, *row.get("also_in", [])]
+    return [_listing(row), *variants, *(_listing(a) for a in row.get("also_in", []))]
 
 
 def known_rows(rows: list[dict[str, Any]], earlier: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """New rows of an event the monitor already had (an earlier row of the same title
-    and day that _same_event allows, in another listing), as known, with that earlier
-    listing under also_in, after the other rows. A row that holds the earlier listing
-    itself (an old item changed, with a new variant or listing) stays as it is."""
+    """New rows of an event the person already had (an earlier row of the same title
+    and day that _same_event allows, in other listings), as known, with that earlier
+    listing, its time and venue under also_in, after the other rows. A row with
+    variants (sessions, formats) is never known by one of them, and a row that holds
+    an earlier listing itself (an old item changed, with a new listing) stays as it is."""
     earlier_of: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in earlier:
         key = event_key(row)
@@ -352,12 +354,13 @@ def known_rows(rows: list[dict[str, Any]], earlier: list[dict[str, Any]]) -> lis
             earlier_of.setdefault(key, []).append(row)
     told, known = [], []
     for row in rows:
-        key = event_key(row) if row["status"] == "new" else None
+        key = event_key(row) if row["status"] == "new" and not row.get("variants") else None
         before = _same_events(earlier_of.get(key, []), row) if key else []
         own = _own_listings(row)
-        if before and not any(_listing(b) in own for b in before):
+        if before and not any(_listing(x) in own for b in before for x in _own_listings(b)):
+            first = before[0]
             row = {**row, "status": "known", "also_in": list(row.get("also_in", []))}
-            _add_listing(row, _listing(before[0]))
+            _add_listing(row, {**_listing(first), **{k: first[k] for k in ("when", "where") if first.get(k)}})
             known.append(row)
         else:
             told.append(row)
@@ -426,9 +429,11 @@ def alerts_for(store: Store, monitor: Monitor, states: dict[str, SourceState], n
             continue
         stuck_at = st.unhealthy_since + STUCK_SECONDS
         stuck_days = (now - st.unhealthy_since) // 86400 if now >= stuck_at else 0
-        # Asked in this monitor's own delivered reports: another monitor's says nothing to its person.
+        # Told and asked in this monitor's own delivered reports: another monitor's
+        # say nothing to its person.
         asked = bool(stuck_days) and store.alert_delivered(monitor.id, name, stuck_at)
-        due = not asked and (st.alerted_at is None or now - st.alerted_at >= ALERT_EVERY_SECONDS)
+        told = store.alert_delivered(monitor.id, name, max(st.unhealthy_since, now - ALERT_EVERY_SECONDS))
+        due = not asked and not told
         out.append(Alert(name, st.unhealthy_reason, st.unhealthy_since, st.sample, due, stuck_days, asked))
     return out
 
@@ -446,16 +451,17 @@ def considered(store: Store, monitor: Monitor, now: int, tz: ZoneInfo) -> tuple[
 
 
 def _had(store: Store, monitor: Monitor, rows: list[dict[str, Any]], tz: ZoneInfo) -> list[dict[str, Any]]:
-    """The rows of what the monitor already had, by its last delivered report, on
-    the days its new rows start: items that passed its filters when first seen (one
-    beyond days_ahead then was never told: it isn't reported when it comes closer)."""
+    """What the person already had of the days the new rows start: the rows of the
+    monitor's delivered reports, and its from_now baseline (what a report would have
+    held when it was saved with from_now, and its preview showed instead)."""
     days = sorted({str(r["when"])[:10] for r in rows if r["status"] == "new" and event_key(r)})
-    had = store.items_starting_on(monitor.sources, days, monitor.delivered_upto)
-    return [
-        item_row(i, monitor.delivered_upto)
-        for i in had
-        if passes(monitor, i, datetime.fromtimestamp(i.first_seen, tz).date())
-    ]
+    had = store.delivered_rows(monitor, days)
+    if monitor.from_now_at:
+        at = monitor.from_now_at
+        baseline = store.items_starting_on(monitor.sources, days, at - CARRY_SECONDS, at)
+        today = datetime.fromtimestamp(at, tz).date()
+        had += [item_row(i, at) for i in baseline if passes(monitor, i, today)]
+    return had
 
 
 def monitor_digest(
@@ -490,7 +496,7 @@ def prologue(when: str, digest_id: str) -> str:
         "their interests, merge the same event or story seen in several sources, and give links. A row with "
         "variants is one item listed several times (formats, sessions): each variant is another listing, with "
         "its status and what differs from the row; tell it once. A row with also_in is one event other sources "
-        "list too (their links are there). A row with status known is a new listing of an event this monitor "
+        "list too (their links are there). A row with status known is a new listing of an event the person "
         "already had (the earlier listing is under also_in): mention it only if it adds something, such as another "
         "time or venue.\n"
         "If a monitor has rows but none worth telling, don't change it yourself: propose the smallest filter change "
@@ -532,17 +538,20 @@ def _section(d: MonitorDigest, rows: list[dict[str, Any]], shown_more: int, dige
             f"{shown_more} more row(s) did not fit: call digest_more with digest_id {digest_id} and offset {offset}"
         )
     elif d.left_out:
-        lines.append(f"{more} older row(s) left out")
-    for a in d.alerts:
-        alert: dict[str, Any] = {"source": a.source, "reason": a.reason}
-        if not a.asked:  # asked: one line at most, no repair, so no sample to repair from
-            alert["sample"] = a.sample[:300]
-        if a.stuck_days:
-            alert["broken_for_days"] = a.stuck_days
-        if a.asked:
-            alert["already_asked"] = True
-        lines.append("needs_repair " + data_line(alert))
+        lines.append(f"{more} row(s) left out (known ones first, then the oldest)")
+    lines += [_alert_line(a) for a in d.alerts]
     return "\n".join(lines)
+
+
+def _alert_line(a: Alert) -> str:
+    alert: dict[str, Any] = {"source": a.source, "reason": a.reason}
+    if not a.asked:  # asked: one line at most, no repair, so no sample to repair from
+        alert["sample"] = a.sample[:300]
+    if a.stuck_days:
+        alert["broken_for_days"] = a.stuck_days
+    if a.asked:
+        alert["already_asked"] = True
+    return "needs_repair " + data_line(alert)
 
 
 # A row's variants left in the prompt once it has to shrink; digest_more has them all.
@@ -563,8 +572,9 @@ def _shrink(row: dict[str, Any], level: int) -> dict[str, Any]:
     return out
 
 
-def render(digests: list[MonitorDigest], when: str, digest_id: str) -> tuple[str, list[dict[str, Any]]]:
-    """The prompt, and every row in order (for digest_more): rows lose their
+def render(digests: list[MonitorDigest], when: str, digest_id: str) -> tuple[str, list[dict[str, Any]], list[str]]:
+    """The prompt, every row in order (for digest_more), and the sources whose
+    repair note it holds (what a delivered report has told): rows lose their
     summary and all but a few variants, then their place and extra fields, then
     their variants, before any row is dropped."""
     everything: list[dict[str, Any]] = []
@@ -581,14 +591,21 @@ def render(digests: list[MonitorDigest], when: str, digest_id: str) -> tuple[str
                 offset += len(d.rows)
             prompt = "\n".join([head, *sections, tail])
             if len(prompt) <= MAX_PROMPT:
-                return prompt, everything
+                return prompt, everything, _alerted(digests, prompt)
             if level < 3 or not any(shown):
                 break
             # Drop the last row of the monitor showing the most.
             i = max(range(len(shown)), key=lambda k: shown[k])
             shown[i] -= 1
     # Only the headers and repair notes left, cut to fit.
-    return prompt[: MAX_PROMPT - len(tail) - 1] + "\n" + tail, everything
+    prompt = prompt[: MAX_PROMPT - len(tail) - 1] + "\n" + tail
+    return prompt, everything, _alerted(digests, prompt)
+
+
+def _alerted(digests: list[MonitorDigest], prompt: str) -> list[str]:
+    """The sources whose whole repair note is in the prompt."""
+    lines = set(prompt.splitlines())
+    return sorted({a.source for d in digests for a in d.alerts if _alert_line(a) in lines})
 
 
 def more(rows: list[dict[str, Any]], offset: int) -> dict[str, Any]:
