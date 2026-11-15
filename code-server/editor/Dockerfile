@@ -8,9 +8,9 @@
 # container; the image has no git. Built by lolloctl via compose/code-server.yml;
 # tests/run-sidecar.sh code-server builds the `test` stage and runs it.
 FROM debian:12-slim AS fetch
-ARG CODE_SERVER_VERSION=4.143.1
-ARG SHA256_AMD64=614877cf71005f14ea252bd2d9b1c12237cf7d73681ef150f0dff7f13849fdb5
-ARG SHA256_ARM64=51481a891754dc2585b86d007aec24ac675453fc5ef6cfa346c4462449277384
+ARG CODE_SERVER_VERSION=4.145.2
+ARG SHA256_AMD64=2f6db6c3e8b733dd6b3aeee83532e148b2bae2e392353ba85452d03572348962
+ARG SHA256_ARM64=e867a34416e2da4a83496b09580001893e7a4e5bb58a0624c4fcd22819e7d53d
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl jq \
   && rm -rf /var/lib/apt/lists/*
