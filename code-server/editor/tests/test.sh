@@ -88,8 +88,10 @@ test_nothing_to_run_workspace_code_with() {
   [[ ! -s /etc/shells ]] || fail "/etc/shells lists shells VS Code would offer as profiles"
 }
 
+# CODE_SERVER_VERSION is the Dockerfile's pin, set in the `test` stage.
 test_code_server_runs_from_the_image() {
-  /opt/code-server/bin/code-server --version | grep -q '^4\.143\.1 ' || fail "unexpected version"
+  /opt/code-server/bin/code-server --version | grep -q "^${CODE_SERVER_VERSION//./\\.} " ||
+    fail "not version $CODE_SERVER_VERSION"
 }
 
 # The real code-server, before the fake replaces it: with --config it reads only the

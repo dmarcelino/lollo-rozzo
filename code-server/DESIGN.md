@@ -102,7 +102,11 @@ by something agents can't change.
    then carries an empty gallery).
    - **Kept:** language grammars and themes, `typescript-language-features`, `json-`, `html-` and
      `css-language-features`, `emmet`, `git-base` (grammars only), `merge-conflict`, `references-view`,
-     `search-result`, `media-preview`, `configuration-editing`.
+     `search-result`, `media-preview`, `configuration-editing`. (Since code-server 4.144, VS Code
+     1.144, the image, audio and video previews are part of the workbench, not the `media-preview`
+     extension: the allow-list can't remove them. The image preview shows a file as an `<img>`
+     from a `blob:` URL, so an SVG's script never runs; `scripts/code-server-e2e.sh --browser`
+     checks that with a planted SVG.)
    - **Left out**, with the reason found in the tarball:
      - they spawn processes: `npm`, `grunt`, `gulp`, `jake` (task providers), `php-language-features`
        (runs `php.validate.executablePath`, which a workspace can set), `terminal-suggest`,

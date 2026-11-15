@@ -7,8 +7,10 @@
 # the terminal, and every git call of Source Control (bin/shell-git), to the shell
 # container; the image has no git. Built by lolloctl via compose/code-server.yml;
 # tests/run-sidecar.sh code-server builds the `test` stage and runs it.
-FROM debian:12-slim AS fetch
+# Global so the `test` stage can check the binary is the pinned release.
 ARG CODE_SERVER_VERSION=4.145.2
+FROM debian:12-slim AS fetch
+ARG CODE_SERVER_VERSION
 ARG SHA256_AMD64=2f6db6c3e8b733dd6b3aeee83532e148b2bae2e392353ba85452d03572348962
 ARG SHA256_ARM64=e867a34416e2da4a83496b09580001893e7a4e5bb58a0624c4fcd22819e7d53d
 ARG TARGETARCH
@@ -80,6 +82,8 @@ RUN usermod -s /opt/lollo-editor/bin/exec-shell root
 RUN mkdir /opt/lollo-editor/no-extensions && echo '[]' >/opt/lollo-editor/no-extensions/extensions.json
 
 FROM base AS test
+ARG CODE_SERVER_VERSION
+ENV CODE_SERVER_VERSION=$CODE_SERVER_VERSION
 COPY tests /tests
 CMD ["bash", "/tests/test.sh"]
 
