@@ -10,7 +10,7 @@
 # the release's SHA256SUMS, checked against `gh attestation verify`).
 ARG OFFICEAGENT_VERSION=1.2.0
 ARG OFFICEAGENT_SHA256=c1d61b37d7bada1e93a004643a36ea8fa59eed8d1329913b6ce0fd8649dd5cb0
-ARG PYTHON_VERSION=3.12.15
+ARG PYTHON_VERSION=3.12.16
 
 FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
 
