@@ -2,7 +2,7 @@
 # Built from source without the `enterprise` build tag, so the binary is the
 # Apache-2.0 Community edition; the published image also links the ELv2
 # enterprise/ tree. Built by lolloctl; needs no build context beyond this dir.
-FROM golang:1.27.2-bookworm AS build
+FROM golang:1.27.4-bookworm AS build
 # A tag can be moved; the commit it pointed to when we pinned it cannot.
 ARG PIPELOCK_VERSION=3.6.0
 ARG PIPELOCK_COMMIT=3e868ac5d5b62d3a2790958542171143af8a0e38
