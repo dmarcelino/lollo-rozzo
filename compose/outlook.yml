@@ -1,43 +1,46 @@
-# Merged by lettucectl on top of upstream/docker/compose.yml for every stack.
-# The Outlook sidecar (outlook/, docs/outlook.md): an agent-facing Outlook
-# mailbox (mail, calendar, tasks, and read-only shared mailboxes) under a
-# per-stack policy the person sets on the Outlook page. Opt-in behind the
-# `garden-outlook` profile; without it this file adds nothing.
+# Merged by lolloctl on top of upstream/docker/compose.yml for every stack.
+# The Outlook sidecar (outlook/, outlook/DESIGN.md, docs/outlook.md): an
+# agent-facing Outlook mailbox (mail, calendar, tasks, and read-only shared
+# mailboxes) under a per-stack policy the person sets on the Outlook page.
+# Opt-in behind the `lollo-outlook` profile; without it this file adds nothing.
 #
-# Agents reach it at http://garden-outlook:8000/mcp over the stack network, and
-# the tunnel forwards https://<name>-garden.<domain>/outlook/ to it
+# Agents reach it at http://lollo-outlook:8000/mcp over the stack network, and
+# the tunnel forwards https://<name>-lollo.<domain>/outlook/ to it
 # (cf_tunnel_configure). That reachability is not the control: what agents may do
-# is set on the page (behind the garden's own Cloudflare Access application, which
+# is set on the page (behind the lollo's own Cloudflare Access application, which
 # agents cannot forge) and enforced by the sidecar. Lettuce's JWT, which
 # cloudflared hands the BFF in plain HTTP inside the namespace agents share, is
-# for another audience, so the page refuses it (`lettucectl check` refuses a stack
+# for another audience, so the page refuses it (`lolloctl check` refuses a stack
 # where it would not).
 #
 # The connected Outlook session (the bearer token and refresh material) lives,
-# encrypted, on a named volume that no other service mounts; `lettucectl check`
-# refuses a stack where one does, or where this service loses read_only or
-# cap_drop ALL, gains privileges, capabilities, devices, another service's
-# namespaces or mounts, or a bind mount. The encryption key is OUTLOOK_SECRET,
-# generated once per stack and kept only in this environment, never on the volume.
-# Relative paths resolve against --project-directory (upstream/docker).
+# encrypted, on a named volume that no other service mounts. It calls Microsoft
+# directly, so it has the default network and nothing else. `lolloctl check`
+# refuses a stack where another service mounts the volume, or where this service
+# loses read_only or cap_drop ALL, gains privileges, capabilities, devices,
+# another network, another service's namespaces or mounts, or a bind mount. The
+# encryption key is OUTLOOK_SECRET, generated once per stack and kept only in
+# this environment, never on the volume.
 services:
-  garden-outlook:
-    profiles: ["garden-outlook"]
+  lollo-outlook:
+    profiles: ["lollo-outlook"]
     build:
-      context: ${LETTUCE_HOME:?LETTUCE_HOME is not set}/outlook
-      # The shared package (Access JWT and CSRF checks) both garden images install.
+      context: ${LOLLO_HOME:?LOLLO_HOME is not set}/outlook
+      # The shared package (Access JWT and CSRF checks) every lollo image installs.
       additional_contexts:
-        garden-common: ${LETTUCE_HOME:?LETTUCE_HOME is not set}/garden-common
-    image: ${GARDEN_IMAGE_OUTLOOK:-lettuce-outlook:local}
+        lollo-common: ${LOLLO_HOME:?LOLLO_HOME is not set}/lollo-common
+    image: ${LOLLO_IMAGE_OUTLOOK:-lollo-outlook:local}
     environment:
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
-      # The garden's own Access application and host, never Lettuce's.
-      CF_ACCESS_AUD: ${CF_GARDEN_AUD:-}
+      # The lollo's own Access application and host, never Lettuce's.
+      CF_ACCESS_AUD: ${CF_LOLLO_AUD:-}
       CF_ACCESS_ISSUER: ${CF_ACCESS_ISSUER:-}
       ALLOWED_USERS: ${ALLOWED_USERS:-}
-      PUBLIC_ORIGIN: ${GARDEN_ORIGIN:-}
+      PUBLIC_ORIGIN: ${LOLLO_ORIGIN:-}
       OUTLOOK_SECRET: ${OUTLOOK_SECRET:-}
       TZ: ${TZ:-UTC}
+    networks:
+      - default
     volumes:
       - outlook-data:/data
     read_only: true
@@ -51,8 +54,8 @@ services:
     restart: unless-stopped
 
 volumes:
-  # Deleted by `lettucectl remove` (compose down -v): removing a stack deletes its
+  # Deleted by `lolloctl remove` (compose down -v): removing a stack deletes its
   # Outlook session. Not under stacks/<name>/, and deliberately NOT copied by
-  # `lettucectl backup` (reconnecting with the bookmarklet is cheap, and a backup
+  # `lolloctl backup` (reconnecting with the bookmarklet is cheap, and a backup
   # should not carry a live mail credential).
   outlook-data:

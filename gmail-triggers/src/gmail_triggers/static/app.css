@@ -1,7 +1,12 @@
-/* Gmail triggers only; the shared look is garden.css. */
+/* Gmail triggers only; the shared look is lollo.css. */
 
 .intro {
   margin-top: -8px;
+}
+
+/* A gap notice's Dismiss button, under its text. */
+.banner-dismiss {
+  margin-top: 8px;
 }
 
 /* -- Trigger list ---------------------------------------------------------- */

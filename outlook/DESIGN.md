@@ -5,15 +5,15 @@ Note (2026-11-11): moved here from `docs/outlook-plan.md` when the design record
 Status: design. Branch `outlook-mcp`. Not yet implemented beyond the enforcement
 core (`levels.py`, `recipients.py`) and this record.
 
-This is a **garden sidecar** (like `vault/` and `gmail-triggers/`): an opt-in
+This is a **lollo sidecar** (like `vault/` and `gmail-triggers/`): an opt-in
 service with its own Access-protected page at
-`https://<name>-garden.<domain>/outlook/` and an MCP endpoint agents reach on the
-stack network at `http://garden-outlook:8000/mcp`. It gives a stack's agents
+`https://<name>-lollo.<domain>/outlook/` and an MCP endpoint agents reach on the
+stack network at `http://lollo-outlook:8000/mcp`. It gives a stack's agents
 read/write access to **one Outlook mailbox**, under a per-stack permission policy
 the agents cannot change.
 
 Upstream Lettuce and letta-code are not changed. Everything ships in
-lettuce-garden.
+lollo-rozzo.
 
 ## Goal
 
@@ -36,13 +36,13 @@ available; use Graph there.
 ## How it works
 
 ```
- person's browser                     <name>-garden.<domain>            app-server container
+ person's browser                     <name>-lollo.<domain>            app-server container
  on outlook.office.com                (tunnel, Cloudflare Access)        (agents run here as root)
    |                                     |                                 |
    | 1. click bookmarklet                |                                 |
    |   reads the signed-in session       |                                 |
    |   opens /outlook/connect#<session>  |                                 |
-   +------- new tab, URL fragment ------> | garden-outlook:8000             |
+   +------- new tab, URL fragment ------> | lollo-outlook:8000             |
                                           |   /outlook/ pages  (Access)     |
    person sets levels + allowed           |   stores token (encrypted)      |
    recipients on /outlook/                |   on outlook-data volume        |
@@ -59,7 +59,7 @@ available; use Graph there.
 1. The person opens Outlook on the web, signed in as themselves (own MFA, own
    device). They click a **bookmarklet** served from the `/outlook/` page.
 2. The bookmarklet reads the session material the Outlook web app already holds
-   and opens `https://<name>-garden.<domain>/outlook/connect#<material>` in a new
+   and opens `https://<name>-lollo.<domain>/outlook/connect#<material>` in a new
    tab. The material rides in the URL **fragment**, so it never reaches a server
    log or a `Referer` header, and navigation is not blocked by Outlook's
    `connect-src` CSP (a cross-origin `fetch` would be). The `/outlook/` page's own
@@ -71,7 +71,7 @@ available; use Graph there.
    session genuinely ends, not every hour.
 4. On the `/outlook/` page the person sets, per service, a **level**, plus an
    **allowed-recipients** list. This is the stack's Outlook policy.
-5. Agents call tools at `http://garden-outlook:8000/mcp`. Every tool live-checks
+5. Agents call tools at `http://lollo-outlook:8000/mcp`. Every tool live-checks
    the current policy and **executes only what the policy allows** — a forbidden
    call is refused, naming the level it needs; the token (which agents never see)
    is used only for an allowed call. Results are compact, and email content carries
@@ -100,14 +100,14 @@ A bookmarklet is the only layman-friendly option that also survives unattended u
   device-compliance sign-in policy and is heavy. Instead the sidecar redeems the
   refresh material directly against the Microsoft token endpoint.
 
-The bookmarklet is generated per stack (its target is the stack's own garden
+The bookmarklet is generated per stack (its target is the stack's own lollo
 origin) and shown on the `/outlook/` page with install instructions. It is plain,
 readable JavaScript; the person can see exactly what it does before dragging it to
 their bookmarks bar.
 
 `/outlook/connect` accepts the handover only as a same-origin POST from the
-`/outlook/` page's script, behind Access, with the garden's Fetch-Metadata checks
-— never cross-origin, never from an agent (it is on the garden host, not the stack
+`/outlook/` page's script, behind Access, with the lollo's Fetch-Metadata checks
+— never cross-origin, never from an agent (it is on the lollo host, not the stack
 network; `/mcp` is the only thing agents reach).
 
 ## Permission model
@@ -214,7 +214,7 @@ that returns mail or event text prefixes it with the untrusted-content note.
 - **Token-bearing, like the vault.** The encrypted refresh material on
   `outlook-data` can act as the person in their mailbox. Only the sidecar mounts
   that volume; `check_stack` refuses any config where another service does.
-  `lettucectl backup` **excludes** `outlook-data` (reconnecting is cheap, and a
+  `lolloctl backup` **excludes** `outlook-data` (reconnecting is cheap, and a
   backup should not carry a live mail credential).
 - **Not a data boundary.** The level and allowed-recipients list guard the
   account's identity (what it sends, who it invites), not what an agent reads or
@@ -222,24 +222,24 @@ that returns mail or event text prefixes it with the untrusted-content note.
 - **Not for accounts with a supported path.** Where a Graph app registration is
   available, use it. This exists for accounts where it is not.
 
-## lettucectl and repo wiring
+## lolloctl and repo wiring
 
-- `compose/outlook.yml`: service `garden-outlook` behind the `garden-outlook`
-  profile, the `outlook-data` named volume, the `garden-common` build context, the
-  garden Access env (`CF_GARDEN_AUD`, `GARDEN_ORIGIN`, ...), hardened
+- `compose/outlook.yml`: service `lollo-outlook` behind the `lollo-outlook`
+  profile, the `outlook-data` named volume, the `lollo-common` build context, the
+  lollo Access env (`CF_LOLLO_AUD`, `LOLLO_ORIGIN`, ...), hardened
   (`read_only`, `cap_drop: [ALL]`, `no-new-privileges`, `NET_RAW` dropped, mem/pids
   limits), no host mounts.
-- Tunnel route `^/outlook(/|$)` -> `garden-outlook:8000` added to `PROFILE_ROUTES`
-  (`lib/cloudflare.sh`); the profile added to `compose/garden.yml`; a `LABELS`
-  entry on the garden landing page.
-- `NO_PROXY` += `garden-outlook` (pipelock must not see the token); `check_pipelock`
+- Tunnel route `^/outlook(/|$)` -> `lollo-outlook:8000` added to `PROFILE_ROUTES`
+  (`lib/cloudflare.sh`); the profile added to `compose/landing.yml`; a `LABELS`
+  entry on the lollo landing page.
+- `NO_PROXY` += `lollo-outlook` (pipelock must not see the token); `check_pipelock`
   updated.
-- New `check_outlook` in `check_stack`: `garden-outlook` present, a hardened
+- New `check_outlook` in `check_stack`: `lollo-outlook` present, a hardened
   sidecar (`check_sidecar`/`check_hardened`), on `default` only, no host mounts,
-  the garden audience (`check_garden_audience`); `outlook-data` mounted by nothing
+  the lollo audience (`check_lollo_audience`); `outlook-data` mounted by nothing
   else (`volume_users`).
-- A third `lettucectl mcp` group `outlook` in `lib/mcp-servers.mjs`, owning only
-  `{name, transport:"http", url:"http://garden-outlook:8000/mcp"}`; marker
+- A third `lolloctl mcp` group `outlook` in `lib/mcp-servers.mjs`, owning only
+  `{name, transport:"http", url:"http://lollo-outlook:8000/mcp"}`; marker
   `OUTLOOK_MCP_REGISTERED`. It does **not** need the `google` profile.
 
 ## Tests and docs

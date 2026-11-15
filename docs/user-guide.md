@@ -1,24 +1,26 @@
-# Your Lettuce stack
+# Your stack
 
-This page is for you if someone runs lettuce-garden and has given you a stack. It covers what you get, how to sign in and where to start. Whoever runs the server is called the *admin* below.
+This page is for you if someone runs Lollo Rozzo and has given you a stack: your own AI agents, with memory, that learn and improve over time. It covers what you get, how to sign in and where to start. Whoever runs the server is called the *admin* below.
 
 ## What you get
-- **Your own agent server.** Letta agents with their own memory, conversations, workspaces and secrets. Nobody else's agents can reach yours, and yours can't reach theirs.
+- **Your own agents**, on a private agent server: [Letta Code](https://github.com/letta-ai/letta-code) agents with their own memory, conversations, workspaces and secrets. They remember what you tell them and improve over time by rewriting their own memory and skills. Nobody else's agents can reach yours, and yours can't reach theirs.
 - **Lettuce**, the web app for talking to your agents, at `https://<name>.<domain>`. It is a PWA: on a phone, add it to the Home Screen.
-- **Your garden** at `https://<name>-garden.<domain>/`, when the admin has turned on any of its pages. Its home page links to each one that is on:
+- **Your lollo**, the extras' pages, at `https://<name>-lollo.<domain>/`, when the admin has turned on any of them. Its home page links to each one that is on:
 
   | Page | What it does | Guide |
   |---|---|---|
   | Vault, `/vault/` | Keeps your logins, cards, identities, notes and SSH keys encrypted with your own passphrase (you can import them from Bitwarden). Agents ask to use one, and you approve each request, unless you let an everyday detail such as an address be used without asking. By default agents fill the values in without reading them. | [Using the vault](vault.md#using-it) |
   | Gmail triggers, `/gmail-triggers/` | Rules such as "when an email arrives in label X, ask agent Y to do Z". | [Using Gmail triggers](gmail-triggers.md#using-it) |
+  | News Radar, `/news-radar/` | What your agents keep an eye on for you (films, concerts, news on a topic) and when they report; ask an agent to set one up. | [Using News Radar](news-radar.md#using-it) |
   | Code editor, `/code-server/` | VS Code in the browser on your agents' workspaces, with a terminal that has the agents' tools. | [Using the code editor](code-server.md#using-it) |
+  | Outlook, `/outlook/` | Your Outlook mail, calendar and tasks for your agents, as far as you allow: you connect your Outlook once and choose what agents may read, write and send, and to whom. | [Using Outlook](outlook.md#using-it) |
 
   Two more features have no page: your agents may have Office and PDF tools ([document tools](doc-tools.md#using-it)), and their web traffic may go through a proxy that checks where it goes and records it, which catches mistakes but is not a wall: an agent can go around it ([egress proxy](egress-firewall.md)). Ask your admin which are on.
 
 The admin tells you your exact addresses (`<name>` and `<domain>` above).
 
 ## Signing in
-Open your Lettuce address and sign in with the Google account the admin allowed. The garden uses the same sign-in. You are signed in to each address separately, so the garden may ask once more.
+Open your Lettuce address and sign in with the Google account the admin allowed. The lollo uses the same sign-in. You are signed in to each address separately, so the lollo may ask once more.
 
 If Cloudflare says you may not sign in, or Lettuce says forbidden or unknown user, your email is not on the stack's list yet: ask the admin.
 

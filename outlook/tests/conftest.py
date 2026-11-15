@@ -7,13 +7,13 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from garden_common.auth import Authenticator
+from lollo_common.auth import Authenticator
 
-from garden_outlook.config import Settings
-from garden_outlook.service import Service
+from lollo_outlook.config import Settings
+from lollo_outlook.service import Service
 
 EMAIL = "alfred@gmail.com"
-ORIGIN = "https://alfred-garden.example.com"
+ORIGIN = "https://alfred-lollo.example.com"
 OUTLOOK_SECRET = "0123456789abcdef0123456789abcdef"
 # A fake mail body that tests assert never reaches logs.
 CANARY = "CANARY_OUTLOOK_5521_DO_NOT_LEAK"
@@ -137,7 +137,7 @@ def service(settings: Settings, fake_outlook: FakeOutlook) -> Service:
 def connect(service: Service, expires_in: float = 3600.0) -> None:
     """Put a usable session straight into the store (no bookmarklet, no redemption),
     with a Graph access token already set so tool calls do not refresh."""
-    from garden_outlook.tokens import Session
+    from lollo_outlook.tokens import Session
 
     service.store.set(
         Session(

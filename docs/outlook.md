@@ -4,7 +4,7 @@ Each stack can connect **one Outlook mailbox** for its agents: mail, calendar an
 tasks, plus read-only access to shared mailboxes. The person connects their own
 signed-in Outlook web session with a bookmarklet, and decides on a web page exactly
 how far agents may go — read only, organise, draft, send — and who they may send to.
-It is opt-in, behind the `garden-outlook` profile.
+It is opt-in, behind the `lollo-outlook` profile.
 
 Unlike the Google Workspace integration, this needs **no app registration and no
 admin consent**. It calls **Microsoft Graph** (the current, supported API), but it
@@ -23,8 +23,8 @@ How it is built and wired, for developers: [outlook/README.md](../outlook/README
 
 ## Using it
 
-1. **Open `https://<your garden>/outlook/`** and sign in as usual; `<your garden>`
-   is your stack's garden address, `<name>-garden.<domain>`.
+1. **Open `https://<your lollo>/outlook/`** and sign in as usual; `<your lollo>`
+   is your stack's lollo address, `<name>-lollo.<domain>`.
 2. **Add the bookmarklet.** Drag the **Connect Outlook** link on that page to your
    browser's bookmarks bar. Expand "What the bookmarklet does" to read it first — it
    reads the sign-in your browser already holds for Outlook and sends it to your
@@ -51,22 +51,22 @@ How it is built and wired, for developers: [outlook/README.md](../outlook/README
    - **Shared mailboxes:** one address per line. Agents may *read* these mailboxes
      and never write to them.
 
-To stop, **Disconnect** on the page, or turn the `garden-outlook` profile off.
+To stop, **Disconnect** on the page, or turn the `lollo-outlook` profile off.
 
 ## Running it
 - **Turn it on:**
   ```bash
-  lettucectl profiles <current list>,garden-outlook      # e.g. cloudflared,search,garden-outlook
+  lolloctl profiles <current list>,lollo-outlook      # e.g. cloudflared,search,lollo-outlook
   ```
-  This routes `https://<garden>/outlook/` (and the garden's home page) to the Outlook service on every stack, on the stack's garden address and its own Access application, then starts it. Each stack gets its own `OUTLOOK_SECRET` in `stack.env`, once: the key that encrypts the stored session. There is no Microsoft-side setup and no redirect URI to register. Dropping `garden-outlook` from the list removes the route and the container, and leaves the data where it is.
+  This routes `https://<lollo>/outlook/` (and the lollo's home page) to the Outlook service on every stack, on the stack's lollo address and its own Access application, then starts it. Each stack gets its own `OUTLOOK_SECRET` in `stack.env`, once: the key that encrypts the stored session. There is no Microsoft-side setup and no redirect URI to register. Dropping `lollo-outlook` from the list removes the route and the container, and leaves the data where it is.
 - **Register it with the agents:**
   ```bash
-  lettucectl mcp all      # adds outlook (and the other garden servers that are on) to each Settings -> MCP
+  lolloctl mcp all      # adds outlook (and the other lollo servers that are on) to each Settings -> MCP
   ```
-  `add` does this for a new stack, and `profiles` prints, for each stack, whether it is registered or the entry to add by hand. `mcp` adds `{"name": "outlook", "transport": "http", "url": "http://garden-outlook:8000/mcp"}` once per stack (`OUTLOOK_MCP_REGISTERED` in `stack.env`), so a person who removes it keeps it removed; `mcp <name> --force` adds it again. An HTTP entry with that exact URL counts as Outlook whatever its name; a different server named `outlook` is left alone, and nothing is added (it says so). It then restarts the stack's BFF alone so agents see it. With `garden-outlook` dropped from the list, `up` and `profiles` remove the entry they registered; if that fails, the next `up` or `profiles` retries it.
-- **Data:** the sealed session and the policy live in the Docker volume `lettuce-<name>_outlook-data`, not under `stacks/<name>/`. `lettucectl backup` deliberately does **not** copy it: reconnecting with the bookmarklet is cheap, and a backup should not carry a live mail credential. After a restore, the person reconnects and sets the policy again.
-- **Removal:** `lettucectl remove <name>` deletes the volume, so removing a stack deletes its Outlook session and policy.
-- **Isolation:** the Outlook container has a read-only root filesystem and no capabilities, and no host mounts. Its volume is mounted by nothing else. With `garden-pipelock`, agents' calls to it bypass the proxy (`NO_PROXY`), and the service itself calls Microsoft directly, so pipelock never sees the token or the mail. `lettucectl check` refuses a stack where any of that is not true.
+  `add` does this for a new stack, and `profiles` prints, for each stack, whether it is registered or the entry to add by hand. `mcp` adds `{"name": "outlook", "transport": "http", "url": "http://lollo-outlook:8000/mcp"}` once per stack (`OUTLOOK_MCP_REGISTERED` in `stack.env`), so a person who removes it keeps it removed; `mcp <name> --force` adds it again. An HTTP entry with that exact URL counts as Outlook whatever its name; a different server named `outlook` is left alone, and nothing is added (it says so). It then restarts the stack's BFF alone so agents see it. With `lollo-outlook` dropped from the list, `up` and `profiles` remove the entry they registered; if that fails, the next `up` or `profiles` retries it.
+- **Data:** the sealed session and the policy live in the Docker volume `lollo-<name>_outlook-data`, not under `stacks/<name>/`. `lolloctl backup` deliberately does **not** copy it: reconnecting with the bookmarklet is cheap, and a backup should not carry a live mail credential. After a restore, the person reconnects and sets the policy again.
+- **Removal:** `lolloctl remove <name>` deletes the volume, so removing a stack deletes its Outlook session and policy.
+- **Isolation:** the Outlook container has a read-only root filesystem, no capabilities, no host mounts, and the stack's default network only. Its volume is mounted by nothing else. With `lollo-pipelock`, agents' calls to it bypass the proxy (`NO_PROXY`), and the service itself calls Microsoft directly, so pipelock never sees the token or the mail. `lolloctl check` refuses a stack where any of that is not true.
 
 ## Security model
 What the Outlook connection protects, and what it does not.
@@ -75,7 +75,7 @@ What the Outlook connection protects, and what it does not.
 - **The token stays in the sidecar.** Agents get MCP tools only; the bearer token
   and refresh material never reach them. They are sealed with `OUTLOOK_SECRET`
   (held only in the sidecar's environment, never on the data volume) on a volume no
-  other service mounts — `lettucectl check` refuses a stack where one does.
+  other service mounts — `lolloctl check` refuses a stack where one does.
 - **The level and recipient list are the boundary, and they are real.** Every tool
   checks the policy before acting, in the sidecar, so an agent calling the endpoint
   directly cannot exceed its level or send to an off-list address. There is no

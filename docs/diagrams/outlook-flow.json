@@ -7,10 +7,10 @@
     "locale": "en",
     "quality_profile": "showcase",
     "repository": {
-      "url": "https://github.com/dmarcelino/lettuce-garden.git",
+      "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "2d79144625430931a6cff853a8bc5e22c9e3cfd0"
+      "revision": "ec4957f01fcc36d5c0442403a3858f5e1a589737"
     }
   },
   "participants": [
@@ -22,7 +22,7 @@
       "sublabel": "in your browser",
       "sources": [
         {
-          "path": "outlook/src/garden_outlook/app.py",
+          "path": "outlook/src/lollo_outlook/app.py",
           "line": 116,
           "end_line": 129,
           "label": "the policy you save"
@@ -36,7 +36,7 @@
       "sublabel": "the bookmarklet runs here",
       "sources": [
         {
-          "path": "outlook/src/garden_outlook/bookmarklet.py",
+          "path": "outlook/src/lollo_outlook/bookmarklet.py",
           "line": 1,
           "end_line": 16,
           "label": "what the bookmarklet reads and opens"
@@ -44,19 +44,19 @@
       ]
     },
     {
-      "id": "garden",
+      "id": "lollo",
       "type": "security",
       "label": "Your Outlook service",
-      "sublabel": "<garden>/outlook/",
+      "sublabel": "<lollo>/outlook/",
       "sources": [
         {
-          "path": "outlook/src/garden_outlook/service.py",
+          "path": "outlook/src/lollo_outlook/service.py",
           "line": 61,
           "end_line": 68,
           "label": "connect redeems at once"
         },
         {
-          "path": "outlook/src/garden_outlook/mcp_tools.py",
+          "path": "outlook/src/lollo_outlook/mcp_tools.py",
           "line": 182,
           "end_line": 200,
           "label": "every tool checks the policy"
@@ -70,7 +70,7 @@
       "sublabel": "sign-in and Graph",
       "sources": [
         {
-          "path": "outlook/src/garden_outlook/outlook_client.py",
+          "path": "outlook/src/lollo_outlook/outlook_client.py",
           "line": 1,
           "end_line": 14,
           "label": "FOCI redemption and Graph"
@@ -121,7 +121,7 @@
     {
       "id": "handover",
       "from": "owa",
-      "to": "garden",
+      "to": "lollo",
       "y": 235,
       "label": "opens /outlook/#connect=... with the sign-in",
       "variant": "emphasis",
@@ -129,7 +129,7 @@
     },
     {
       "id": "redeem",
-      "from": "garden",
+      "from": "lollo",
       "to": "microsoft",
       "y": 295,
       "label": "redeem the refresh token for a Graph token",
@@ -138,7 +138,7 @@
     {
       "id": "token",
       "from": "microsoft",
-      "to": "garden",
+      "to": "lollo",
       "y": 325,
       "label": "a Graph token, or a refusal",
       "variant": "return",
@@ -147,16 +147,16 @@
     {
       "id": "policy",
       "from": "you",
-      "to": "garden",
+      "to": "lollo",
       "y": 425,
       "label": "levels, allowed recipients, shared mailboxes",
       "variant": "security",
-      "note": "signed in to your garden; agents can't change these"
+      "note": "signed in to your lollo pages; agents can't change these"
     },
     {
       "id": "call",
       "from": "agent",
-      "to": "garden",
+      "to": "lollo",
       "y": 510,
       "label": "an MCP tool, e.g. send_draft",
       "variant": "emphasis",
@@ -164,7 +164,7 @@
     },
     {
       "id": "graph",
-      "from": "garden",
+      "from": "lollo",
       "to": "microsoft",
       "y": 570,
       "label": "only what the policy allows",
@@ -173,14 +173,14 @@
     {
       "id": "result",
       "from": "microsoft",
-      "to": "garden",
+      "to": "lollo",
       "y": 630,
       "label": "the Graph result",
       "variant": "return"
     },
     {
       "id": "answer",
-      "from": "garden",
+      "from": "lollo",
       "to": "agent",
       "y": 660,
       "label": "the result, or refused and why",
@@ -213,7 +213,7 @@
       "title": "Where things live",
       "items": [
         "The token stays sealed in the Outlook service's own volume",
-        "Not in lettucectl backup: after a restore you connect again",
+        "Not in lolloctl backup: after a restore you connect again",
         "Disconnect on the page, or the admin turns the profile off"
       ]
     }

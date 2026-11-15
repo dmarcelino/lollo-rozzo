@@ -1,5 +1,5 @@
-"""The ASGI app: the Gmail triggers pages under /gmail-triggers on the garden's
-host (every route needs a verified Access JWT, every POST the garden's Origin
+"""The ASGI app: the Gmail triggers pages under /gmail-triggers on the lollo's
+host (every route needs a verified Access JWT, every POST the lollo's Origin
 and a CSRF token), the executor's API at /executor/v1/ (executor_api.py; token,
 no Access) and /healthz. The pages need no JavaScript."""
 
@@ -15,10 +15,10 @@ from importlib import resources
 from typing import Any
 
 import anyio
-from garden_common.auth import COOP, FORM, PAGE, Authenticator, AuthError, admit
-from garden_common.executor import AGENT_ID
-from garden_common.garden import stylesheet
-from garden_common.text import encodable
+from lollo_common.auth import COOP, FORM, PAGE, Authenticator, AuthError, admit
+from lollo_common.executor import AGENT_ID
+from lollo_common.lollo import stylesheet
+from lollo_common.text import encodable
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -285,7 +285,7 @@ def create_app(
     env = Environment(loader=PackageLoader("gmail_triggers", "templates"), autoescape=select_autoescape(default=True))
     env.filters["time"] = _fmt_time
     env.globals.update(base=PREFIX, status_text=_status_text, conversations=CONVERSATIONS)
-    garden_css = stylesheet()
+    lollo_css = stylesheet()
     app_css = (resources.files("gmail_triggers") / "static" / "app.css").read_bytes()
 
     def render(name: str, email: str, status: int = 200, **ctx: Any) -> HTMLResponse:
@@ -374,7 +374,17 @@ def create_app(
             )
         for gap in store.gaps_since(now - 7 * 86400)[:3]:
             title, text = gap_text(gap)
-            out.append({"level": "warn", "title": title, "text": text})
+            start, end = _fmt_time(gap["start"]), _fmt_time(gap["end"])
+            when = f"at {end}" if start == end else f"from {start} to {end}"
+            out.append(
+                {
+                    "level": "warn",
+                    "title": title,
+                    "text": text,
+                    "dismiss": str(gap["id"]),
+                    "dismiss_label": f"Dismiss: {title}, {when}",
+                }
+            )
         return out
 
     # -- pages ----------------------------------------------------------------
@@ -476,6 +486,12 @@ def create_app(
         store.delete_rule(rule.id)
         return back("/?done=deleted")
 
+    async def dismiss_gap(request: Request, email: str) -> Response:
+        gid = request.path_params["gid"]
+        if not (gid.isascii() and gid.isdigit() and len(gid) <= 18 and store.dismiss_gap(int(gid))):
+            raise FormError("This notice doesn't exist (any more).")
+        return back("/")
+
     async def history(request: Request, email: str) -> Response:
         rule = get_rule(request)
         store.expire_claims(LOST_AFTER_SECONDS)
@@ -525,7 +541,8 @@ def create_app(
         Route("/r/{rid}/delete", page(delete, post=True), methods=["POST"]),
         Route("/r/{rid}/history", page(history)),
         Route("/r/{rid}/test", page(test, post=True), methods=["POST"]),
-        Route("/garden.css", page(static(garden_css, "text/css"), asset=True)),
+        Route("/gaps/{gid}/dismiss", page(dismiss_gap, post=True), methods=["POST"]),
+        Route("/lollo.css", page(static(lollo_css, "text/css"), asset=True)),
         Route("/app.css", page(static(app_css, "text/css"), asset=True)),
         Route("/icon-192.png", page(icon(192), asset=True)),
         Route("/icon-512.png", page(icon(512), asset=True)),

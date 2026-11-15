@@ -2,8 +2,8 @@ import logging
 
 import pytest
 
-from garden_outlook import logs
-from garden_outlook.tokens import ConnectError, SessionStore, session_from_payload
+from lollo_outlook import logs
+from lollo_outlook.tokens import ConnectError, SessionStore, session_from_payload
 
 from .conftest import EMAIL
 
@@ -90,7 +90,7 @@ def test_logs_filter_scrubs_the_token(settings):
     logs.setup()
     store = SessionStore(settings)
     store.set(session_from_payload(GOOD))
-    logger = logging.getLogger("garden_outlook.test")
+    logger = logging.getLogger("lollo_outlook.test")
     record = logger.makeRecord("x", logging.INFO, __file__, 1, "token is refresh-token-def-123456", None, None)
     assert logs.SECRET_FILTER.filter(record) is True
     assert "refresh-token-def-123456" not in record.getMessage()

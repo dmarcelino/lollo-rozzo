@@ -4,11 +4,11 @@ would), so the test exercises the actual tool handlers, not a shortcut."""
 import pytest
 from starlette.testclient import TestClient
 
-from garden_outlook.app import create_app
+from lollo_outlook.app import create_app
 
 from .conftest import ORIGIN, connect
 
-MCP = "http://garden-outlook:8000/mcp"
+MCP = "http://lollo-outlook:8000/mcp"
 
 
 @pytest.fixture

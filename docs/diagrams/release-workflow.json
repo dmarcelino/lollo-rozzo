@@ -7,10 +7,10 @@
     "locale": "en",
     "quality_profile": "showcase",
     "repository": {
-      "url": "https://github.com/dmarcelino/lettuce-garden.git",
+      "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "878eedd44b4bc61d399f9f66545d2ed1cd111f38"
+      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
     },
     "legend": {
       "entries": {
@@ -62,8 +62,8 @@
   "phases": [
     {
       "id": "per-image",
-      "label": "One job per image, in parallel",
-      "fromCol": 3,
+      "label": "Per image and platform, then per image, in parallel",
+      "fromCol": 2,
       "toCol": 3,
       "variant": "emphasis"
     }
@@ -72,6 +72,7 @@
     "tag",
     "checks",
     "plan",
+    "build",
     "image",
     "ctl-job",
     "assets",
@@ -89,8 +90,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 18,
-          "end_line": 20,
+          "line": 28,
+          "end_line": 30,
           "label": "on: push tags"
         },
         {
@@ -102,15 +103,15 @@
     {
       "id": "checks",
       "lane": "actions",
-      "col": 1,
+      "col": 0,
       "type": "backend",
       "label": "checks",
       "sublabel": "every job of ci.yml",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 29,
-          "end_line": 31,
+          "line": 40,
+          "end_line": 41,
           "label": "uses ci.yml"
         }
       ]
@@ -118,7 +119,7 @@
     {
       "id": "plan",
       "lane": "actions",
-      "col": 2,
+      "col": 1,
       "type": "backend",
       "label": "plan",
       "sublabel": "tag matches VERSION",
@@ -126,8 +127,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 33,
-          "end_line": 56,
+          "line": 43,
+          "end_line": 66,
           "label": "tag check, image list"
         },
         {
@@ -140,22 +141,51 @@
     {
       "id": "stop",
       "lane": "stopped",
-      "col": 3,
+      "col": 2,
       "type": "security",
       "label": "fail",
       "sublabel": "no release",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 46,
-          "end_line": 51,
+          "line": 57,
+          "end_line": 61,
           "label": "tag and VERSION disagree"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 163,
-          "end_line": 168,
+          "line": 234,
+          "end_line": 238,
           "label": "not on both platforms"
+        }
+      ]
+    },
+    {
+      "id": "build",
+      "lane": "actions",
+      "col": 2,
+      "type": "backend",
+      "label": "build",
+      "sublabel": "per platform, native runner",
+      "tag": "amd64 + arm64 runners",
+      "sources": [
+        {
+          "path": ".github/workflows/publish.yml",
+          "line": 68,
+          "end_line": 86,
+          "label": "one job per image and platform"
+        },
+        {
+          "path": ".github/workflows/publish.yml",
+          "line": 97,
+          "end_line": 113,
+          "label": "reuse, or build and push by digest"
+        },
+        {
+          "path": "release/content-tag",
+          "line": 1,
+          "end_line": 12,
+          "label": "what the tag hashes"
         }
       ]
     },
@@ -165,48 +195,42 @@
       "col": 3,
       "type": "backend",
       "label": "image",
-      "sublabel": "content tag; build only if new",
+      "sublabel": "content tag on both digests",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 86,
-          "end_line": 110,
-          "label": "reuse or build and push"
-        },
-        {
-          "path": "release/content-tag",
-          "line": 1,
-          "end_line": 12,
-          "label": "what the tag hashes"
+          "line": 157,
+          "end_line": 184,
+          "label": "reuse, or tag both digests"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 111,
-          "end_line": 116,
+          "line": 185,
+          "end_line": 190,
           "label": "attestation"
         }
       ]
     },
     {
-      "id": "garden-images",
+      "id": "lollo-images",
       "lane": "ghcr",
       "col": 3,
       "type": "database",
-      "label": "lettuce-<image>",
+      "label": "lollo-<image>",
       "sublabel": ":<content tag>, amd64 + arm64",
       "tag": "SBOM, provenance",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 96,
-          "end_line": 99,
-          "label": "both platforms, SBOM, provenance"
+          "line": 108,
+          "end_line": 110,
+          "label": "per platform, SBOM, provenance"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 108,
-          "end_line": 110,
-          "label": "full name with digest"
+          "line": 173,
+          "end_line": 184,
+          "label": "tagged, full name with digest"
         }
       ]
     },
@@ -215,23 +239,23 @@
       "lane": "actions",
       "col": 4,
       "type": "backend",
-      "label": "release",
-      "sublabel": "RELEASE, lettucectl image",
+      "label": "release-file, ctl",
+      "sublabel": "RELEASE, lolloctl",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 151,
-          "end_line": 162,
+          "line": 221,
+          "end_line": 238,
           "label": "write RELEASE"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 169,
-          "end_line": 183,
-          "label": "lettucectl image"
+          "line": 246,
+          "end_line": 288,
+          "label": "lolloctl, one job per platform"
         },
         {
-          "path": "release/lettucectl.Dockerfile",
+          "path": "release/lolloctl.Dockerfile",
           "line": 1,
           "end_line": 31
         }
@@ -242,14 +266,14 @@
       "lane": "ghcr",
       "col": 4,
       "type": "database",
-      "label": "lettucectl",
+      "label": "lolloctl",
       "sublabel": ":vX.Y.Z, carries RELEASE",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 173,
-          "end_line": 178,
-          "label": "pushed with its digest"
+          "line": 322,
+          "end_line": 336,
+          "label": "tagged on both digests"
         }
       ]
     },
@@ -263,14 +287,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 184,
-          "end_line": 194,
+          "line": 342,
+          "end_line": 352,
           "label": "wrapper and SHA256SUMS"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 195,
-          "end_line": 221,
+          "line": 353,
+          "end_line": 379,
           "label": "notes: what restarts"
         }
       ]
@@ -281,12 +305,12 @@
       "col": 5,
       "type": "cloud",
       "label": "vX.Y.Z",
-      "sublabel": "lettucectl, RELEASE, SHA256SUMS",
+      "sublabel": "lolloctl, RELEASE, SHA256SUMS",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 225,
-          "end_line": 231,
+          "line": 383,
+          "end_line": 389,
           "label": "gh release create"
         }
       ]
@@ -300,13 +324,13 @@
       "sublabel": "swaps after the pull",
       "sources": [
         {
-          "path": "release/lettucectl-wrapper.sh",
+          "path": "release/lolloctl-wrapper.sh",
           "line": 146,
           "end_line": 161,
           "label": "fetch, pull, then swap"
         },
         {
-          "path": "release/lettucectl-wrapper.sh",
+          "path": "release/lolloctl-wrapper.sh",
           "line": 30,
           "end_line": 34,
           "label": "the new wrapper pulls"
@@ -329,10 +353,17 @@
       "variant": "emphasis"
     },
     {
-      "id": "plan-image",
+      "id": "plan-build",
       "from": "plan",
+      "to": "build",
+      "label": "per image, platform",
+      "variant": "emphasis"
+    },
+    {
+      "id": "build-image",
+      "from": "build",
       "to": "image",
-      "label": "per line",
+      "label": "digests",
       "variant": "emphasis"
     },
     {
@@ -344,10 +375,17 @@
       "role": "error"
     },
     {
+      "id": "build-push",
+      "from": "build",
+      "to": "lollo-images",
+      "label": "push if new",
+      "role": "branch"
+    },
+    {
       "id": "image-push",
       "from": "image",
-      "to": "garden-images",
-      "label": "push if new",
+      "to": "lollo-images",
+      "label": "tag",
       "role": "branch"
     },
     {
@@ -399,8 +437,9 @@
       "dot": "cyan",
       "title": "Named by content",
       "items": [
-        "a garden image's tag hashes its build context, its shared context, its name and REBUILD",
-        "an unchanged image keeps its name and digest, so its container is not recreated and a vault stays unlocked"
+        "a lollo image's tag hashes its build context, its shared context, its name and REBUILD",
+        "an unchanged image keeps its name and digest, so its container is not recreated and a vault stays unlocked",
+        "each platform builds on a runner of its own architecture, never under emulation"
       ]
     },
     {
@@ -408,14 +447,14 @@
       "title": "Built on the admin's host, never published",
       "items": [
         "doc-tools (AGPL-3.0 PyMuPDF) and the code editor's shell (FROM the app-server's image)",
-        "both build contexts ship inside the lettucectl image"
+        "both build contexts ship inside the lolloctl image"
       ]
     },
     {
       "dot": "rose",
       "title": "Nothing moves after a release",
       "items": [
-        "no latest and nothing from main: the wrapper names the lettucectl image by digest",
+        "no latest and nothing from main: the wrapper names the lolloctl image by digest",
         "the notes list the images that changed, so which containers restart and whether vaults lock"
       ]
     }

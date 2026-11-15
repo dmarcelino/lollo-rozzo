@@ -942,8 +942,8 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="148.5" y="193" class="t-muted" font-size="7">signed in, mail loaded</text>
         </g>
 
-        <g data-edge-from="owa" data-edge-to="garden" data-edge-label="opens /outlook/#connect=... with the sign-in" data-edge-key="1" data-edge-id="handover">
-          <path data-composition-edge-from="owa" data-composition-edge-to="garden" data-composition-edge-id="handover" data-composition-points="307.25,235;464,235" d="M 307.25 235 L 464 235" class="a-emphasis" data-animate="edge" style="--step: 1;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-edge-from="owa" data-edge-to="lollo" data-edge-label="opens /outlook/#connect=... with the sign-in" data-edge-key="1" data-edge-id="handover">
+          <path data-composition-edge-from="owa" data-composition-edge-to="lollo" data-composition-edge-id="handover" data-composition-points="307.25,235;464,235" d="M 307.25 235 L 464 235" class="a-emphasis" data-animate="edge" style="--step: 1;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g>
           <rect x="234.425" y="215" width="302.4" height="18" rx="3" class="c-mask"/>
           <text x="385.625" y="225" class="t-edge-emphasis" font-size="11" text-anchor="middle">opens /outlook/#connect=... with the sign-in</text>
@@ -951,16 +951,16 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="319.25" y="253" class="t-muted" font-size="7"><tspan x="319.25" dy="0">in the URL fragment, which no</tspan><tspan x="319.25" dy="11">server log keeps</tspan></text>
         </g>
 
-        <g data-edge-from="garden" data-edge-to="microsoft" data-edge-label="redeem the refresh token for a Graph token" data-edge-key="2" data-edge-id="redeem">
-          <path data-composition-edge-from="garden" data-composition-edge-to="microsoft" data-composition-edge-id="redeem" data-composition-points="478,295;634.75,295" d="M 478 295 L 634.75 295" class="a-security" data-animate="edge" style="--step: 2;" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <g data-edge-from="lollo" data-edge-to="microsoft" data-edge-label="redeem the refresh token for a Graph token" data-edge-key="2" data-edge-id="redeem">
+          <path data-composition-edge-from="lollo" data-composition-edge-to="microsoft" data-composition-edge-id="redeem" data-composition-points="478,295;634.75,295" d="M 478 295 L 634.75 295" class="a-security" data-animate="edge" style="--step: 2;" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <g>
           <rect x="411.775" y="275" width="289.2" height="18" rx="3" class="c-mask"/>
           <text x="556.375" y="285" class="t-edge-security" font-size="11" text-anchor="middle">redeem the refresh token for a Graph token</text>
         </g>
         </g>
 
-        <g data-edge-from="microsoft" data-edge-to="garden" data-edge-label="a Graph token, or a refusal" data-edge-key="3" data-edge-id="token">
-          <path data-composition-edge-from="microsoft" data-composition-edge-to="garden" data-composition-edge-id="token" data-composition-points="634.75,325;478,325" d="M 634.75 325 L 478 325" class="a-default" data-animate="edge" style="--step: 3;" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="microsoft" data-edge-to="lollo" data-edge-label="a Graph token, or a refusal" data-edge-key="3" data-edge-id="token">
+          <path data-composition-edge-from="microsoft" data-composition-edge-to="lollo" data-composition-edge-id="token" data-composition-points="634.75,325;478,325" d="M 634.75 325 L 478 325" class="a-default" data-animate="edge" style="--step: 3;" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g>
           <rect x="461.275" y="305" width="190.2" height="18" rx="3" class="c-mask"/>
           <text x="556.375" y="315" class="t-muted" font-size="11" text-anchor="middle">a Graph token, or a refusal</text>
@@ -968,17 +968,17 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="490" y="343" class="t-muted" font-size="7"><tspan x="490" dy="0">kept sealed; a tenant's refusal</tspan><tspan x="490" dy="11">shows on the page</tspan></text>
         </g>
 
-        <g data-edge-from="you" data-edge-to="garden" data-edge-label="levels, allowed recipients, shared mailboxes" data-edge-key="4" data-edge-id="policy">
-          <path data-composition-edge-from="you" data-composition-edge-to="garden" data-composition-edge-id="policy" data-composition-points="136.5,425;464,425" d="M 136.5 425 L 464 425" class="a-security" data-animate="edge" style="--step: 4;" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <g data-edge-from="you" data-edge-to="lollo" data-edge-label="levels, allowed recipients, shared mailboxes" data-edge-key="4" data-edge-id="policy">
+          <path data-composition-edge-from="you" data-composition-edge-to="lollo" data-composition-edge-id="policy" data-composition-points="136.5,425;464,425" d="M 136.5 425 L 464 425" class="a-security" data-animate="edge" style="--step: 4;" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <g>
           <rect x="149.05" y="405" width="302.4" height="18" rx="3" class="c-mask"/>
           <text x="300.25" y="415" class="t-edge-security" font-size="11" text-anchor="middle">levels, allowed recipients, shared mailboxes</text>
         </g>
-        <text x="148.5" y="443" class="t-muted" font-size="7"><tspan x="148.5" dy="0">signed in to your garden; agents</tspan><tspan x="148.5" dy="11">can't change these</tspan></text>
+        <text x="148.5" y="443" class="t-muted" font-size="7"><tspan x="148.5" dy="0">signed in to your lollo pages;</tspan><tspan x="148.5" dy="11">agents can't change these</tspan></text>
         </g>
 
-        <g data-edge-from="agent" data-edge-to="garden" data-edge-label="an MCP tool, e.g. send_draft" data-edge-key="5" data-edge-id="call">
-          <path data-composition-edge-from="agent" data-composition-edge-to="garden" data-composition-edge-id="call" data-composition-points="805.5,510;478,510" d="M 805.5 510 L 478 510" class="a-emphasis" data-animate="edge" style="--step: 5;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-edge-from="agent" data-edge-to="lollo" data-edge-label="an MCP tool, e.g. send_draft" data-edge-key="5" data-edge-id="call">
+          <path data-composition-edge-from="agent" data-composition-edge-to="lollo" data-composition-edge-id="call" data-composition-points="805.5,510;478,510" d="M 805.5 510 L 478 510" class="a-emphasis" data-animate="edge" style="--step: 5;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g>
           <rect x="543.35" y="490" width="196.79999999999998" height="18" rx="3" class="c-mask"/>
           <text x="641.75" y="500" class="t-edge-emphasis" font-size="11" text-anchor="middle">an MCP tool, e.g. send_draft</text>
@@ -986,8 +986,8 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="490" y="528" class="t-muted" font-size="7">agents get tools, never the token</text>
         </g>
 
-        <g data-edge-from="garden" data-edge-to="microsoft" data-edge-label="only what the policy allows" data-edge-key="6" data-edge-id="graph">
-          <path data-composition-edge-from="garden" data-composition-edge-to="microsoft" data-composition-edge-id="graph" data-composition-points="478,570;634.75,570" d="M 478 570 L 634.75 570" class="a-default" data-animate="edge" style="--step: 6;" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="lollo" data-edge-to="microsoft" data-edge-label="only what the policy allows" data-edge-key="6" data-edge-id="graph">
+          <path data-composition-edge-from="lollo" data-composition-edge-to="microsoft" data-composition-edge-id="graph" data-composition-points="478,570;634.75,570" d="M 478 570 L 634.75 570" class="a-default" data-animate="edge" style="--step: 6;" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g>
           <rect x="461.275" y="550" width="190.2" height="18" rx="3" class="c-mask"/>
           <text x="556.375" y="560" class="t-muted" font-size="11" text-anchor="middle">only what the policy allows</text>
@@ -995,16 +995,16 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="490" y="588" class="t-muted" font-size="7"><tspan x="490" dy="0">level, recipients and self-events</tspan><tspan x="490" dy="11">checked first</tspan></text>
         </g>
 
-        <g data-edge-from="microsoft" data-edge-to="garden" data-edge-label="the Graph result" data-edge-key="7" data-edge-id="result">
-          <path data-composition-edge-from="microsoft" data-composition-edge-to="garden" data-composition-edge-id="result" data-composition-points="634.75,630;478,630" d="M 634.75 630 L 478 630" class="a-default" data-animate="edge" style="--step: 7;" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="microsoft" data-edge-to="lollo" data-edge-label="the Graph result" data-edge-key="7" data-edge-id="result">
+          <path data-composition-edge-from="microsoft" data-composition-edge-to="lollo" data-composition-edge-id="result" data-composition-points="634.75,630;478,630" d="M 634.75 630 L 478 630" class="a-default" data-animate="edge" style="--step: 7;" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g>
           <rect x="497.575" y="610" width="117.6" height="18" rx="3" class="c-mask"/>
           <text x="556.375" y="620" class="t-muted" font-size="11" text-anchor="middle">the Graph result</text>
         </g>
         </g>
 
-        <g data-edge-from="garden" data-edge-to="agent" data-edge-label="the result, or refused and why" data-edge-key="8" data-edge-id="answer">
-          <path data-composition-edge-from="garden" data-composition-edge-to="agent" data-composition-edge-id="answer" data-composition-points="478,660;805.5,660" d="M 478 660 L 805.5 660" class="a-default" data-animate="edge" style="--step: 8;" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="lollo" data-edge-to="agent" data-edge-label="the result, or refused and why" data-edge-key="8" data-edge-id="answer">
+          <path data-composition-edge-from="lollo" data-composition-edge-to="agent" data-composition-edge-id="answer" data-composition-points="478,660;805.5,660" d="M 478 660 L 805.5 660" class="a-default" data-animate="edge" style="--step: 8;" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g>
           <rect x="536.75" y="640" width="210" height="18" rx="3" class="c-mask"/>
           <text x="641.75" y="650" class="t-muted" font-size="11" text-anchor="middle">the result, or refused and why</text>
@@ -1052,8 +1052,8 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <text x="300.25" y="122" class="t-muted" font-size="7" text-anchor="middle">the bookmarklet runs here</text>
         </g>
 
-        <g id="node-garden" data-node-id="garden" data-node-label="Your Outlook service" tabindex="0" role="button" aria-label="Focus Your Outlook service, &lt;garden&gt;/outlook/, Sequence participant" aria-pressed="false" data-node-kind="security" data-node-sublabel="&lt;garden&gt;/outlook/" data-node-context="Sequence participant">
-          <title>Your Outlook service · &lt;garden&gt;/outlook/ · Sequence participant</title>
+        <g id="node-lollo" data-node-id="lollo" data-node-label="Your Outlook service" tabindex="0" role="button" aria-label="Focus Your Outlook service, &lt;lollo&gt;/outlook/, Sequence participant" aria-pressed="false" data-node-kind="security" data-node-sublabel="&lt;lollo&gt;/outlook/" data-node-context="Sequence participant">
+          <title>Your Outlook service · &lt;lollo&gt;/outlook/ · Sequence participant</title>
           <rect x="403.5" y="72" width="135" height="60" rx="6" class="c-mask"/>
           <rect x="403.5" y="72" width="135" height="60" rx="6" class="c-security" data-animate="node" style="--step: 2; --flow-node-name: archify-relay-node-2;" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(409.5 78) scale(0.6875)">
@@ -1061,7 +1061,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" x="471" y="108" class="t-primary" font-size="10.5" font-weight="600" text-anchor="middle">Your Outlook service</text>
-          <text x="471" y="122" class="t-muted" font-size="7" text-anchor="middle">&lt;garden&gt;/outlook/</text>
+          <text x="471" y="122" class="t-muted" font-size="7" text-anchor="middle">&lt;lollo&gt;/outlook/</text>
         </g>
 
         <g id="node-microsoft" data-node-id="microsoft" data-node-label="Microsoft" tabindex="0" role="button" aria-label="Focus Microsoft, sign-in and Graph, Sequence participant" aria-pressed="false" data-node-kind="external" data-node-sublabel="sign-in and Graph" data-node-context="Sequence participant">

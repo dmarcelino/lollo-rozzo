@@ -5,10 +5,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from garden_common.executor import EXECUTOR_TOKEN
+from lollo_common.executor import EXECUTOR_TOKEN
 
-# The pages live under this path on the garden's host, behind the tunnel route
-# of the same name. The executor's API (garden_common.executor) is outside it,
+# The pages live under this path on the lollo's host, behind the tunnel route
+# of the same name. The executor's API (lollo_common.executor) is outside it,
 # so the tunnel never routes it.
 PREFIX = "/gmail-triggers"
 
@@ -19,9 +19,13 @@ HEARTBEAT_STALE_SECONDS = 180
 LOST_AFTER_SECONDS = 600
 # Requests handed to the executor per call.
 MAX_CLAIM = 20
-# Google unusable for longer than this: start again from now instead of
-# replaying what arrived meanwhile.
+# Google switched off or disconnected for longer than this: start again from
+# now instead of replaying what arrived meanwhile.
 RESUME_AFTER_SECONDS = 1800
+# A pause nobody chose (the sign-in expired, Gmail not allowed): catch up from
+# the stored history position if Google is back within this long of the last
+# good poll; past it, start again from now.
+CATCH_UP_SECONDS = 48 * 3600
 
 DEFAULT_MAX_PER_HOUR = 6
 MAX_MAX_PER_HOUR = 60
@@ -56,7 +60,7 @@ class Settings:
     issuer: str
     allowed_users: frozenset[str]
     public_origin: str
-    # The executor's bearer token, GARDEN_EXECUTOR_TOKEN (compose passes it from stack.env).
+    # The executor's bearer token, LOLLO_EXECUTOR_TOKEN (compose passes it from stack.env).
     executor_token: str = field(repr=False)
     data_dir: str = "/data"
     creds_dir: str = "/creds"
@@ -88,9 +92,9 @@ class Settings:
             raise ConfigError("POLL_SECONDS must be a number of seconds") from e
         if not 30 <= poll <= 3600:
             raise ConfigError("POLL_SECONDS must be between 30 and 3600")
-        token = env.get("GARDEN_EXECUTOR_TOKEN", "").strip()
+        token = env.get("LOLLO_EXECUTOR_TOKEN", "").strip()
         if not EXECUTOR_TOKEN.fullmatch(token):
-            raise ConfigError("GARDEN_EXECUTOR_TOKEN must be 64 lowercase hex characters")
+            raise ConfigError("LOLLO_EXECUTOR_TOKEN must be 64 lowercase hex characters")
         return cls(
             team_domain=team,
             audience=required("CF_ACCESS_AUD"),

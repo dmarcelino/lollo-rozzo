@@ -1,1 +1,0 @@
-"""Lettuce Outlook sidecar."""

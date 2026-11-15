@@ -1,6 +1,6 @@
 import pytest
 
-from garden_outlook.levels import (
+from lollo_outlook.levels import (
     InvalidPolicy,
     Policy,
     apply_update,

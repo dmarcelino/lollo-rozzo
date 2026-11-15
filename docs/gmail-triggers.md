@@ -1,8 +1,8 @@
 # Gmail triggers
 
-Each stack can have Gmail triggers: rules like "when an email arrives in the *Invoices* label, ask my agent to file it". The person sets them up on a web page, with no technical knowledge needed. Checking Gmail costs nothing; an agent runs only when a rule matches. It is opt-in, behind the `garden-gmail-triggers` profile, and needs the `google` profile with the person's Google account connected in Lettuce.
+Each stack can have Gmail triggers: rules like "when an email arrives in the *Invoices* label, ask my agent to file it". The person sets them up on a web page, with no technical knowledge needed. Checking Gmail costs nothing; an agent runs only when a rule matches. It is opt-in, behind the `lollo-gmail-triggers` profile, and needs the `google` profile with the person's Google account connected in Lettuce.
 
-![From a new email to an agent at work: Gmail, Gmail triggers, the garden executor, Lettuce's scheduler, the agent](diagrams/gmail-triggers-flow.svg)
+![From a new email to an agent at work: Gmail, Gmail triggers, the lollo executor, Lettuce's scheduler, the agent](diagrams/gmail-triggers-flow.svg)
 
 An interactive version, [gmail-triggers-flow.html](diagrams/gmail-triggers-flow.html), opens in a browser from a clone of this repo.
 
@@ -10,7 +10,7 @@ How Gmail triggers are built and wired, for developers: [gmail-triggers/README.m
 
 ## Using it
 1. **Connect Google in Lettuce first:** Settings -> Google, with Gmail read access at least.
-2. **Open `https://<your garden>/gmail-triggers/`** and sign in as usual; `<your garden>` is your stack's garden address, `<name>-garden.<domain>`. Its home page, `https://<your garden>/`, links to it too.
+2. **Open `https://<your lollo>/gmail-triggers/`** and sign in as usual; `<your lollo>` is your stack's lollo address, `<name>-lollo.<domain>`. Its home page, `https://<your lollo>/`, links to it too.
 3. **Add a trigger:** press **New trigger** and fill in:
    - **When mail arrives in**: one or more Gmail labels. A Gmail filter that puts the mail you care about in its own label works best: a label Gmail adds as the mail arrives counts, one you add by hand later doesn't.
    - **Only from**: optionally, the senders allowed to set it off, one address per line. Leave **Only if Gmail verified the sender** on: addresses are easy to fake.
@@ -20,7 +20,7 @@ How Gmail triggers are built and wired, for developers: [gmail-triggers/README.m
    - **At most**: how many times per hour it may run (1 to 60). A run takes up to 30 emails; more than that, or mail over the limit, waits and goes in the next allowed run, oldest first. Up to 500 emails can wait per trigger; newer matches beyond that are dropped, and the page says so. A trigger that keeps hitting this needs more runs per hour or narrower labels or senders. Turning a trigger off or deleting it drops what was waiting.
 4. **Try it:** **Send a test** checks that the trigger reaches the agent: it gets your instructions with no email and is told to reply with one fixed line and touch no mail. Tests don't count toward the hourly limit.
 5. **See what happened:** each trigger's **History** lists the emails that matched and whether the agent was started: *Waiting for Lettuce*, *Sent to Lettuce*, the task created, an error, or *Lost* (Lettuce took the request but hasn't answered within 10 minutes; it is never handed out again, so an agent never runs twice for the same mail, and a late answer still replaces *Lost*). The runs also show in Lettuce's **Tasks** tab as "Gmail: <trigger name>".
-6. **Mail that isn't checked:** old mail is never replayed. When Google was switched off or disconnected for more than 30 minutes, checking starts again from now; when Gmail's change history has expired, likewise; and when more than 200 new messages arrive at once, the rest are skipped. The page says so each time. A Gmail rate limit or a network error is not a pause: the next check catches up.
+6. **Mail that isn't checked:** when you switch Google off, disconnect it or stop allowing Gmail in Settings -> Google for more than 30 minutes, mail that arrived meanwhile is not replayed: checking starts again from now. When Google stops on its own (the sign-in expired) and you reconnect within 48 hours, even with Disconnect then Connect, the mail that arrived meanwhile is checked; after longer, checking starts again from now. When Gmail's change history has expired, checking starts again from now too, and when more than 200 new messages arrive at once, the rest are skipped. The page says so each time, for 7 days; once you have dealt with that mail, **Dismiss** removes the notice. A Gmail rate limit or a network error is not a pause: the next check catches up.
 
 Each person can have up to 50 triggers. A matching email reaches the agent within about five minutes: Gmail is checked every 2 minutes, the executor picks requests up once a minute, and Lettuce starts the task at the next minute.
 
@@ -28,16 +28,16 @@ The agent never gets the email itself from the trigger, only its id, sender and 
 
 ## Running it
 ```bash
-lettucectl profiles cloudflared,google,garden-gmail-triggers   # plus whatever else you run
+lolloctl profiles cloudflared,google,lollo-gmail-triggers   # plus whatever else you run
 ```
 - The profile needs `google`; `check` refuses it otherwise. It adds no Google redirect URI: it reuses the account each person connected in Settings -> Google.
-- `profiles` routes `https://<garden>/gmail-triggers/` to the sidecar on every stack, on the stack's garden address and its own Access application, and `up` installs the garden executor in the app-server with Gmail triggers' part on. Dropping the profile removes the route and the container and turns that part off (the executor itself stays while the code editor is on, for its agent list); the rules stay in the stack's state.
-- Rules and pending requests live in `stacks/<name>/state/garden/gmail-triggers/` and are included in `backup`. Each stack gets a `GARDEN_EXECUTOR_TOKEN` in `stack.env`, generated once; `up` installs it for the executor.
-- Logs: `lettucectl logs <name> garden-gmail-triggers`; the executor writes `/root/.letta/garden/executor/executor.log` in the app-server (`lettucectl shell <name> <agent>` can read it).
+- `profiles` routes `https://<lollo>/gmail-triggers/` to the sidecar on every stack, on the stack's lollo address and its own Access application, and `up` installs the lollo executor in the app-server with Gmail triggers' part on. Dropping the profile removes the route and the container and turns that part off (the executor itself stays while the code editor is on, for its agent list); the rules stay in the stack's state.
+- Rules and pending requests live in `stacks/<name>/state/lollo/gmail-triggers/` and are included in `backup`. Each stack gets a `LOLLO_EXECUTOR_TOKEN` in `stack.env`, generated once; `up` installs it for the executor.
+- Logs: `lolloctl logs <name> lollo-gmail-triggers`; the executor writes `/root/.letta/lollo/executor/executor.log` in the app-server (`lolloctl shell <name> <agent>` can read it).
 
 ## Security model
-- **Every page needs Cloudflare Access.** The sidecar checks the Access JWT on every request and CSRF on every form, like the vault, because agents can reach it over the stack network. Like the vault's, its pages load only as top-level pages and its forms post only from its own pages (Fetch Metadata), and they open cut off from any other tab (Cross-Origin-Opener-Policy), so a script on the same address can't read a form token or make a rule. `<garden>/gmail-triggers/` is a route that bypasses the BFF; rules must live where agents can't edit them.
-- **Agents can't change triggers.** Rules are in `state/garden/`, which the app-server does not mount.
+- **Every page needs Cloudflare Access.** The sidecar checks the Access JWT on every request and CSRF on every form, like the vault, because agents can reach it over the stack network. Like the vault's, its pages load only as top-level pages and its forms post only from its own pages (Fetch Metadata), and they open cut off from any other tab (Cross-Origin-Opener-Policy), so a script on the same address can't read a form token or make a rule. `<lollo>/gmail-triggers/` is a route that bypasses the BFF; rules must live where agents can't edit them.
+- **Agents can't change triggers.** Rules are in `state/lollo/`, which the app-server does not mount.
 - **No second way into the agents.** The sidecar never connects to the app-server. An executor installed in the app-server fetches its pending requests over the stack network (`/executor/v1/`, which the tunnel never routes) and turns each into a one-off scheduled task with letta-code's own `letta cron add`. Lettuce's scheduler then starts the turn on the BFF's connection, the only one. This gives agents nothing new, since they can already create scheduled tasks themselves.
 - **Agents can see what the executor sees.** They are root in the app-server, so they can read the executor's token and use the API like it: read pending requests (the trigger's prompt, message ids, senders and subjects), claim or drop them, or report false results or a false agent list, whose names the trigger form then shows as text. They can't create requests, and running one does no more than they could already do with `letta cron add`. The token keeps out the stack's other containers. Each side treats what the other sends as untrusted, and a request is never handed out twice.
 - **No directory is shared with the app-server.** The sidecar and the executor talk only over the stack network, and the sidecar's only folder on the host is its own rules directory.

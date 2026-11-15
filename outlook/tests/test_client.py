@@ -1,8 +1,8 @@
 import httpx
 import pytest
 
-from garden_outlook.outlook_client import OutlookError
-from garden_outlook.tokens import ConnectError, LostAccess
+from lollo_outlook.outlook_client import OutlookError
+from lollo_outlook.tokens import ConnectError, LostAccess
 
 from .conftest import EMAIL, connect
 
@@ -36,7 +36,7 @@ async def test_connect_rejects_a_payload_with_no_refresh_token(service):
 
 
 async def test_connect_surfaces_a_tenant_refusal(settings):
-    from garden_outlook.service import Service
+    from lollo_outlook.service import Service
 
     def refuse(request):
         if "login.microsoftonline.com" in request.url.host:

@@ -1,6 +1,6 @@
 import pytest
 
-from garden_outlook.recipients import (
+from lollo_outlook.recipients import (
     AllowedRecipients,
     InvalidRecipientEntry,
     normalize_entries,

@@ -1,9 +1,9 @@
 [project]
-name = "garden-outlook"
+name = "lollo-outlook"
 version = "0.1.0"
-description = "Lettuce Outlook sidecar: an agent-facing Outlook mailbox under a per-stack policy"
+description = "Lollo Rozzo sidecar: an agent-facing Outlook mailbox under a per-stack policy"
 requires-python = ">=3.12"
-# Pinned: this is an application image, rebuilt on every `lettucectl up`.
+# Pinned: this is an application image, rebuilt on every `lolloctl up`.
 dependencies = [
   "mcp==2.3.0",
   "anyio==4.15.1",
@@ -27,7 +27,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-garden_outlook = ["templates/*.html", "static/*"]
+lollo_outlook = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

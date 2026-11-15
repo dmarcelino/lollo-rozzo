@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from garden_outlook.freebusy import free_gaps, parse_dt
+from lollo_outlook.freebusy import free_gaps, parse_dt
 
 
 def test_parse_graph_fractional_seconds():

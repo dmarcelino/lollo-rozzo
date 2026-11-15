@@ -1,14 +1,15 @@
 import json
 import logging
 import re
+import sqlite3
 import time
 
 import pytest
 from starlette.testclient import TestClient
 
 from gmail_triggers.app import EXAMPLES, create_app, gap_text
-from gmail_triggers.config import MAX_LISTED_MESSAGES, PREFIX
-from gmail_triggers.store import GAP_DROPPED, Held, Rule
+from gmail_triggers.config import HANDLED_KEEP_SECONDS, MAX_LISTED_MESSAGES, PREFIX
+from gmail_triggers.store import GAP_DROPPED, GAP_PAUSED, Held, Rule
 
 from .conftest import AGENT, BODY, NAVIGATE, ORIGIN, OTHER_AGENT, TOKEN, make_jwt, write_creds, write_policy
 
@@ -95,14 +96,17 @@ def test_every_route_requires_a_valid_access_jwt(client, env, signing_key, other
     else:
         value = token
     headers = {"cf-access-jwt-assertion": value, "origin": ORIGIN}
-    gets = ["/", "/new", f"/r/{rule.id}", f"/r/{rule.id}/history", "/garden.css", "/app.css", "/icon-192.png"]
+    gets = ["/", "/new", f"/r/{rule.id}", f"/r/{rule.id}/history", "/lollo.css", "/app.css", "/icon-192.png"]
     for path in gets:
         r = client.get(B + path, headers=headers)
         assert r.status_code == 403, path
         assert "Bills" not in r.text
-    for path in ["/rules", f"/r/{rule.id}", f"/r/{rule.id}/toggle", f"/r/{rule.id}/delete", f"/r/{rule.id}/test"]:
+    gap = add_gap(env)
+    posts = ["/rules", f"/r/{rule.id}", f"/r/{rule.id}/toggle", f"/r/{rule.id}/delete", f"/r/{rule.id}/test"]
+    for path in posts + [f"/gaps/{gap}/dismiss"]:
         assert client.post(B + path, data={"csrf": "x"}, headers=headers).status_code == 403, path
     assert env.store.rule(rule.id) is not None and env.requests() == []
+    assert len(env.store.gaps_since(0)) == 1
 
 
 def test_posts_need_csrf_and_this_origin(client, env):
@@ -123,9 +127,9 @@ def test_healthz_is_open_and_root_redirects(client):
     assert r.status_code == 308 and r.headers["location"] == f"{B}/"
 
 
-def test_the_garden_landing_page_is_not_served_here(client):
-    """The garden service owns / on the garden's host; the tunnel never routes it here."""
-    for path in ("/", "/garden", "/garden/"):
+def test_the_lollo_landing_page_is_not_served_here(client):
+    """The landing service owns / on the lollo's host; the tunnel never routes it here."""
+    for path in ("/", "/lollo", "/lollo/"):
         assert client.get(path).status_code == 404, path
 
 
@@ -158,7 +162,7 @@ def test_forms_post_only_from_this_origin(client, env):
 
 def test_stylesheets_and_icons_load_as_subresources_and_everything_carries_coop(client):
     style = {"sec-fetch-mode": "no-cors", "sec-fetch-dest": "style", "sec-fetch-site": "same-origin"}
-    for path in ("/garden.css", "/app.css", "/icon-192.png"):
+    for path in ("/lollo.css", "/app.css", "/icon-192.png"):
         r = client.get(f"{B}{path}", headers=style)
         assert r.status_code == 200, path
         assert r.headers["cross-origin-opener-policy"] == "same-origin", path
@@ -166,11 +170,11 @@ def test_stylesheets_and_icons_load_as_subresources_and_everything_carries_coop(
         assert r.headers["cross-origin-opener-policy"] == "same-origin"
 
 
-def test_pages_live_under_their_prefix_and_link_to_the_garden_root(client):
+def test_pages_live_under_their_prefix_and_link_to_the_lollo_root(client):
     assert B == "/gmail-triggers"
     page = client.get(f"{B}/").text
-    assert 'href="/">Lettuce Garden</a>' in page and f'href="{B}/garden.css"' in page
-    assert "/garden/" not in page
+    assert 'href="/">Lollo Rozzo</a>' in page and f'href="{B}/lollo.css"' in page
+    assert "/lollo/" not in page
 
 
 def test_pages_carry_the_security_headers_and_no_script(client, env):
@@ -182,7 +186,7 @@ def test_pages_carry_the_security_headers_and_no_script(client, env):
         assert "script-src 'none'" in r.headers["content-security-policy"]
         assert r.headers["x-frame-options"] == "DENY"
         assert "<script" not in r.text and "style=" not in r.text
-    css = client.get(f"{B}/garden.css")
+    css = client.get(f"{B}/lollo.css")
     assert css.status_code == 200 and "--accent: #0b1020" in css.text
     icon = client.get(f"{B}/icon-512.png")
     assert icon.headers["content-type"] == "image/png" and icon.content.startswith(b"\x89PNG")
@@ -301,7 +305,7 @@ def test_send_a_test_and_see_it_in_history(client, env):
     page = client.get(r.headers["location"]).text
     assert "Test request sent" in page and "Waiting for Lettuce" in page
     auth = {"authorization": f"Bearer {TOKEN}"}
-    with TestClient(client.app, base_url="http://garden-gmail-triggers:8000") as api:
+    with TestClient(client.app, base_url="http://lollo-gmail-triggers:8000") as api:
         claimed = api.get("/executor/v1/requests", headers=auth).json()["requests"]
         assert [c["id"] for c in claimed] == [req["id"]]
         assert "Sent to Lettuce" in client.get(f"{B}/r/{rule.id}/history").text
@@ -367,6 +371,85 @@ async def test_gap_banner_and_body_never_on_pages(env, authenticator, signing_ke
     assert "Your invoice" in pages[2] and "hal@example.com" in pages[2]
     for text in pages + [caplog.text, env.db_text(), json.dumps(env.requests())]:
         assert BODY not in text
+
+
+def add_gap(env) -> int:
+    """A "not checked while Google was unavailable" gap ending now; returns its id."""
+    env.store.set(last_ok=str(int(env.clock.t)))
+    env.clock.t += 3600
+    env.store.restart_at("1", GAP_PAUSED)
+    return env.store.gaps_since(0)[0]["id"]
+
+
+def table_ids(env, table: str) -> list[int]:
+    db = sqlite3.connect(env.settings.db_path)
+    try:
+        column = "gap_id" if table == "dismissed_gaps" else "id"
+        return [r[0] for r in db.execute(f"SELECT {column} FROM {table} ORDER BY {column}")]
+    finally:
+        db.close()
+
+
+def gap_notices(html: str) -> int:
+    return html.count("was not checked while Google was unavailable")
+
+
+def test_a_gap_notice_can_be_dismissed_and_its_record_stays(client, env):
+    gap = add_gap(env)
+    page = client.get(f"{B}/").text
+    assert gap_notices(page) == 1
+    assert f'action="{B}/gaps/{gap}/dismiss"' in page
+    r = post(client, f"{B}/gaps/{gap}/dismiss")
+    assert r.status_code == 303 and r.headers["location"] == f"{B}/"
+    assert gap_notices(client.get(f"{B}/").text) == 0
+    assert env.store.gaps_since(0) == [] and table_ids(env, "gaps") == [gap]
+    assert post(client, f"{B}/gaps/{gap}/dismiss").status_code == 303
+
+
+def test_a_dismissed_gap_is_forgotten_with_its_gap(env):
+    gap = add_gap(env)
+    assert env.store.dismiss_gap(gap)
+    env.clock.t += HANDLED_KEEP_SECONDS + 60
+    env.store.record_poll(handled=[], history_id="2", held={}, sent=[])
+    assert table_ids(env, "gaps") == [] and table_ids(env, "dismissed_gaps") == []
+
+
+def test_dismissing_one_notice_keeps_the_others_and_shows_the_next(client, env):
+    gaps = [add_gap(env) for _ in range(4)]
+    assert gap_notices(client.get(f"{B}/").text) == 3
+    assert post(client, f"{B}/gaps/{gaps[-1]}/dismiss").status_code == 303
+    page = client.get(f"{B}/").text
+    assert gap_notices(page) == 3
+    assert f"/gaps/{gaps[-1]}/dismiss" not in page and f"/gaps/{gaps[0]}/dismiss" in page
+
+
+def test_each_dismiss_button_names_its_own_notice(client, env):
+    add_gap(env)
+    add_gap(env)
+    labels = re.findall(r'aria-label="(Dismiss[^"]*)"', client.get(f"{B}/").text)
+    assert len(labels) == 2 and labels[0] != labels[1]
+    assert all("from " in label and " to " in label for label in labels)
+
+
+def test_dismiss_buttons_are_not_inside_a_live_region(client, env):
+    add_gap(env)
+    page = client.get(f"{B}/").text
+    regions = re.findall(r'<div role="status">(.*?)</div>', page, re.S)
+    assert any("wasn&#39;t checked" in r for r in regions)
+    assert not any("<form" in r or "<button" in r for r in regions)
+
+
+def test_dismissing_an_unknown_notice_is_refused(client, env):
+    gap = add_gap(env)
+    for path in (f"/gaps/{gap + 1}/dismiss", "/gaps/abc/dismiss", "/gaps/-1/dismiss", "/gaps/1e3/dismiss"):
+        assert post(client, B + path).status_code == 400, path
+    assert table_ids(env, "dismissed_gaps") == []
+
+
+def test_other_banners_have_no_dismiss(client, env):
+    page = client.get(f"{B}/").text
+    assert "isn&#39;t picking up requests" in page
+    assert "/dismiss" not in page
 
 
 def test_dropped_matches_get_their_own_notice():
