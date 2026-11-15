@@ -78,6 +78,15 @@
       matchUpdateTypes: ['minor', 'major'],
       automerge: false,
     },
+    // doc-tools' uv downloads its Python, and knows only the Python releases out
+    // before it: they move in one PR, a Python patch with a uv patch and a minor
+    // with a minor. That PR waits for a person (uv's registry gives no dates).
+    {
+      matchFileNames: ['doc-tools/Dockerfile'],
+      matchDepNames: ['python', 'ghcr.io/astral-sh/uv'],
+      groupName: 'doc-tools Python and uv',
+      separateMinorPatch: true,
+    },
     // The pip package and its browser image must be the same release. Only the
     // browser test checks they are, and CI does not run it.
     {
