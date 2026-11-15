@@ -21,7 +21,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w \
 
 # Alpine rather than scratch: the entrypoint needs a shell to create the
 # signing key on first start.
-FROM alpine:3.24.2
+FROM alpine:3.24.4
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/pipelock /usr/local/bin/pipelock
 COPY pipelock.yaml /etc/pipelock/pipelock.yaml
