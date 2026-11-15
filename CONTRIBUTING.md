@@ -6,7 +6,7 @@ The rules live in the developer docs: the cross-cutting ones on this page, and e
 
 ## Setting up
 - Linux with Docker Engine and Docker Compose >= 2.24, `bash`, `jq`, `curl`, `dig` and `openssl`, as for running it.
-- [shellcheck](https://github.com/koalaman/shellcheck) v0.11.0, the version CI pins: older releases report differently.
+- [shellcheck](https://github.com/koalaman/shellcheck) at the version CI pins (`SHELLCHECK_VERSION` in `.github/workflows/ci.yml`): older releases report differently.
 - Node 22 or newer for `node --test` on the host. The sidecars' tests run in Docker and need nothing else.
 - No upstream clone is needed for the offline tests: `tests/run.sh` stubs Docker and Cloudflare.
 - `./lolloctl` from a clone builds every image itself and keeps its instance in the clone's untracked `data/` (or the directory `LOLLO_DATA` names); it refuses a data directory a release runs ([lib/README.md](lib/README.md#code-and-data-are-apart)). Admins run released images instead; how a release is cut: [release/README.md](release/README.md#cutting-a-release).
@@ -64,7 +64,7 @@ These are the Lettuce internals lollo-rozzo depends on today ("named today"). A 
 | the landing page's agent links | code-server's `?folder=` query and the workspaces at `/work/<agent-id>` | [landing/](landing/README.md#upstream-seams) |
 
 ### Upgrading `LETTUCE_REF`
-`lolloctl upgrade <tag>` downloads the new tag, but only a person can check the seams. A release's tested tag is `config.env.example`'s `LETTUCE_REF`, which `publish.yml` writes into `RELEASE`, so moving it there is what moves released installs (through `self-upgrade`). For each new tag:
+`lolloctl upgrade <tag>` downloads the new tag, but only a person can check the seams. A release's tested tag is `config.env.example`'s `LETTUCE_REF`, which `publish.yml` writes into `RELEASE`, so moving it there is what moves released installs (through `self-upgrade`). Renovate proposes each new tag there ([Dependency updates](#dependency-updates)): a patch tag merges once CI passes, any other waits in its PR for this list. For each new tag:
 1. Read Lettuce's release notes and changelog for anything the table above names.
 2. Check each row against the new tag, starting with the ones its notes touch.
 3. Run `node --version` in an app-server. From 22.21 letta-code's own traffic goes through pipelock too: check that `NO_PROXY` still covers what it calls inside the stack ([pipelock/README.md](pipelock/README.md#upstream-seams)).
@@ -170,8 +170,9 @@ tests/run-pipelock.sh                  # the pipelock image and config against a
 node --test tests/mcp-servers.test.mjs # lib/mcp-servers.mjs against temp settings files
 node --test tests/check-doc-links.test.mjs # the link checker against temp Markdown trees
 node scripts/check-doc-links.mjs       # every relative link and anchor resolves; every folder README has its agents' pointer
-tests/run-sidecar.sh landing            # the landing page and its executor API (pytest), plus the lollo executor's tests (node --test in node:22.22.0-slim) when no args are given
-tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-tools image's `test` stage, Debian 12 like the app-server)
+npx --yes --package "renovate@$(sed -n 's/^ *RENOVATE_VERSION: //p' .github/workflows/renovate.yml)" renovate-config-validator --strict  # .github/renovate.json5 (Node 24)
+tests/run-sidecar.sh landing            # the landing page and its executor API (pytest), plus the lollo executor's tests (node --test in `tests/run-sidecar.sh`'s `NODE_IMAGE`) when no args are given
+tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-tools image's `test` stage, Debian 12 like the app-server), plus the OfficeAgent download's hash check when no args are given
 ```
 - **Before changing a folder, run every command in its README's "Build and test"**. Those sections are the one list of what covers what; they also name the suites another folder shares, such as the executor's and Gmail triggers' two ends of one protocol.
 - **`tests/run-sidecar.sh <dir>` takes a folder with a Dockerfile:** `vault`, `gmail-triggers`, `news-radar`, `code-server`, `landing` or `doc-tools`. `lollo-common/` has no image or tests of its own; before changing it, run the five suites that use it (its [Build and test](lollo-common/README.md#build-and-test)).
@@ -179,6 +180,28 @@ tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-
 - **End to end**, against real images (Docker, and the internet for the first build; throwaway containers only): `scripts/doc-tools-e2e.sh`, and `scripts/code-server-e2e.sh --browser` before keeping a new code editor extension or setting.
 
 CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release (`publish.yml` calls it). A new test script or linted file goes there too, and in both copies of the block above.
+
+## Dependency updates
+Renovate keeps the pinned versions current. It runs from `.github/workflows/renovate.yml` as a GitHub App, reads `.github/renovate.json5`, and opens a PR per update (one per package across the `pyproject.toml` files). CI runs on each, as on any branch.
+
+- **What it updates.** The Actions in `.github/workflows/`; the base images of every Dockerfile and the Gotenberg image in `compose/shared/gotenberg.yml`; the packages of each `pyproject.toml`; and, through its own regex rules, the pins no built-in manager reads: `config.env.example`'s `LETTUCE_REF`, `SHELLCHECK_VERSION`, `PIPELOCK_VERSION`, `CODE_SERVER_VERSION`, `OFFICEAGENT_VERSION`, doc-tools' `PYTHON_VERSION`, the images and pip pins of the test and end-to-end scripts, and Renovate's own version. A new pin uses one of those forms, or gets its own rule in `renovate.json5`.
+- **When.** Tuesdays and Fridays at 16:00, Saturdays and Sundays at 07:00, Lisbon time. Cron is UTC, so `renovate.yml` starts at both UTC hours that can be that hour, and `renovate.json5`'s `schedule` lets only the run inside it create or update branches. "Run workflow" with *ignore-schedule* runs it now.
+- **What merges on its own.** Patch, minor and digest updates three days after their release, once CI passes: Renovate turns on GitHub's auto-merge, and the `Main branch` ruleset requires CI's jobs. Never a major update, and not these, whose PRs name what to do first:
+  - Lettuce, code-server and Gotenberg minor updates. Their upgrades have steps CI does not run ([the checklist above](#upgrading-lettuce_ref), [code-server's](code-server/README.md#maintaining), [Gotenberg's](doc-tools/README.md#maintaining)), so only their patch updates merge on their own.
+  - A Lettuce tag that moves letta-code, even a patch one: it moves the app-server.
+  - A new Python minor, which changes every sidecar's interpreter.
+  - Playwright (the pip package and the browser image, in one PR): only `scripts/code-server-e2e.sh --browser` checks that they match, and CI does not run it.
+  - doc-tools' Python and uv, in one PR (a Python patch with a uv patch, a minor with a minor): uv downloads that Python and knows only the releases out before it. A Python patch alone still merges on its own when CI passes; when it needs a uv minor, its build fails and it waits for that uv PR.
+  - An update whose registry gives no release date (ghcr.io and mcr.microsoft.com give none, Docker Hub none when its tag API fails), since it cannot be held three days.
+
+  A PR whose CI fails stays open.
+- **What goes with a version.** `scripts/renovate-post-upgrade.sh KIND` recomputes it in the same branch: the SHA-256 of shellcheck's, code-server's and OfficeAgent's downloads (OfficeAgent's checked against its `SHA256SUMS` and its build attestation), the commit of Pipelock's tag, and `doc-tools/requirements.lock`, compiled again when doc-tools' packages, Python or uv change, which also brings its indirect dependencies up to date. It refuses a version that is not a plain number and writes nothing when a lookup fails. Renovate then still opens the PR, with auto-merge on and a warning, so CI has to catch what was left stale: shellcheck's hash fails the `shellcheck` job, code-server's the editor build and OfficeAgent's the `office` stage (both in `tests/run-sidecar.sh`), Pipelock's commit `tests/run-pipelock.sh`'s build, and a lock without the new pins `test_doc_tools_lock_has_every_pin_its_pyproject_names`. Run it too when moving one of those pins by hand. `renovate.yml` lets Renovate run that script only, and gives it the workflow's read-only token; the app's token stays with Renovate.
+- **What a merge costs at the next release.** A changed Dockerfile, `pyproject.toml` or lock changes that image's content tag ([release/README.md](release/README.md#images-are-named-by-their-content-never-by-the-release)), so the release restarts that sidecar, and an update to the vault's locks the vault.
+- **One-time setup**, by a repository admin:
+  1. A GitHub App with no webhook, with read and write on Contents, Pull requests, Issues (Renovate's dashboard issue), Workflows, Commit statuses (Renovate's own checks; without it a run stops after its first branch) and Checks, and read on Metadata, installed on this repository only.
+  2. Its id as the repository variable `RENOVATE_APP_ID`, and its private key as the secret `RENOVATE_APP_PRIVATE_KEY`.
+  3. "Allow auto-merge" on in the repository's settings.
+  4. The `Main branch` ruleset requiring CI's jobs (`shellcheck`, `cli`, each `sidecar (<dir>)`, `pipelock`, `docs`), with repository admins allowed to bypass it so pushes to `main` still work. Without the required checks, GitHub's auto-merge would merge before CI ends.
 
 ## Writing docs
 Each audience has its own place:

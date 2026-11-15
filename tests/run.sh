@@ -2822,7 +2822,7 @@ test_receipts_verifies_and_lists_sessions_newest_first() {
   receipt_files
   ctl receipts alfred
   ok_rc
-  log_has "$PIPELOCK_RUN --entrypoint pipelock lollo-pipelock:local verify-receipt --whole-recorder --chain /data/evidence --key /data/keys/receipt-signing.json.pub"
+  log_has "$PIPELOCK_RUN --entrypoint pipelock lollo-pipelock:local verify-receipt --whole-recorder --chain /data/evidence --key /data/keys/receipt-signing.json.pub --allow-prefix"
   eq "$(grep -o 'proxy\.run\.[ab]$' "$OUT" | paste -sd' ')" "proxy.run.b proxy.run.a"
 }
 
@@ -5320,6 +5320,229 @@ test_wrapper_mounts_toolbox_config_outside_the_home() {
   log_has "-v $T/cfg/lolloctl/toolbox:$T/cfg/lolloctl/toolbox:ro"
   log_has "-v $T/claude-cfg:$T/claude-cfg:ro"
   log_lacks "-v $T/cfg:"
+}
+
+# ── scripts/renovate-post-upgrade.sh ────────────────────────────────────────
+# post_upgrade_fixture -> the script and the files it rewrites, in $H
+post_upgrade_fixture() {
+  local f
+  for f in scripts/renovate-post-upgrade.sh .github/workflows/ci.yml code-server/editor/Dockerfile \
+    doc-tools/Dockerfile doc-tools/requirements.lock doc-tools/pyproject.toml pipelock/Dockerfile; do
+    mkdir -p "$H/${f%/*}"
+    cp "$ROOT/$f" "$H/$f"
+  done
+}
+# post_upgrade KIND -> runs the script in $H with the stubs; output in $OUT, status in $RC
+post_upgrade() {
+  RC=0
+  PATH="$T/bin:$PATH" "$H/scripts/renovate-post-upgrade.sh" "$@" >"$OUT" 2>&1 </dev/null || RC=$?
+}
+# gh_api PATH JSON -> what the gh stub answers to `gh api PATH`
+gh_api() {
+  mkdir -p "$T/gh-api"
+  printf '%s\n' "$2" >"$T/gh-api/${1//\//_}.json"
+}
+# release_assets REPO TAG NAME=DIGEST... -> that release, with those assets
+release_assets() {
+  local repo=$1 tag=$2 a json='[]'
+  shift 2
+  for a in "$@"; do
+    json=$(jq -c --arg n "${a%%=*}" --arg d "${a#*=}" '. + [{name: $n, digest: $d}]' <<<"$json")
+  done
+  gh_api "repos/$repo/releases/tags/$tag" "{\"assets\":$json}"
+}
+# pin FILE KEY -> KEY's value in $H/FILE; bump FILE KEY VALUE sets it
+pin() { sed -nE "s/^[[:space:]]*(ARG )?$2[=:] ?//p" "$H/$1"; }
+bump() { sed -i -E "s/^([[:space:]]*(ARG )?$2[=:] ?).*/\1$3/" "$H/$1"; }
+# keep FILE... -> remembers the files as they are; kept_as_they_were checks them
+keep() {
+  local f
+  for f in "$@"; do
+    mkdir -p "$T/kept/${f%/*}"
+    cp "$H/$f" "$T/kept/$f"
+  done
+}
+kept_as_they_were() {
+  local f
+  for f in "$@"; do
+    cmp -s "$T/kept/$f" "$H/$f" || fail "$f changed"
+  done
+}
+HEX_A=$(printf 'a%.0s' {1..64})
+HEX_B=$(printf 'b%.0s' {1..64})
+
+test_post_upgrade_shellcheck_takes_the_release_assets_digest() {
+  post_upgrade_fixture
+  bump .github/workflows/ci.yml SHELLCHECK_VERSION v0.11.1
+  release_assets koalaman/shellcheck v0.11.1 shellcheck-v0.11.1.linux.x86_64.tar.gz=sha256:"$HEX_B" \
+    shellcheck-v0.11.1.linux.x86_64.tar.xz=sha256:"$HEX_A"
+  post_upgrade shellcheck
+  ok_rc
+  eq "$(pin .github/workflows/ci.yml SHELLCHECK_SHA256)" "$HEX_A"
+  eq "$(pin .github/workflows/ci.yml SHELLCHECK_VERSION)" v0.11.1
+  log_has "gh api repos/koalaman/shellcheck/releases/tags/v0.11.1"
+}
+
+test_post_upgrade_code_server_sets_both_architectures() {
+  post_upgrade_fixture
+  bump code-server/editor/Dockerfile CODE_SERVER_VERSION 4.144.0
+  release_assets coder/code-server v4.144.0 code-server-4.144.0-linux-amd64.tar.gz=sha256:"$HEX_A" \
+    code-server-4.144.0-linux-arm64.tar.gz=sha256:"$HEX_B"
+  post_upgrade code-server
+  ok_rc
+  eq "$(pin code-server/editor/Dockerfile SHA256_AMD64)" "$HEX_A"
+  eq "$(pin code-server/editor/Dockerfile SHA256_ARM64)" "$HEX_B"
+}
+
+# Both hashes are looked up before either is written.
+test_post_upgrade_writes_nothing_when_an_asset_is_missing() {
+  post_upgrade_fixture
+  bump code-server/editor/Dockerfile CODE_SERVER_VERSION 4.144.0
+  keep code-server/editor/Dockerfile
+  release_assets coder/code-server v4.144.0 code-server-4.144.0-linux-amd64.tar.gz=sha256:"$HEX_A"
+  post_upgrade code-server
+  bad_rc
+  out_has "has no asset code-server-4.144.0-linux-arm64.tar.gz"
+  kept_as_they_were code-server/editor/Dockerfile
+}
+
+# The version comes from upstream and goes into URLs and API paths.
+test_post_upgrade_refuses_a_version_that_is_not_a_number() {
+  post_upgrade_fixture
+  bump code-server/editor/Dockerfile CODE_SERVER_VERSION '4.144.0..\/x'
+  keep code-server/editor/Dockerfile
+  post_upgrade code-server
+  bad_rc
+  out_has "CODE_SERVER_VERSION in code-server/editor/Dockerfile is not a version"
+  log_lacks "gh api"
+  kept_as_they_were code-server/editor/Dockerfile
+}
+
+test_post_upgrade_refuses_a_digest_that_is_not_sha256() {
+  post_upgrade_fixture
+  bump .github/workflows/ci.yml SHELLCHECK_VERSION v0.11.1
+  keep .github/workflows/ci.yml
+  release_assets koalaman/shellcheck v0.11.1 shellcheck-v0.11.1.linux.x86_64.tar.xz=sha512:"$HEX_A"
+  post_upgrade shellcheck
+  bad_rc
+  kept_as_they_were .github/workflows/ci.yml
+}
+
+# officeagent_release SUMS_HASH -> release 1.3.0's tarball, and its SHA256SUMS
+# listing SUMS_HASH for it (default: the tarball's own hash)
+officeagent_release() {
+  mkdir -p "$T/github"
+  printf 'officeagent build\n' >"$T/github/officeagent-mcp-linux-x64.tar.gz"
+  OA_SUM=$(sha256sum "$T/github/officeagent-mcp-linux-x64.tar.gz" | cut -d' ' -f1)
+  printf '%s  officeagent-mcp-linux-arm64.tar.gz\n%s  officeagent-mcp-linux-x64.tar.gz\n' "$HEX_B" "${1:-$OA_SUM}" >"$T/github/SHA256SUMS"
+  bump doc-tools/Dockerfile OFFICEAGENT_VERSION 1.3.0
+}
+
+test_post_upgrade_officeagent_checks_the_sums_and_the_attestation() {
+  post_upgrade_fixture
+  officeagent_release
+  post_upgrade officeagent
+  ok_rc
+  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256)" "$OA_SUM"
+  log_has "curl-get https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v1.3.0/officeagent-mcp-linux-x64.tar.gz"
+  log_has "gh attestation verify officeagent-mcp-linux-x64.tar.gz --repo ilia-sokolov/OfficeAgent.NET"
+}
+
+test_post_upgrade_officeagent_refuses_a_tarball_its_sums_do_not_list() {
+  post_upgrade_fixture
+  officeagent_release "$HEX_A"
+  keep doc-tools/Dockerfile
+  post_upgrade officeagent
+  bad_rc
+  out_has "does not match its SHA256SUMS"
+  log_lacks "gh attestation"
+  kept_as_they_were doc-tools/Dockerfile
+}
+
+test_post_upgrade_officeagent_refuses_a_failed_attestation() {
+  post_upgrade_fixture
+  officeagent_release
+  keep doc-tools/Dockerfile
+  stub STUB_GH_ATTEST_RC=1
+  post_upgrade officeagent
+  bad_rc
+  out_has "failed its attestation check"
+  kept_as_they_were doc-tools/Dockerfile
+}
+
+test_post_upgrade_pipelock_follows_an_annotated_tag_to_its_commit() {
+  post_upgrade_fixture
+  bump pipelock/Dockerfile PIPELOCK_VERSION 3.7.0
+  local tag_obj commit
+  tag_obj=$(printf 't%.0s' {1..40} | tr t 1) commit=$(printf 'c%.0s' {1..40})
+  gh_api repos/pipelab-org/pipelock/git/ref/tags/v3.7.0 "{\"object\":{\"type\":\"tag\",\"sha\":\"$tag_obj\"}}"
+  gh_api "repos/pipelab-org/pipelock/git/tags/$tag_obj" "{\"object\":{\"type\":\"commit\",\"sha\":\"$commit\"}}"
+  post_upgrade pipelock
+  ok_rc
+  eq "$(pin pipelock/Dockerfile PIPELOCK_COMMIT)" "$commit"
+}
+
+test_post_upgrade_doc_tools_lock_uses_the_pinned_uv_and_python() {
+  post_upgrade_fixture
+  sed -i 's|^FROM ghcr.io/astral-sh/uv:[^ ]* AS uv|FROM ghcr.io/astral-sh/uv:0.14.0 AS uv|' "$H/doc-tools/Dockerfile"
+  bump doc-tools/Dockerfile PYTHON_VERSION 3.13.2
+  local first
+  first=$(head -1 "$H/doc-tools/requirements.lock")
+  printf 'mcp==9.9.9 \\\n    --hash=sha256:%s\n' "$HEX_A" >"$T/run-stdout"
+  post_upgrade doc-tools-lock
+  ok_rc
+  log_has "ghcr.io/astral-sh/uv:0.14.0-debian-slim uv pip compile --quiet --python-version 3.13 --python-platform x86_64-manylinux_2_28 --generate-hashes --no-header pyproject.toml"
+  log_has "-v $H/doc-tools/pyproject.toml:/src/pyproject.toml:ro"
+  eq "$(head -1 "$H/doc-tools/requirements.lock")" "$first"
+  grep -qF "ghcr.io/astral-sh/uv:0.14.0-debian-slim \\" "$H/doc-tools/requirements.lock" || fail "the header lacks the new uv"
+  grep -qF -- '--python-version 3.13 ' "$H/doc-tools/requirements.lock" || fail "the header lacks the new Python"
+  eq "$(tail -n +4 "$H/doc-tools/requirements.lock")" "$(cat "$T/run-stdout")"
+}
+
+test_post_upgrade_doc_tools_lock_keeps_the_lock_when_compiling_fails() {
+  post_upgrade_fixture
+  keep doc-tools/requirements.lock
+  stub STUB_RUN_RC=1
+  post_upgrade doc-tools-lock
+  bad_rc
+  kept_as_they_were doc-tools/requirements.lock
+}
+
+test_post_upgrade_refuses_an_unknown_kind() {
+  post_upgrade_fixture
+  post_upgrade lettuce
+  bad_rc
+  out_has "usage:"
+}
+
+# doc-tools installs its lock, then itself with --no-deps, so its image never
+# sees a pin the lock lacks; if doc-tools-lock fails, only this check does.
+# pyproject_pins FILE -> its [project] dependencies, one `name==version` a line
+pyproject_pins() { sed -n '/^dependencies = \[/,/^\]/s/^ *"\([^"]*\)",\{0,1\}$/\1/p' "$1"; }
+# lock_lacks PYPROJECT LOCK -> each pin of PYPROJECT that LOCK does not have
+lock_lacks() {
+  local dep name
+  while read -r dep; do
+    name=${dep%%==*}
+    name=${name%%\[*}
+    name=$(tr 'A-Z_.' 'a-z--' <<<"$name")
+    grep -qxF -- "$name==${dep#*==} \\" "$2" || printf '%s\n' "$dep"
+  done < <(pyproject_pins "$1")
+}
+
+test_doc_tools_lock_has_every_pin_its_pyproject_names() {
+  local pins lacks
+  pins=$(pyproject_pins "$ROOT/doc-tools/pyproject.toml")
+  [[ $pins == *==* ]] || fail "no pins read from doc-tools/pyproject.toml"
+  lacks=$(lock_lacks "$ROOT/doc-tools/pyproject.toml" "$ROOT/doc-tools/requirements.lock")
+  [[ -z $lacks ]] || fail "doc-tools/requirements.lock lacks: $lacks (scripts/renovate-post-upgrade.sh doc-tools-lock)"
+}
+
+test_doc_tools_lock_check_sees_a_pin_the_lock_lacks() {
+  post_upgrade_fixture
+  sed -i 's/"mcp==[^"]*"/"mcp==9.9.9"/; s/"pypdf\[crypto\]==[^"]*"/"pypdf[crypto]==9.9.9"/' "$H/doc-tools/pyproject.toml"
+  [[ $(lock_lacks "$H/doc-tools/pyproject.toml" "$H/doc-tools/requirements.lock") == $'mcp==9.9.9\npypdf[crypto]==9.9.9' ]] ||
+    fail "expected mcp and pypdf reported, got: $(lock_lacks "$H/doc-tools/pyproject.toml" "$H/doc-tools/requirements.lock")"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────

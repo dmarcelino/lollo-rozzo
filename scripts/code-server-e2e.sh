@@ -32,15 +32,16 @@
 #   and a pre-commit hook); Chromium opens the folder, a TypeScript file and a
 #   terminal through the gate (cloudflared and Access simulated by
 #   code-server/tests/e2e/serve_gate.py), stages and commits the change from
-#   Source Control, asks to run a task, and previews a planted README.md full of
+#   Source Control, asks to run a task, previews a planted README.md full of
 #   HTML that would run script, before and after choosing "Disable" in the
-#   preview's security picker.
+#   preview's security picker, and opens a planted SVG that would run script in
+#   the image preview (part of the workbench since VS Code 1.144).
 #   Opening the folder must ask nothing; nothing planted may run in the editor;
 #   TypeScript (bundled) must run; the terminal must open in the shell; Source
 #   Control must list the change and commit it without asking anything, its
 #   fsmonitor and hook running in the shell; running a task must ask for trust,
 #   which is never given; the preview must render and the planted Markdown must
-#   make no request.
+#   make no request; the SVG must show as an image and make no request.
 #
 # Everything it creates is named cs-e2e-<random>; it refuses to start while
 # anything named cs-e2e-* exists, and removes what it created on exit (the
@@ -275,6 +276,15 @@ EOF
 <object data="/planted-md-object"></object>
 
 ![control](http://localhost:8000/control-md-image.png)
+EOF
+    cat >preview.svg <<EOF
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" data-u="http://localhost:8000/planted-svg-onload" onload="new Image().src = this.dataset.u">
+  <script>new Image().src = "http://localhost:8000/planted-svg-script";</script>
+  <rect width="240" height="120" fill="#3a7"/>
+  <image href="http://localhost:8000/planted-svg-image" width="10" height="10"/>
+  <image href="x" width="10" height="10" data-u="http://localhost:8000/planted-svg-onerror" onerror="new Image().src = this.dataset.u"/>
+  <foreignObject width="10" height="10"><iframe xmlns="http://www.w3.org/1999/xhtml" src="http://localhost:8000/planted-svg-iframe"></iframe></foreignObject>
+</svg>
 EOF'
   # A change for Source Control to show, and repository config and a hook that run
   # code: Source Control must run them in the shell. The commit identity is the
