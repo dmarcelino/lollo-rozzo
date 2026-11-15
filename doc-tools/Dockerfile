@@ -50,7 +50,7 @@ RUN uv pip install --python /opt/lollo-doc-tools/venv --no-deps . \
  && find /opt/lollo-doc-tools -name __pycache__ -prune -exec rm -rf {} +
 
 FROM python AS test
-RUN uv pip install --python /opt/lollo-doc-tools/venv pytest==9.1.1
+RUN uv pip install --python /opt/lollo-doc-tools/venv pytest==9.2.0
 COPY tests ./tests
 ENV PATH=/opt/lollo-doc-tools/venv/bin:$PATH
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
