@@ -2062,16 +2062,27 @@ finish() {
 }
 members=""
 prepare "$@"
-if [ "$mode" = tar ]; then tar -xzpf "$src" --numeric-owner -C "$dst" ${keep_tools:+--exclude=./state/tools} $members; fi
+# -P: links to an absolute path or through .. made at once; without it GNU tar
+# first writes an empty mode-0 file in their place, which the virtiofs share of
+# Colima refuses to open, even to root. restore refused names outside DST.
+if [ "$mode" = tar ]; then tar -xzpPf "$src" --numeric-owner -C "$dst" ${keep_tools:+--exclude=./state/tools} $members; fi
 finish "$@"'
 
 # has_entry ENTRIES ENTRY -> success when ENTRY is one of the lines of ENTRIES
 has_entry() { grep -qxF -- "$2" <<<"$1"; }
 
-# archive_entries FILE -> the archive's entries one and two levels down
+# archive_names FILE -> every name in the archive as written: -P, or tar would
+# strip a leading / from what it lists
+archive_names() { tar -tzPf "$1"; }
+
+# outside_name < NAMES -> the first name that is absolute or goes up with '..',
+# which RESTORE_COPY's -P would unpack outside its target; nothing if none
+outside_name() { grep -m1 -E '^/|(^|/)\.\.(/|$)' || true; }
+
+# archive_entries < NAMES -> the archive's entries one and two levels down
 # (stack.env, state, state/tools, vault...), one per line
 archive_entries() {
-  tar -tzf "$1" | awk -F/ '$2 != "" { print $2; if (NF > 2 && $3 != "") print $2 "/" $3 }' | sort -u
+  awk -F/ '$2 != "" { print $2; if (NF > 2 && $3 != "") print $2 "/" $3 }' | sort -u
 }
 
 # The directory restore reads the backup's files into, removed when lolloctl exits.
@@ -2105,7 +2116,7 @@ backup_stack_name() {
 cmd_restore() {
   local usage="usage: lolloctl restore <name> <backup> [--yes]"
   local yes="" args=() name b kind entries dir state f files lock e v owner mode vol keep_tools="" answer
-  local emails conf from here me src=() mounts=() specs=() names=()
+  local emails conf from here me listed src=() mounts=() specs=() names=()
   while (($#)); do
     case $1 in
       --yes) yes=1 ;;
@@ -2129,7 +2140,10 @@ cmd_restore() {
   elif [[ -f $b && $b == *.tar.gz ]]; then
     kind=archive
     require_mounted "$(dirname -- "$b")"
-    entries=$(archive_entries "$b") || die "$b: could not read the archive"
+    listed=$(archive_names "$b") || die "$b: could not read the archive"
+    e=$(outside_name <<<"$listed")
+    [[ -z $e ]] || die "$b: the archive has an entry that is absolute or goes up with '..': $e; restore unpacks names as written, so it refuses it"
+    entries=$(archive_entries <<<"$listed")
     if ! has_entry "$entries" stack.env || ! has_entry "$entries" state; then
       die "$b is not a backup: no stack.env and state/ in it"
     fi

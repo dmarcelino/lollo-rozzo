@@ -3413,6 +3413,66 @@ test_restore_puts_a_snapshot_back_on_a_new_host() {
   log_lacks "curl "
 }
 
+# Colima's virtiofs share refuses to open the empty, mode-0 file GNU tar first
+# puts in place of a link to an absolute path or through '..' (even as root);
+# with -P tar makes the link at once. The tar stub here refuses like the share.
+test_restore_unpacks_links_where_a_share_refuses_tars_placeholders() {
+  local real_tar restore_script me
+  real_tar=$(command -v tar)
+  me="$(id -u):$(id -g)"
+  a_snapshot
+  mkdir -p "$S/state/letta-home/skills"
+  ln -s /root/.letta/mcp-home/skill/mcp-servers "$S/state/letta-home/skills/mcp-servers"
+  ln -s ../letta-home "$S/state/workspaces-link"
+  A=$B/alfred/20261018T033000Z.tar.gz
+  tar -C "$S" -czf "$A" .
+  ctl restore alfred "$A" --yes
+  ok_rc
+  restore_script=$(cat "$T/run-script")
+  mkdir -p "$T/share-bin" "$T/dst/state"
+  cat >"$T/share-bin/tar" <<SHARE
+#!/usr/bin/env bash
+x="" p=""
+for a in "\$@"; do
+  case \$a in
+    --absolute-names) p=1 ;;
+    --*) ;;
+    -*x*P* | -*P*x*) x=1 p=1 ;;
+    -*x*) x=1 ;;
+  esac
+done
+if [[ -n \$x && -z \$p ]]; then
+  echo "tar: ./state/letta-home/skills/mcp-servers: Cannot open: Permission denied" >&2
+  exit 2
+fi
+exec $real_tar "\$@"
+SHARE
+  chmod 755 "$T/share-bin/tar"
+  RC=0
+  PATH="$T/share-bin:$PATH" sh -c "$restore_script" sh tar "$A" "$T/dst" "" state "$me" "$me" 700 >"$OUT" 2>&1 || RC=$?
+  ok_rc
+  eq "$(readlink "$T/dst/state/letta-home/skills/mcp-servers")" /root/.letta/mcp-home/skill/mcp-servers
+  eq "$(readlink "$T/dst/state/workspaces-link")" ../letta-home
+}
+
+# -P also keeps a name that leaves the target as written, so restore refuses
+# such an archive before it unpacks anything.
+# restore_refuses_entry NAME -> an archive whose state/letta-home is NAME is refused
+restore_refuses_entry() {
+  a_snapshot
+  A=$B/alfred/20261018T033000Z.tar.gz
+  tar -C "$S" -czPf "$A" --transform "s|^\./state/letta-home|$1|" .
+  tar -tzPf "$A" | grep -qxF "$1/" || fail "the archive does not hold $1: $(tar -tzPf "$A")"
+  rm -rf "$S"
+  a_new_host
+  ctl restore alfred "$A"
+  bad_rc
+  out_has "an entry that is absolute or goes up with '..': $1/"
+  log_lacks "lolloctl.restore"
+}
+test_restore_refuses_an_absolute_archive_entry() { restore_refuses_entry /escape; }
+test_restore_refuses_an_archive_entry_going_up() { restore_refuses_entry ./state/../../escape; }
+
 # One pass over the archive extracts the state and every volume.
 test_restore_puts_an_archive_back() {
   an_archive vault google-policy google-creds
