@@ -89,7 +89,7 @@ restart fails, it says so, and agents see the servers after the next `lolloctl r
 
 The first `up` with the profile builds the tools' image once per host, which takes a few
 minutes: it downloads OfficeAgent, a Python runtime and the Python packages, each pinned and
-checked. It then copies the tools into one volume shared by every stack (about 300 MB), gives
+checked, for the host's architecture (`amd64` or `arm64`, an Apple silicon Mac included). It then copies the tools into one volume shared by every stack (about 300 MB), gives
 each stack an internal network to the converter, and starts one shared Gotenberg per host. Step
 by step, in [doc-tools/README.md](../doc-tools/README.md#what-up-does-with-the-profile).
 

@@ -267,9 +267,9 @@ published images by mistake. `doc-tools` is built by lolloctl in both modes, as 
   attestation for the wrapper too.
 - The GHCR packages are made public once, by hand, so a host pulls without credentials.
 
-`code-server-editor` is already pinned for both platforms (`SHA256_AMD64`, `SHA256_ARM64`).
-`doc-tools` stays `amd64` only (OfficeAgent is pinned for x86_64), so `lollo-doc-tools` is
-unavailable on `arm64` hosts, as today; `check_stack` should say so instead of failing the build.
+`code-server-editor` and `doc-tools` are pinned for both platforms (`SHA256_AMD64` and
+`SHA256_ARM64`; `OFFICEAGENT_SHA256_AMD64` and `OFFICEAGENT_SHA256_ARM64`), so every profile
+runs on `amd64` and `arm64` hosts alike. `doc-tools` is built on the host, never published.
 
 ## `lolloctl` in a container
 

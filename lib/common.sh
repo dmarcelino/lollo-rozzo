@@ -816,9 +816,6 @@ check_stack() {
       | "\(.key) shares the network namespace of the code editor (\($m))"] | join("; ")' <<<"$rendered")
   [[ -z $k ]] || die "$name: $k"
   check_images "$name" "$rendered"
-  if has_profile "$profiles" lollo-doc-tools && [[ $(host_platform 2>/dev/null) != linux/amd64 ]]; then
-    die "$name: lollo-doc-tools needs a linux/amd64 host (OfficeAgent is pinned for x86_64 only); this one is $(host_platform 2>/dev/null || echo unknown)"
-  fi
   if has_profile "$profiles" lollo-vault; then
     check_sidecar "$name" "$rendered" lollo-vault lollo-vault compose/vault.yml
   fi

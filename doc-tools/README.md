@@ -9,7 +9,7 @@ An interactive version, [doc-tools-architecture.html](../docs/diagrams/doc-tools
 ## Files
 | Path | What it does |
 |---|---|
-| `Dockerfile` | Multi-stage build. OfficeAgent's Linux x64 release, pinned by version and SHA-256; a standalone CPython and a venv installed from `requirements.lock` with `--require-hashes`; the launchers and OfficeAgent's config. A `test` stage runs pytest. The final stage is `FROM scratch` with only the tree at `/opt/lollo-doc-tools`: it is never run, only copied into the tools' volume. |
+| `Dockerfile` | Multi-stage build. OfficeAgent's Linux release for the host's architecture (x64 or arm64, by `TARGETARCH`), pinned by version and one SHA-256 for each; a standalone CPython and a venv installed from `requirements.lock` with `--require-hashes`; the launchers and OfficeAgent's config. A `test` stage runs pytest. The final stage is `FROM scratch` with only the tree at `/opt/lollo-doc-tools`: it is never run, only copied into the tools' volume. |
 | `bin/officeagent` | Launcher for OfficeAgent's MCP server (stdio). Pins .NET's content root to the read-only tree, so an `appsettings.json` in the workspace is never read, and sets the one file-system connection's root to the workspace. |
 | `bin/pdf-mcp` | Launcher for the PDF server: `python -I -B -m pdf_mcp` with `PDF_WORKSPACE_ROOT` and `GOTENBERG_URL=http://gotenberg:3000`. |
 | `lib/launch.sh` | Sourced by both launchers: the workspace is the `/work/<agent-id>` that `pwd -P` is in (anywhere else, the server refuses to start), `HOME`, caches and `TMPDIR` under `/tmp/lollo-doc-tools`, no core dumps. |
@@ -105,9 +105,10 @@ The PDF server's tests never use the network: Gotenberg is an `httpx.MockTranspo
 
 ## Maintaining
 Renovate proposes each new version below and does the hashing and the lock for them (`scripts/renovate-post-upgrade.sh officeagent` and `doc-tools-lock`); a Gotenberg minor or major update waits in its PR for the release-notes check ([CONTRIBUTING.md](../CONTRIBUTING.md#dependency-updates)). By hand, every version is pinned in `doc-tools/`:
-- **OfficeAgent:** `OFFICEAGENT_VERSION` and `OFFICEAGENT_SHA256` in `doc-tools/Dockerfile`. Take
-  the SHA-256 from the release's `SHA256SUMS`, and check it with
-  `gh attestation verify officeagent-mcp-linux-x64.tar.gz --repo ilia-sokolov/OfficeAgent.NET`.
+- **OfficeAgent:** `OFFICEAGENT_VERSION`, `OFFICEAGENT_SHA256_AMD64` and `OFFICEAGENT_SHA256_ARM64`
+  in `doc-tools/Dockerfile`. Take each SHA-256 from the release's `SHA256SUMS`, and check both
+  tarballs with `gh attestation verify officeagent-mcp-linux-<x64|arm64>.tar.gz --repo
+  ilia-sokolov/OfficeAgent.NET`; `scripts/renovate-post-upgrade.sh officeagent` does all of it.
 - **Python packages:** `doc-tools/pyproject.toml`, then regenerate `doc-tools/requirements.lock`
   with `scripts/renovate-post-upgrade.sh doc-tools-lock` (it runs the command at the lock's top).
 - **Python:** `PYTHON_VERSION` in `doc-tools/Dockerfile`.

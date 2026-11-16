@@ -4984,14 +4984,15 @@ test_check_refuses_a_shell_built_on_another_app_server_image() {
   out_has "upstream's image naming changed"
 }
 
-test_check_refuses_doc_tools_on_an_arm64_host() {
+# OfficeAgent is pinned for both platforms (doc-tools/Dockerfile), so an arm64
+# host, such as an Apple silicon Mac, builds the document tools for itself.
+test_check_accepts_doc_tools_on_an_arm64_host() {
   added
+  with_docs
   stub STUB_PLATFORM=linux/arm64
-  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-doc-tools/' "$D/config.env"
-  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-doc-tools/' "$D/stacks/alfred/stack.env"
   ctl check alfred
-  bad_rc
-  out_has "lollo-doc-tools needs a linux/amd64 host"
+  ok_rc
+  out_lacks "needs a linux/amd64"
 }
 
 # ── release mode ────────────────────────────────────────────────────────────
@@ -6012,13 +6013,17 @@ test_post_upgrade_refuses_a_digest_that_is_not_sha256() {
   kept_as_they_were .github/workflows/ci.yml
 }
 
-# officeagent_release SUMS_HASH -> release 1.3.0's tarball, and its SHA256SUMS
-# listing SUMS_HASH for it (default: the tarball's own hash)
+# officeagent_release [X64_SUM [ARM64_SUM]] -> release 1.3.0's two Linux
+# tarballs, and its SHA256SUMS listing those sums for them (default: each
+# tarball's own); their hashes in OA_X64 and OA_ARM64
 officeagent_release() {
   mkdir -p "$T/github"
-  printf 'officeagent build\n' >"$T/github/officeagent-mcp-linux-x64.tar.gz"
-  OA_SUM=$(sha256sum "$T/github/officeagent-mcp-linux-x64.tar.gz" | cut -d' ' -f1)
-  printf '%s  officeagent-mcp-linux-arm64.tar.gz\n%s  officeagent-mcp-linux-x64.tar.gz\n' "$HEX_B" "${1:-$OA_SUM}" >"$T/github/SHA256SUMS"
+  printf 'officeagent x64 build\n' >"$T/github/officeagent-mcp-linux-x64.tar.gz"
+  printf 'officeagent arm64 build\n' >"$T/github/officeagent-mcp-linux-arm64.tar.gz"
+  OA_X64=$(sha256sum "$T/github/officeagent-mcp-linux-x64.tar.gz" | cut -d' ' -f1)
+  OA_ARM64=$(sha256sum "$T/github/officeagent-mcp-linux-arm64.tar.gz" | cut -d' ' -f1)
+  printf '%s  officeagent-mcp-linux-arm64.tar.gz\n%s  officeagent-mcp-linux-x64.tar.gz\n' \
+    "${2:-$OA_ARM64}" "${1:-$OA_X64}" >"$T/github/SHA256SUMS"
   bump doc-tools/Dockerfile OFFICEAGENT_VERSION 1.3.0
 }
 
@@ -6027,9 +6032,13 @@ test_post_upgrade_officeagent_checks_the_sums_and_the_attestation() {
   officeagent_release
   post_upgrade officeagent
   ok_rc
-  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256)" "$OA_SUM"
-  log_has "curl-get https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v1.3.0/officeagent-mcp-linux-x64.tar.gz"
-  log_has "gh attestation verify officeagent-mcp-linux-x64.tar.gz --repo ilia-sokolov/OfficeAgent.NET"
+  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256_AMD64)" "$OA_X64"
+  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256_ARM64)" "$OA_ARM64"
+  local a
+  for a in x64 arm64; do
+    log_has "curl-get https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v1.3.0/officeagent-mcp-linux-$a.tar.gz"
+    log_has "gh attestation verify officeagent-mcp-linux-$a.tar.gz --repo ilia-sokolov/OfficeAgent.NET"
+  done
 }
 
 test_post_upgrade_officeagent_refuses_a_tarball_its_sums_do_not_list() {
@@ -6038,8 +6047,19 @@ test_post_upgrade_officeagent_refuses_a_tarball_its_sums_do_not_list() {
   keep doc-tools/Dockerfile
   post_upgrade officeagent
   bad_rc
-  out_has "does not match its SHA256SUMS"
+  out_has "officeagent-mcp-linux-x64.tar.gz 1.3.0 does not match its SHA256SUMS"
   log_lacks "gh attestation"
+  kept_as_they_were doc-tools/Dockerfile
+}
+
+# Both builds are checked before either pin moves.
+test_post_upgrade_officeagent_refuses_when_only_the_arm64_tarball_is_wrong() {
+  post_upgrade_fixture
+  officeagent_release "" "$HEX_A"
+  keep doc-tools/Dockerfile
+  post_upgrade officeagent
+  bad_rc
+  out_has "officeagent-mcp-linux-arm64.tar.gz 1.3.0 does not match its SHA256SUMS"
   kept_as_they_were doc-tools/Dockerfile
 }
 
