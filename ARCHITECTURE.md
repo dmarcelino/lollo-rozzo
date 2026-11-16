@@ -47,10 +47,10 @@ Both applications share the stack's Access policy, so `lolloctl users` changes w
 ## Volumes
 | Volume | Mounted by | Notes |
 |---|---|---|
-| `vault-data` | `lollo-vault` | the encrypted vault; `backup` copies it read-only |
-| `news-radar-data` | `lollo-news-radar` | monitors, sources, items, reports; `backup` copies it read-only |
-| `pipelock-data` | `lollo-pipelock` | receipt signing key and receipts; `backup` and `receipts` read it read-only |
-| `google-creds`, `google-policy` | `bff`, `google-mcp`, `lollo-gmail-triggers` (read-only) | upstream's; never the app-server |
+| `vault-data` | `lollo-vault` | the encrypted vault; `backup` copies it read-only, `restore` puts it back |
+| `news-radar-data` | `lollo-news-radar` | monitors, sources, items, reports; `backup` copies it read-only, `restore` puts it back |
+| `pipelock-data` | `lollo-pipelock` | receipt signing key and receipts; `backup` and `receipts` read it read-only, `restore` puts it back |
+| `google-creds`, `google-policy` | `bff`, `google-mcp`, `lollo-gmail-triggers` (read-only) | upstream's; never the app-server; `backup --with-google` copies them read-only, `restore` puts them back |
 | `bff-data`, `bff-auth` | `bff` | upstream's |
 | `code-server-data` | the editor | its settings and state |
 | `code-exec-keys` | the editor (writes), the shell (read-only) | the SSH keys between them |
@@ -96,7 +96,7 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 | `compose/doc-tools.yml`, `compose/shared/gotenberg.yml`, [`doc-tools/`](doc-tools/README.md) | the optional Office and PDF tools (`lollo-doc-tools` profile): the app-server's mount and network, the host's shared Gotenberg, and the tools' image and PDF server |
 | [`lollo-common/`](lollo-common/README.md) | code the lollo services share (sign-in checks, the executor API's checks, page styles, icons) |
 | [`agent-skills/`](agent-skills/README.md) | skills `lolloctl skills` installs for every agent of every stack |
-| [`backup/`](backup/README.md) | the image `lolloctl backup` copies with (it also fills the doc-tools volume) |
+| [`backup/`](backup/README.md) | the image `lolloctl backup` and `restore` copy with (it also fills the doc-tools volume) |
 | `docs/` | the guides for users and admins, and [diagrams](docs/diagrams/) (archify: `.json` source, interactive `.html`, `.svg`) for every audience |
 | `config.env.example` | template for `config.env` |
 | `scripts/dns-preflight.sh` | compares two nameservers before and after moving a domain (`lolloctl dns-preflight`) |
@@ -105,6 +105,6 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 | `scripts/renovate-post-upgrade.sh` | recomputes the hashes, tag commit and lock that go with a version Renovate moved |
 | `tests/` | offline tests (`tests/run.sh`; docker, curl, dig, gh and secret-tool are stubbed), the sidecars' tests (`tests/run-sidecar.sh vault`, `tests/run-sidecar.sh gmail-triggers`, `tests/run-sidecar.sh news-radar`, `tests/run-sidecar.sh code-server`, `tests/run-sidecar.sh landing`, `tests/run-sidecar.sh doc-tools`) and pipelock's (`tests/run-pipelock.sh`) |
 
-Instance data lives in a data directory apart from the code: `/srv/lollo-rozzo` for a release install, the clone's untracked `data/` for a clone (`LOLLO_DATA` names another). [docs/operations.md](docs/operations.md#files-on-the-host) lists what is in it.
+Instance data lives in a data directory apart from the code: `~/lollo-rozzo` for a release install (or wherever its admin put it), the clone's untracked `data/` for a clone (`LOLLO_DATA` names another). [docs/operations.md](docs/operations.md#files-on-the-host) lists what is in it.
 
 What each part does, and why it is built the way it is, is in its folder's README; how to use and run it, and its security model, in its guide under `docs/`. The design records of the larger features are next to their code: [code-server/DESIGN.md](code-server/DESIGN.md), [gmail-triggers/DESIGN.md](gmail-triggers/DESIGN.md), [landing/DESIGN.md](landing/DESIGN.md) (the lollo host) and [news-radar/DESIGN.md](news-radar/DESIGN.md).

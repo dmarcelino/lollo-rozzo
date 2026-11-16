@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Test stub for ssh: logs "ssh <args>" to $STUB_ROOT/calls.log.
+# - With -N (a tunnel), writes its pid to $STUB_ROOT/tunnel.pid and stays up
+#   until killed, or exits at once with STUB_SSH_TUNNEL_RC.
+# - `... test -S PATH` (waiting for the tunnel's socket) exits STUB_SSH_TEST_RC
+#   (default 0).
+# Tests copy the stubs to $STUB_ROOT/bin.
+STUB_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=/dev/null
+[[ -f $STUB_ROOT/stub.env ]] && . "$STUB_ROOT/stub.env"
+printf 'ssh %s\n' "$*" >>"$STUB_ROOT/calls.log"
+args=" $* "
+if [[ $args == *" -N "* ]]; then
+  [[ ${STUB_SSH_TUNNEL_RC:-0} == 0 ]] || exit "$STUB_SSH_TUNNEL_RC"
+  echo $$ >"$STUB_ROOT/tunnel.pid"
+  exec sleep 30
+fi
+[[ $args == *" test -S "* ]] && exit "${STUB_SSH_TEST_RC:-0}"
+exit 0

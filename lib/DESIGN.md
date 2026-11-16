@@ -28,8 +28,8 @@ below, and released. The plan below stays as the design record. Where the build 
 - **`LETTA_IMAGE_NS` stays in `config.env`.** Rather than copied into every `stack.env` (which
   would go stale until the next `up`), `compose_env` passes it on every call, as it passes
   `LOLLO_HOME`; Compose prefers it to the `--env-file`'s.
-- **`lolloctl version`** names the release, its tested Lettuce tag, and the backup image the
-  restore steps use.
+- **`lolloctl version`** names the release, its tested Lettuce tag, and the backup image
+  `backup` and `restore` copy with.
 - **The GHCR packages needed no step by hand.** `publish.yml`'s first run (`v0.1.0-rc.1`)
   created them public, as the repository is, so hosts pull without credentials; the release
   steps now check this instead ([release/README.md](../release/README.md#cutting-a-release)).
@@ -88,7 +88,7 @@ against a data directory of its own.
 All instance data moves out of the code into one directory, `LOLLO_DATA`:
 
 ```
-/srv/lollo-rozzo/
+~/lollo-rozzo/
   bin/lolloctl                 the wrapper (release mode only)
   bin/lolloctl.previous        the one before the last self-upgrade
   config.env
@@ -103,7 +103,11 @@ All instance data moves out of the code into one directory, `LOLLO_DATA`:
 Where it is depends on how `lolloctl` runs:
 
 - **Release mode** (the published image): the wrapper's own directory's parent, so a wrapper in
-  `/srv/lollo-rozzo/bin/` uses `/srv/lollo-rozzo`. The admin links it onto their `PATH`.
+  `~/lollo-rozzo/bin/` uses `~/lollo-rozzo`. The admin links it onto their `PATH`. The docs use
+  `~/lollo-rozzo` because it is the one place that works on Linux and macOS alike: no sudo, and
+  every macOS Docker VM shares the home at the same path. Any directory the admin owns works; on
+  Linux with an encrypted home, one outside it (`/srv/lollo-rozzo`), so the data is there when
+  Docker restarts the stacks at boot.
 - **Dev mode** (a clone): `$LOLLO_HOME/data/`, which is gitignored, unless `LOLLO_DATA` is set.
   A clone or a worktree never reaches the real stacks by default. Dev mode also refuses a data
   directory that a release runs (one with `bin/lolloctl`): running a branch's code and images
@@ -290,7 +294,7 @@ image's digest written into it. It lives in `$LOLLO_DATA/bin/` and the admin lin
 
 ```bash
 docker run --rm -i [-t] --init \
-  --user "$(id -u):$(id -g)" --group-add "<the docker socket's group>" \
+  --user "$(id -u):$(id -g)" --group-add "<the docker socket's group, as the daemon sees it>" \
   --tmpfs /tmp -e HOME=/tmp/home \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$LOLLO_DATA:$LOLLO_DATA" -e LOLLO_DATA="$LOLLO_DATA" \
@@ -309,13 +313,20 @@ docker run --rm -i [-t] --init \
 - **The digest:** the image is fetched by digest, so a tag pushed again to the registry, or a stolen
   registry token, cannot change what an installed wrapper runs.
 - **A missing data directory is refused.** Otherwise Docker would create the bind source itself,
-  owned by root, and the first write would fail. The wrapper prints what to run once, for example
-  `sudo install -d -o "$USER" -g "$(id -gn)" -m 700 /srv/lollo-rozzo/bin`, and how to download the
-  wrapper into it.
+  owned by root, and the first write would fail. The wrapper prints what to run once,
+  `install -d -m 700 ~/lollo-rozzo ~/lollo-rozzo/bin`, and how to download the wrapper into it.
+- **macOS.** Docker runs in a VM (Colima, Docker Desktop, OrbStack) that shares the home at the
+  same path, so the data directory's path is the same for the client, the VM and the container. The
+  socket is not: the client reaches the VM through its Docker context, but a bind mount names a path
+  in the VM, so the wrapper mounts the VM's `/var/run/docker.sock` (the same in all three) and asks
+  the daemon for its group (`docker run --entrypoint stat` of the `lolloctl` image), since the
+  Mac's own group ids mean nothing there. It also needs bash 4 (macOS ships 3.2, so it says so and
+  stops) and uses only what BSD and GNU tools share (`readlink -f`, `stat -c` falling back to
+  `stat -f`).
 
 ### Installing and upgrading
 
-- **Install:** download the release's wrapper into `/srv/lollo-rozzo/bin/`, check it against
+- **Install:** download the release's wrapper into `~/lollo-rozzo/bin/`, check it against
   `SHA256SUMS` (and, for those with the `gh` CLI, `gh attestation verify`), link it onto the `PATH`,
   then `lolloctl init`.
 - **`lolloctl self-upgrade vX.Y.Z`** is handled by the wrapper, so a failure leaves the running
@@ -334,7 +345,7 @@ docker run --rm -i [-t] --init \
 ### The catch: every host path must be the same inside and outside
 
 `lolloctl` tells Docker to mount host paths, for example
-`/srv/lollo-rozzo/stacks/alfred/state/workspaces` into Alfred's app-server. Docker reads that path
+`~/lollo-rozzo/stacks/alfred/state/workspaces` into Alfred's app-server. Docker reads that path
 on the host, not inside the `lolloctl` container. If the wrapper mounted the data directory at
 another path, say `/data`, then `stack.env` would record `/data/stacks/alfred/state`, Docker would not
 find it on the host and would create it empty and owned by root, and Alfred's stack would start with
@@ -351,13 +362,26 @@ destinations too ([Verified so far](#verified-so-far)).
 - **`backup <name> <dir>` and `receipts <name> [report]`** write to a directory the admin names. The
   wrapper mounts it at the same path (the `realpath` of `<dir>`, or the report's directory), and
   `lolloctl` checks that the destination it was given is one of its mounts.
+- **`restore <name> <backup>`** reads one backup: the wrapper mounts the snapshot directory, or the
+  archive's directory, read-only at the same path, and `lolloctl` checks it the same way.
 - **`toolbox`** uses the admin's own credentials. Its mounts (`~/.ssh/known_hosts`, `~/.gitconfig`,
   `~/.claude/...`, the toolbox file's mounts) are read by Docker on the host, but `lolloctl` checks
   that they exist and resolves `~` itself, and runs `gh auth token` and `secret-tool lookup`. For
   `toolbox` the wrapper also mounts the admin's home read-only at the same path and passes it as
   `LOLLOCTL_HOST_HOME`, which `toolbox` uses instead of `HOME`; forwards `SSH_AUTH_SOCK`; and runs
-  the two token lookups on the host, passing the tokens with `-e NAME`, never in argv. `toolbox`
-  reads them from the environment when `gh` and `secret-tool` are not installed.
+  the two token lookups on the host (on macOS, the keychain's `security find-generic-password`
+  instead of `secret-tool`), passing the tokens with `-e NAME`, never in argv. `toolbox` reads them
+  from the environment when `gh` and `secret-tool` are not installed.
+- **The ssh agent on macOS** is a socket on the Mac, which a container in the VM cannot reach. Docker
+  Desktop and OrbStack forward it at `/run/host-services/ssh-auth.sock` in the VM. Colima has no such
+  path (its `forwardAgent` reaches only `colima ssh` sessions), so the wrapper opens an ssh tunnel
+  into the VM for the run (`ssh -R <vm path>:$SSH_AUTH_SOCK`, from `colima ssh-config`), waits for the
+  socket, passes that VM path as `SSH_AUTH_SOCK`, and closes the tunnel when the toolbox exits; that
+  is why it runs docker as a child there instead of `exec`. The VM's sshd does not replace a socket
+  left at that path, so the wrapper removes it before the tunnel opens and after it closes, and the
+  path is new each run. Docker Desktop and OrbStack forward the agent macOS starts at login, not
+  `SSH_AUTH_SOCK`'s. No toolbox mount may hold the data directory, which under the home `mount ~`,
+  or a file linked into it, otherwise would (`toolbox_mount`).
 - **`$EDITOR config.env`** happens on the host, as today.
 
 ## `stacks.conf` and `lolloctl apply`

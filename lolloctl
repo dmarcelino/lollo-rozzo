@@ -40,7 +40,10 @@ Operation (<target> is a stack name or "all")
                                 (lollo-vault) and News Radar (lollo-news-radar) to Settings -> MCP, once per stack
                                 (--force: again, also where the person removed them)
   backup <target> <dir> [opts]  copy agents, memory, workspaces, tools, vault, News Radar and receipts to <dir>/<name>/
-                                (--compress: a tar.gz instead; --no-tools; --pause|--live; --keep N)
+                                (--compress: a tar.gz instead; --no-tools; --with-google: Lettuce's Google
+                                tokens too; --pause|--live; --keep N)
+  restore <name> <backup>       put a stack back from one backup (a snapshot directory or a .tar.gz), here or
+          [--yes]               on a new host; the stack must be stopped (--yes: replace its data without asking)
   status                        containers and health of every stack
   list                          stacks, hostnames (Lettuce's and the lollo's) and allowed users
   logs <name> [service]         follow logs
@@ -1485,9 +1488,17 @@ tilde() {
 
 # toolbox_mount SRC DEST ro|rw
 toolbox_mount() {
+  local real
   [[ -e $1 ]] || die "toolbox: $1 does not exist$(release_mode && echo " (in release mode, toolbox mounts must be under $(host_home), which the wrapper mounts)")"
   [[ $1 == /* && $2 == /* ]] || die "toolbox: mount paths must be absolute: $1 $2"
   [[ $1$2 != *:* ]] || die "toolbox: mount paths cannot contain ':': $1 $2"
+  # The data directory holds every stack's secrets, and it may be under the home
+  # (~/lollo-rozzo), where `mount ~`, or a file linked into it, would hand it to
+  # an agent's workspace.
+  real=$(realpath -m -- "$1")
+  if inside "$real" "$LOLLO_DATA" || inside "$LOLLO_DATA" "$real"; then
+    die "toolbox: a toolbox mount cannot hold the data directory $LOLLO_DATA: $1"
+  fi
   run+=(-v "$1:$2:$3")
 }
 
@@ -1661,7 +1672,7 @@ cmd_toolbox() {
     info "toolbox: nothing of yours found"
   fi
   [[ " ${secret_names[*]} " == *" CLAUDE_CODE_OAUTH_TOKEN "* ]] ||
-    warn "no Claude token, so claude will ask you to log in; to set one up once: claude setup-token, then: secret-tool store --label='Claude toolbox' service claude-toolbox"
+    warn "no Claude token, so claude will ask you to log in; to set one up once: claude setup-token, then on Linux: secret-tool store --label='Claude toolbox' service claude-toolbox, or on macOS: security add-generic-password -s claude-toolbox -a \"\$USER\" -w"
   # Secrets reach docker through its environment, so they never show in argv
   # (which `env -i NAME=value` would do); `-e NAME` copies each one.
   (
@@ -1794,10 +1805,24 @@ backup_prune() {
   ((${#old[@]} == 0)) || info "$name: removed ${#old[@]} older backup(s): ${old[*]}"
 }
 
+# The stack's volumes a backup holds, each in the entry of the same name, and
+# restore puts back: "<entry> <volume> <owner> <mode> <only>". restore gives the
+# volume that owner and mode (a volume Docker fills from an image takes the
+# image's owner; one restore creates would be root's). <only> google: only with
+# --with-google, as Lettuce's Google client and tokens are; a refresh token
+# opens the person's mail and Drive, and reconnecting costs them a minute.
+BACKUP_VOLUMES=(
+  "vault vault-data 10001:10001 700 always"
+  "pipelock pipelock-data 65532:65532 700 always"
+  "news-radar news-radar-data 10002:10002 700 always"
+  "google-policy google-policy 0:0 755 google"
+  "google-creds google-creds 0:0 755 google"
+)
+
 # backup_stack NAME -> one backup of the stack into $dest/NAME. Run in a subshell:
 # the lock it takes is released when that exits.
 backup_stack() {
-  local name=$1 f state dir ts prev s p lock vol choice="" mounts=() excludes=() stale=()
+  local name=$1 f state dir ts prev s p e v only lock choice="" mounts=() excludes=() stale=()
   f=$(stack_env "$name")
   state=$(env_get "$f" LETTA_STATE_DIR)
   [[ -d $state ]] || die "$name: no state directory at $state"
@@ -1806,21 +1831,20 @@ backup_stack() {
   # A second run would take this one's .partial-* for a leftover and delete it.
   exec {lock}>"$dir/.lock"
   flock -n "$lock" || die "$name: another backup of $name is running"
-  mounts=(--label "lolloctl.backup=$name" -v "$state:/src/state:ro" -v "$f:/src/stack.env:ro")
-  # Turning the lollo-vault profile off keeps the volume, so look for it either way;
-  # `run -v` would create a missing one.
-  vol=$(vault_volume "$name")
-  if has_vault "$name"; then
-    mounts+=(-v "$vol:/src/vault:ro")
-  elif has_profile "$(env_get "$f" COMPOSE_PROFILES)" lollo-vault; then
-    warn "$name: the vault volume $vol does not exist yet; backing up without it"
-  fi
-  if has_receipts "$name"; then
-    mounts+=(-v "$(receipts_volume "$name"):/src/pipelock:ro")
-  fi
-  if has_news_radar "$name"; then
-    mounts+=(-v "$(news_radar_volume "$name"):/src/news-radar:ro")
-  fi
+  # config.env holds no secrets, and on a new host restore puts it back for init.
+  mounts=(--label "lolloctl.backup=$name" -v "$state:/src/state:ro" -v "$f:/src/stack.env:ro"
+    -v "$(config_file):/src/config.env:ro")
+  # Turning a profile off keeps its volume, so look for each either way; `run -v`
+  # would create a missing one.
+  for e in "${BACKUP_VOLUMES[@]}"; do
+    read -r e v _ _ only <<<"$e"
+    [[ $only != google || -n $google ]] || continue
+    if has_volume "$name" "$v"; then
+      mounts+=(-v "$(stack_volume "$name" "$v"):/src/$e:ro")
+    elif [[ $e == vault ]] && has_profile "$(env_get "$f" COMPOSE_PROFILES)" lollo-vault; then
+      warn "$name: the vault volume $(vault_volume "$name") does not exist yet; backing up without it"
+    fi
+  done
   excludes=(state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups)
   # The BFF rewrites upstream's skills on every connect.
   for s in "$(upstream_dir)"/docker/agent-skills/*/; do
@@ -1869,11 +1893,12 @@ backup_stack() {
 }
 
 cmd_backup() {
-  local usage="usage: lolloctl backup <name|all> <dir> [--compress] [--no-tools] [--pause|--live] [--keep N]"
-  local dest compress="" tools=1 when="" keep="" n rc targets args=() failed=()
+  local usage="usage: lolloctl backup <name|all> <dir> [--compress] [--no-tools] [--with-google] [--pause|--live] [--keep N]"
+  local dest compress="" tools=1 google="" when="" keep="" n rc targets args=() failed=()
   while (($#)); do
     case $1 in
       --compress) compress=1 ;;
+      --with-google) google=1 ;;
       --no-tools) tools="" ;;
       --pause | --live)
         [[ -z $when || $when == "${1#--}" ]] || die "use --pause or --live, not both"
@@ -1980,6 +2005,227 @@ receipt_sessions() {
   pipelock_run sh -c 'for f in /data/evidence/evidence-*.jsonl; do [ -e "$f" ] && stat -c "%Y %n" "$f"; done; true' |
     sed -E 's#^([0-9]+) /data/evidence/evidence-(.*)-[0-9]+\.jsonl$#\1 \2#' |
     sort -rn | awk '!seen[$2]++'
+}
+
+# ── restore ──────────────────────────────────────────────────────────────────
+# Run by sh in the backup container as: sh -c "$RESTORE_COPY" sh MODE SRC DST
+# KEEP_TOOLS, then ENTRY OWNER ROOT_OWNER ROOT_MODE for each of the backup's
+# entries to put back (BACKUP_VOLUMES, and state). DST/ENTRY is made to match
+# the backup's ENTRY: MODE rsync copies the directory SRC/ENTRY (a snapshot
+# keeps no owners, so OWNER gets them all); MODE tar extracts every ENTRY from
+# the archive SRC, with their owners, in one pass. With KEEP_TOOLS (a backup
+# taken with --no-tools), DST/state/tools stays as it is. DST/ENTRY itself ends
+# up ROOT_OWNER's, mode ROOT_MODE. Entry names have no spaces.
+# shellcheck disable=SC2016 # expanded by sh in the container
+RESTORE_COPY='set -e
+mode=$1 src=$2 dst=$3 keep_tools=$4
+shift 4
+# prepare ENTRY OWNER ROOT_OWNER ROOT_MODE... -> rsync copies each entry; for tar,
+# each is emptied and added to $members
+prepare() {
+  while [ $# -gt 0 ]; do
+    if [ "$1" = state ] && [ -n "$keep_tools" ]; then keep=1; else keep=""; fi
+    if [ "$mode" = tar ]; then
+      if [ -n "$keep" ]; then
+        find "$dst/$1" -mindepth 1 -maxdepth 1 ! -name tools -exec rm -rf {} +
+      else
+        find "$dst/$1" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      fi
+      members="$members ./$1"
+    else
+      rsync -aH --numeric-ids --delete --chown="$2" ${keep:+--exclude=/tools/} "$src/$1/" "$dst/$1/"
+    fi
+    shift 4
+  done
+}
+# finish ENTRY OWNER ROOT_OWNER ROOT_MODE... -> each entry itself, its owner and mode
+finish() {
+  while [ $# -gt 0 ]; do
+    chown "$3" "$dst/$1"
+    chmod "$4" "$dst/$1"
+    shift 4
+  done
+}
+members=""
+prepare "$@"
+if [ "$mode" = tar ]; then tar -xzpf "$src" --numeric-owner -C "$dst" $members; fi
+finish "$@"'
+
+# has_entry ENTRIES ENTRY -> success when ENTRY is one of the lines of ENTRIES
+has_entry() { grep -qxF -- "$2" <<<"$1"; }
+
+# archive_entries FILE -> the archive's entries one and two levels down
+# (stack.env, state, state/tools, vault...), one per line
+archive_entries() {
+  tar -tzf "$1" | awk -F/ '$2 != "" { print $2; if (NF > 2 && $3 != "") print $2 "/" $3 }' | sort -u
+}
+
+# The directory restore reads the backup's files into, removed when lolloctl exits.
+RESTORE_FILES=
+
+# backup_files KIND BACKUP ENTRIES DIR -> the backup's stack.env, and its
+# config.env when it has one, copied into DIR, mode 600; an archive is read once
+backup_files() {
+  local kind=$1 b=$2 entries=$3 dir=$4 e files=()
+  for e in stack.env config.env; do
+    ! has_entry "$entries" "$e" || files+=("$e")
+  done
+  (
+    umask 077
+    if [[ $kind == snapshot ]]; then
+      cd -- "$b" && cp -- "${files[@]}" "$dir/"
+    else
+      tar -xzf "$b" -C "$dir" "${files[@]/#/./}"
+    fi
+  ) || return 1
+  for e in "${files[@]}"; do chmod 600 "$dir/$e"; done
+}
+
+# backup_stack_name STACK_ENV -> the stack a stack.env is for, from the line
+# `add` writes first
+backup_stack_name() {
+  sed -n '1s/^# Lettuce stack "\([^"]*\)".*/\1/p' "$1"
+}
+
+cmd_restore() {
+  local usage="usage: lolloctl restore <name> <backup> [--yes]"
+  local yes="" args=() name b kind entries dir state f files lock e v owner mode vol keep_tools="" answer
+  local emails conf from me src=() mounts=() specs=() names=()
+  while (($#)); do
+    case $1 in
+      --yes) yes=1 ;;
+      -*) die "$usage" ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  ((${#args[@]} == 2)) || die "$usage"
+  name=${args[0]}
+  validate_name "$name"
+  [[ -e ${args[1]} ]] || die "${args[1]} does not exist"
+  b=$(realpath -- "${args[1]}")
+  [[ $b != *[:,]* ]] || die "the backup's path cannot contain ':' or ',': $b"
+  # A snapshot directory, or an archive: what `backup` writes in <dir>/<name>/.
+  if [[ -d $b ]]; then
+    [[ -f $b/stack.env && -d $b/state ]] || die "$b is not a backup: no stack.env and state/ in it"
+    kind=snapshot
+    require_mounted "$b"
+    entries=$(cd "$b" && for e in * state/*; do [[ -e $e ]] && printf '%s\n' "$e"; done)
+  elif [[ -f $b && $b == *.tar.gz ]]; then
+    kind=archive
+    require_mounted "$(dirname -- "$b")"
+    entries=$(archive_entries "$b") || die "$b: could not read the archive"
+    if ! has_entry "$entries" stack.env || ! has_entry "$entries" state; then
+      die "$b is not a backup: no stack.env and state/ in it"
+    fi
+  else
+    die "$b is not a backup: name a snapshot directory or a .tar.gz that backup wrote"
+  fi
+  command -v flock >/dev/null || die "flock is required but not installed (util-linux)"
+
+  # The backup's stack.env and config.env, read before anything here changes.
+  files=$(mktemp -d "$LOLLO_DATA/.restore.XXXXXX") || die "could not write in $LOLLO_DATA"
+  RESTORE_FILES=$files
+  trap 'rm -rf -- "$RESTORE_FILES"' EXIT
+  backup_files "$kind" "$b" "$entries" "$files" || die "could not read the backup's stack.env"
+  # A stack.env holds its stack's tunnel and Cloudflare ids: under another name,
+  # two stacks would share a tunnel, and `remove` of one would delete the other's.
+  from=$(backup_stack_name "$files/stack.env")
+  [[ -n $from ]] || die "$b/stack.env does not say which stack it belongs to (no '# Lettuce stack \"<name>\"' first line)"
+  [[ $from == "$name" ]] ||
+    die "$b is a backup of $from, not $name; it holds $from's tunnel and Cloudflare ids, so it can only be restored as $from"
+
+  dir=$(stack_dir "$name")
+  state=$dir/state
+  f=$(stack_env "$name")
+  (umask 077 && mkdir -p "$state")
+  chmod 700 "$dir"
+  exec {lock}>"$dir/.restore.lock"
+  flock -n "$lock" || die "$name: another restore of $name is running"
+
+  # Copying under a stack that has processes, even paused ones, would mix two
+  # states; down first, as for an upgrade.
+  if [[ -f $f ]] && stack_live "$name"; then
+    die "$name is running; stop it first: lolloctl down $name"
+  fi
+  if [[ -f $f || -n $(ls -A "$state") ]]; then
+    if [[ -z $yes ]]; then
+      stdin_is_terminal || die "$name already has data here; run with --yes to replace it with the backup"
+      info "This replaces $name's data here with $b:"
+      info "  $state and $f"
+      for e in "${BACKUP_VOLUMES[@]}"; do
+        read -r e v _ _ _ <<<"$e"
+        ! has_entry "$entries" "$e" || info "  the volume $(stack_volume "$name" "$v")"
+      done
+      printf 'Type the stack name to confirm: ' >&2
+      read -r answer || true
+      [[ $answer == "$name" ]] || die "aborted"
+    fi
+  fi
+  build_backup_image || die "could not build $BACKUP_IMAGE (backup/Dockerfile)"
+
+  # The state, as root's (the containers write it as root), with state/ itself
+  # yours, as `add` makes it; then the volumes the backup holds. One that does
+  # not exist yet is created with Compose's labels, so `up` takes it as the
+  # stack's own. One container copies them all.
+  me="$(id -u):$(id -g)"
+  if ! has_entry "$entries" state/tools; then
+    keep_tools=1
+    warn "$name: the backup has no agent tools (taken with --no-tools); keeping the ones here"
+  fi
+  mounts=(-v "$state:/r/state")
+  specs=(state 0:0 "$me" 700)
+  names=(state)
+  for e in "${BACKUP_VOLUMES[@]}"; do
+    read -r e v owner mode _ <<<"$e"
+    has_entry "$entries" "$e" || continue
+    vol=$(stack_volume "$name" "$v")
+    if ! has_volume "$name" "$v"; then
+      host_docker volume create --label "com.docker.compose.project=lollo-$name" \
+        --label "com.docker.compose.volume=$v" "$vol" >/dev/null || die "$name: could not create the volume $vol"
+    fi
+    mounts+=(-v "$vol:/r/$e")
+    specs+=("$e" "$owner" "$owner" "$mode")
+    names+=("$vol")
+  done
+  if [[ $kind == snapshot ]]; then
+    src=(-v "$b:/b:ro" rsync /b)
+  else
+    src=(-v "$b:/a.tar.gz:ro" tar /a.tar.gz)
+  fi
+  info "$name: restoring ${names[*]}"
+  host_docker "${BACKUP_RUN[@]}" --label "lolloctl.restore=$name" "${src[@]:0:2}" "${mounts[@]}" "$BACKUP_IMAGE" \
+    sh -c "$RESTORE_COPY" sh "${src[@]:2}" /r "$keep_tools" "${specs[@]}" ||
+    die "$name: could not restore the backup; its data here is incomplete, so run this restore again"
+
+  # stack.env last, so a failed copy leaves the old one; it names this host's
+  # state directory, wherever the backup's host kept it.
+  mv -f -- "$files/stack.env" "$f"
+  env_set "$f" LETTA_STATE_DIR "$state"
+
+  # config.env only on a host that has none yet: then init picks it up.
+  if [[ ! -f $(config_file) && -f $files/config.env ]]; then
+    mv -f -- "$files/config.env" "$(config_file)"
+    info "config.env: restored from the backup; run lolloctl init next, with a Cloudflare API token for this host"
+  fi
+
+  # Who may sign in: the Access policy and ALLOWED_USERS change together (users),
+  # and stacks.conf is in step with the policy. A stack it lists keeps the users
+  # it admits now; one it lacks gets the backup's, as add would write them.
+  emails=$(env_get "$f" ALLOWED_USERS)
+  conf=$(conf_entries | awk -v n="$name" '$1 == n { print $2 }')
+  if [[ -n $conf && $(email_diff "$emails" "$conf") != "- -" ]]; then
+    env_set "$f" ALLOWED_USERS "$conf"
+    info "$name: admits $conf, as stacks.conf and the Access policy do, not the backup's $emails"
+  elif [[ -z $conf && -n $emails ]]; then
+    conf_set "$name" "$emails" || die "could not update stacks.conf"
+    info "$name: admits $emails, as in the backup; if its Access policy changed since, run: lolloctl users $name <email>[,<email>]"
+  fi
+  if [[ -f $(config_file) && $(env_get "$f" COMPOSE_PROFILES) != "$(cfg PROFILES)" ]]; then
+    warn "$name: its profiles ($(env_get "$f" COMPOSE_PROFILES)) differ from config.env's PROFILES ($(cfg PROFILES)); up will refuse it until they match (lolloctl profiles)"
+  fi
+  ! has_entry "$entries" google-creds || info "$name: the Google tokens are back; nobody needs to reconnect Google"
+  info "$name: restored from $b; start it with: lolloctl up $name && lolloctl skills $name"
 }
 
 cmd_receipts() {
@@ -2094,7 +2340,7 @@ cmd_version() {
   else
     printf 'lollo-rozzo from a clone: %s\n' "$LOLLO_HOME"
   fi
-  # Restores run in it by hand (docs/operations.md, Backups).
+  # backup and restore copy with it.
   printf 'backup image: %s\n' "$BACKUP_IMAGE"
 }
 
@@ -2114,7 +2360,7 @@ main() {
   BACKUP_IMAGE=$(image_name backup)
   PIPELOCK_IMAGE=$(image_name pipelock)
   case $cmd in
-    init | apply | add | users | remove | profiles | upgrade | up | down | restart | check | status | list | logs | compose | shell | toolbox | skills | mcp | backup | receipts | version)
+    init | apply | add | users | remove | profiles | upgrade | up | down | restart | check | status | list | logs | compose | shell | toolbox | skills | mcp | backup | restore | receipts | version)
       "cmd_$cmd" "$@"
       ;;
     _fetch-wrapper) cmd__fetch_wrapper "$@" ;;

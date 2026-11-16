@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Test stub for uname: `uname -s` prints STUB_UNAME_S (in stub.env) when it is
+# set, as on macOS (Darwin); anything else is the real uname. Tests copy the
+# stubs to $STUB_ROOT/bin.
+STUB_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=/dev/null
+[[ -f $STUB_ROOT/stub.env ]] && . "$STUB_ROOT/stub.env"
+if [[ ${1:-} == -s && -n ${STUB_UNAME_S:-} ]]; then
+  printf '%s\n' "$STUB_UNAME_S"
+  exit 0
+fi
+for u in /usr/bin/uname /bin/uname; do
+  [[ -x $u ]] && exec "$u" "$@"
+done
+exit 1

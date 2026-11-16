@@ -50,7 +50,7 @@ An interactive version, [lollo-rozzo-overview.html](diagrams/lollo-rozzo-overvie
 Every service runs with `no-new-privileges` and a memory cap. The memory caps are 8 GiB for each app-server and for the code editor's shell, 2 GiB for the editor and for Gotenberg, 1 GiB for upstream's other services, 512 MiB for the vault, 384 MiB for News Radar, 256 MiB for cloudflared, Gmail triggers, pipelock and the code editor's gate, and 128 MiB for the landing page. These are caps, not reservations; measure idle use with `docker stats`. The lollo's services, pipelock, and the code editor's gate and editor also run read-only with every capability dropped. The code editor's shell is the exception: it is as strong as an agent, so it keeps Docker's default capabilities except `NET_RAW`, and a writable root. Profiles are global: all stacks share one app-server image, whose contents depend on `PROFILES`, so `lolloctl profiles` changes the list for every stack at once.
 
 ## Where the data lives
-Paths are in the data directory: `/srv/lollo-rozzo` for a release install, `data/` in a clone ([operations.md](operations.md#files-on-the-host)).
+Paths are in the data directory: `~/lollo-rozzo` for a release install, `data/` in a clone ([operations.md](operations.md#files-on-the-host)).
 
 | Data | Where | `backup` | Deleted by |
 |---|---|---|---|
@@ -60,15 +60,16 @@ Paths are in the data directory: `/srv/lollo-rozzo` for a release install, `data
 | the tools agents installed | `stacks/<name>/state/tools` | yes, unless `--no-tools` | `remove --purge` |
 | Gmail trigger rules | `stacks/<name>/state/lollo` | yes | `remove --purge` |
 | the stack's secrets and Cloudflare ids | `stacks/<name>/stack.env` | yes | `remove --purge` |
+| the installation's settings and cached Cloudflare ids | `config.env` | yes, in every stack's backup | never |
 | the vault, encrypted | Docker volume `lollo-<name>_vault-data` | yes, whenever it exists | `remove` |
 | pipelock's receipts and signing key | Docker volume `lollo-<name>_pipelock-data` | yes, whenever it exists | `remove` |
 | monitors, their sources and what they found | Docker volume `lollo-<name>_news-radar-data` | yes, whenever it exists | `remove` |
-| Lettuce's Google client and tokens | Docker volumes `lollo-<name>_google-policy`, `lollo-<name>_google-creds` | no | `remove` |
-| push subscriptions and pinned-agent lists | Docker volume `lollo-<name>_bff-data` | no; losing it is harmless | `remove` |
+| Lettuce's Google client and tokens | Docker volumes `lollo-<name>_google-policy`, `lollo-<name>_google-creds` | only with `--with-google` | `remove` |
+| push subscriptions, pinned-agent lists and avatars | Docker volume `lollo-<name>_bff-data` | no; after a restore, people turn notifications on again | `remove` |
 | the code editor's settings | Docker volume `lollo-<name>_code-server-data` | no; nothing in it is needed to restore a stack | `remove` |
 | the document tools | Docker volume `lollo-doc-tools-<hash>`, one per host | no; rebuilt from this repo | turning `lollo-doc-tools` off |
 
-`remove` deletes the stack's Docker volumes with it, and keeps `stacks/<name>/` (its `stack.env` and `state/`) unless `--purge`. Backups and restores: [operations.md](operations.md#backups).
+`remove` deletes the stack's Docker volumes with it, and keeps `stacks/<name>/` (its `stack.env` and `state/`) unless `--purge`. Backups, `restore` and moving to another host: [operations.md](operations.md#backups).
 
 ## Limits and caveats
 - **Version pinning.** Lettuce is compiled against one exact letta-code release and pins the server image to it. Move between upstream tags only with `lolloctl upgrade <tag>`.
