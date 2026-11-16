@@ -8,7 +8,7 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 ## Files
 | File | What it does |
 |---|---|
-| `run.sh` | The CLI's tests: every `test_*` function, or those whose name contains the argument (`tests/run.sh test_add_`) |
+| `run.sh` | The CLI's tests, and `scripts/renovate-post-upgrade.sh`'s (`test_post_upgrade_*`): every `test_*` function, or those whose name contains the argument (`tests/run.sh test_add_`) |
 | `stubs/` | `docker`, `curl`, `dig`, `gh` and `secret-tool` stand-ins that `run.sh` puts first on `PATH` |
 | `run-sidecar.sh <dir>` | Builds a sidecar's image to its `test` stage and runs its tests in it; extra arguments go to pytest |
 | `run-pipelock.sh` | The pipelock image and config against a real pipelock ([pipelock/README.md](../pipelock/README.md#build-and-test)) |
@@ -54,7 +54,9 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 
 ### dig, gh and secret-tool
 - `dig` answers from `$T/dns.txt` lines of `name TYPE answer`.
-- `gh` and `secret-tool` print `STUB_GH_TOKEN` and `STUB_SECRET_TOOL`, or fail like a logged-out tool.
+- `gh auth token` and `secret-tool` print `STUB_GH_TOKEN` and `STUB_SECRET_TOOL`, or fail like a logged-out tool.
+- `gh api PATH [--jq EXPR]` logs `gh api PATH` and answers from `$T/gh-api/<PATH with / as _>.json` (helpers `gh_api PATH JSON` and `release_assets REPO TAG NAME=DIGEST...`), through `jq -r` with `--jq`; a missing file fails like a 404.
+- `gh attestation verify FILE --repo REPO` logs `gh attestation verify <file name> --repo REPO` and exits `STUB_GH_ATTEST_RC` (default 0).
 
 ## Helpers
 

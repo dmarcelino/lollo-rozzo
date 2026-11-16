@@ -7,8 +7,8 @@
 #   tests/run-pipelock.sh
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SERVER_IMAGE=busybox:1.37.0
-CLIENT_IMAGE=curlimages/curl:8.11.1
+SERVER_IMAGE=busybox:1.38.0
+CLIENT_IMAGE=curlimages/curl:8.23.0
 image=lollo-pipelock:test
 id=lollo-pipelock-test-$$
 tmp=$(mktemp -d)
@@ -70,9 +70,21 @@ check "a page with a prompt injection is blocked" "$(fetch http://web-trusted/in
 check "a private address is blocked" "$(fetch http://web-private/clean.html)" \
   '^403 ' '"blocked":true'
 receipts=$(docker run --rm --network none -v "$id:/data:ro" --entrypoint sh "$image" -c 'cat /data/evidence/*.jsonl')
-check "the injection block has a signed receipt" "$(grep 'web-trusted/injection.html' <<<"$receipts" || true)" \
-  '"verdict":"block"' '"signature":"[^"]+'
-check "the receipts verify" "$(docker run --rm --network none -v "$id:/data:ro" --entrypoint pipelock "$image" \
-  verify-receipt --whole-recorder --chain /data/evidence --key /data/keys/receipt-signing.json.pub 2>&1 && echo VERIFIED)" \
-  'VERIFIED$'
+# A receipt's target keeps only scheme, host and port, and the clean page is
+# allowed, so web-trusted's block receipts are the injection's.
+check "the injection block has a signed receipt" \
+  "$(grep '"target":"http://web-trusted"' <<<"$receipts" | grep '"verdict":"block"' || true)" \
+  'prompt injection' '"signature":"ed25519:[^"]+'
+# verify_receipts EXTRA... -> pipelock's report, then VERIFIED if it exited 0
+verify_receipts() {
+  docker run --rm --network none -v "$id:/data:ro" --entrypoint pipelock "$image" verify-receipt \
+    --whole-recorder --chain /data/evidence --key /data/keys/receipt-signing.json.pub "$@" 2>&1 && echo VERIFIED
+}
+# A running recorder has no end seal yet, so only its prefix can verify; this
+# is what `lolloctl receipts` checks.
+check "the live receipts verify as a prefix" "$(verify_receipts --allow-prefix)" 'VERIFIED$'
+# Docker's default grace, as in compose/pipelock.yml: pipelock seals the run
+# when it stops, and the whole chain then verifies with its end proven.
+docker stop "$id" >/dev/null
+check "the receipts verify once pipelock stops" "$(verify_receipts)" 'VERIFIED$'
 exit "$failed"

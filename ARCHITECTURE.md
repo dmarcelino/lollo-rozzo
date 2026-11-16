@@ -87,7 +87,8 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 |---|---|
 | `lolloctl`, [`lib/`](lib/README.md) | the CLI; [lib/DESIGN.md](lib/DESIGN.md) is how it is installed without a clone |
 | [`release/`](release/README.md), `VERSION`, `REBUILD` | releases: the published images' list (`release/images`), their content tags, the lolloctl image and its wrapper; the version, and the date that rebuilds every image |
-| `.github/workflows/` | `ci.yml`, every check, on each branch push; `publish.yml`, a release on each `v*` tag, after `ci.yml` passes |
+| `.github/workflows/` | `ci.yml`, every check, on each branch push; `publish.yml`, a release on each `v*` tag, after `ci.yml` passes; `renovate.yml`, Renovate on its schedule ([CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates)) |
+| `.github/renovate.json5` | what Renovate updates and what merges on its own |
 | `compose/hardening.yml` | `no-new-privileges`, memory caps for every service, a pid cap on the app-server, no `NET_RAW` where agents run, letta-code self-update off |
 | `compose/multi.yml` | drops all published ports, so stacks never collide |
 | `compose/vault.yml`, [`vault/`](vault/README.md) | the optional vault (`lollo-vault` profile) and its source |
@@ -106,6 +107,7 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 | `scripts/dns-preflight.sh` | compares two nameservers before and after moving a domain (`lolloctl dns-preflight`) |
 | `scripts/doc-tools-e2e.sh`, `scripts/code-server-e2e.sh` | end-to-end runs of the document tools and the code editor against real images |
 | `scripts/check-doc-links.mjs` | checks the Markdown's relative links and anchors, and each folder README's agents' pointer |
+| `scripts/renovate-post-upgrade.sh` | recomputes the hashes, tag commit and lock that go with a version Renovate moved |
 | `tests/` | offline tests (`tests/run.sh`; docker, curl, dig, gh and secret-tool are stubbed), the sidecars' tests (`tests/run-sidecar.sh vault`, `tests/run-sidecar.sh gmail-triggers`, `tests/run-sidecar.sh news-radar`, `tests/run-sidecar.sh code-server`, `tests/run-sidecar.sh outlook`, `tests/run-sidecar.sh landing`, `tests/run-sidecar.sh doc-tools`) and pipelock's (`tests/run-pipelock.sh`) |
 
 Instance data lives in a data directory apart from the code: `/srv/lollo-rozzo` for a release install, the clone's untracked `data/` for a clone (`LOLLO_DATA` names another). [docs/operations.md](docs/operations.md#files-on-the-host) lists what is in it.

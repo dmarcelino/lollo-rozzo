@@ -30,6 +30,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 | `backup/` | [backup/README.md](backup/README.md#rules) | [backup](backup/README.md#build-and-test) |
 | `release/`, `VERSION`, `REBUILD`, `.github/workflows/publish.yml` | [release/README.md](release/README.md#rules) | [release](release/README.md#build-and-test) |
 | `tests/` | [tests/README.md](tests/README.md) (the stubs and helpers) | [tests](tests/README.md#build-and-test) |
+| `.github/renovate.json5`, `.github/workflows/renovate.yml`, `scripts/renovate-post-upgrade.sh` | [CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates) | `tests/run.sh test_post_upgrade_`, and `renovate-config-validator --strict` (Commands) |
 | `docs/`, any `*.md` | [CONTRIBUTING.md](CONTRIBUTING.md#writing-docs) | `node scripts/check-doc-links.mjs` |
 
 ## Directives
@@ -41,7 +42,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 - No second way into an agent: no command or sidecar opens a connection to the app-server or starts a turn; `compose exec` for files and read-only CLI calls is the limit. Gmail triggers and News Radar, through the lollo executor and letta-code's scheduler, are the only exceptions. Another sidecar starting turns, or a new way around the BFF, needs a written reason in CONTRIBUTING first, and goes under `/<sidecar>/` on the lollo host, never on Lettuce's.
 - Don't write into what Lettuce manages (settings, MCP list, memory, workspaces). Where we must write, we own a namespace: `skills` its manifest, the executor install its own files; the one write into the MCP list is `mcp`, with its four kinds of entries. Never turn an upstream feature on by editing its files.
 - Keep upstream's defences on: strictest auth settings, no disabled boot check, nothing secret under `stacks/<name>/state/`, never shorten the BFF's `stop_grace_period`.
-- Name new profiles `lollo-<name>`. Move `LETTUCE_REF` only with `lolloctl upgrade <tag>`, and walk [the upgrade checklist](CONTRIBUTING.md#upgrading-lettuce_ref).
+- Name new profiles `lollo-<name>`. Move `LETTUCE_REF` only with `lolloctl upgrade <tag>`, and walk [the upgrade checklist](CONTRIBUTING.md#upgrading-lettuce_ref); Renovate merges only patch tags that keep letta-code's version into `config.env.example` without it ([Dependency updates](CONTRIBUTING.md#dependency-updates)).
 
 ### The CLI ([lib/README.md](lib/README.md#rules))
 - Never source `config.env` or `stack.env`; use `env_get`, `env_set`, `env_unset` and `cfg`. No quotes or inline comments in them. `stacks.conf` too: `conf_entries`, `conf_set`, `conf_unset`.
@@ -102,8 +103,9 @@ tests/run-pipelock.sh                  # the pipelock image and config against a
 node --test tests/mcp-servers.test.mjs # lib/mcp-servers.mjs against temp settings files
 node --test tests/check-doc-links.test.mjs # the link checker against temp Markdown trees
 node scripts/check-doc-links.mjs       # every relative link and anchor resolves; every folder README has its agents' pointer
-tests/run-sidecar.sh landing            # the landing page and its executor API (pytest), plus the lollo executor's tests (node --test in node:22.22.0-slim) when no args are given
-tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-tools image's `test` stage, Debian 12 like the app-server)
+npx --yes --package "renovate@$(sed -n 's/^ *RENOVATE_VERSION: //p' .github/workflows/renovate.yml)" renovate-config-validator --strict  # .github/renovate.json5 (Node 24)
+tests/run-sidecar.sh landing            # the landing page and its executor API (pytest), plus the lollo executor's tests (node --test in `tests/run-sidecar.sh`'s `NODE_IMAGE`) when no args are given
+tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-tools image's `test` stage, Debian 12 like the app-server), plus the OfficeAgent download's hash check when no args are given
 tests/run-sidecar.sh outlook           # the Outlook sidecar's tests (pytest: levels, recipients, tokens, client, enforcement)
 ```
 The same block is in [CONTRIBUTING.md](CONTRIBUTING.md#building-and-testing); keep both and `.github/workflows/ci.yml` in step. The CLI has no build step; from a clone `lolloctl up` builds the sidecar images, and a release pulls them. A clone's instance data is in its untracked `data/` (`config.env`, `stacks.conf`, `.secrets/`, `upstream/`, `stacks/`), never committed.

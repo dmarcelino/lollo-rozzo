@@ -7,7 +7,9 @@
 # unless pytest arguments narrow the run. Node 22's --test takes files or globs, not a
 # directory; the quoted glob is expanded by node inside the container. For
 # code-server (the gate), the editor image's own tests also run, unless pytest
-# arguments narrow the run; its first build downloads code-server.
+# arguments narrow the run; its first build downloads code-server. For
+# doc-tools, the `office` stage is built too, unless pytest arguments narrow the
+# run: it downloads OfficeAgent and checks it against OFFICEAGENT_SHA256.
 #   tests/run-sidecar.sh <dir> [pytest args...]
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -38,4 +40,8 @@ fi
 if [[ $dir == code-server && $# -eq 0 ]]; then
   docker build -q --target test -t lollo-code-server-editor:test "$ROOT/code-server/editor" >/dev/null
   docker run --rm --network none lollo-code-server-editor:test
+fi
+
+if [[ $dir == doc-tools && $# -eq 0 ]]; then
+  docker build -q --target office --build-context "lollo-common=$ROOT/lollo-common" "$ROOT/doc-tools" >/dev/null
 fi

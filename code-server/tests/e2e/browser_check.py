@@ -2,10 +2,11 @@
 agent-1's folder, a TypeScript file and a terminal (typing a command into it),
 stages and commits the planted change from Source Control, asks to run a task, and
 previews a planted README.md, also after choosing "Disable" in the preview's
-security picker, the way a person would. What ran where is checked
-afterwards by the script, from marker files; this prints what the page showed, and
-whether the planted Markdown asked for anything (every request it would make has
-/planted-md in its URL)."""
+security picker, and opens a planted SVG in the image preview, the way a person
+would. What ran where is checked afterwards by the script, from marker files; this
+prints what the page showed, and whether the planted Markdown or SVG asked for
+anything (every request they would make has /planted-md or /planted-svg in its
+URL)."""
 
 from __future__ import annotations
 
@@ -26,8 +27,10 @@ def main() -> None:
         # shows that requests from inside the preview are seen at all.
         planted: list[str] = []
         control: list[str] = []
+        planted_svg: list[str] = []
         context.on("request", lambda r: planted.append(r.url) if "/planted-md" in r.url else None)
         context.on("request", lambda r: control.append(r.url) if "/control-md" in r.url else None)
+        context.on("request", lambda r: planted_svg.append(r.url) if "/planted-svg" in r.url else None)
         page = context.new_page()
         page.goto(URL)
         page.wait_for_selector(".monaco-workbench", timeout=120_000)
@@ -140,6 +143,31 @@ def main() -> None:
         print(f"{'ok  ' if quiet else 'FAIL'}  browser: the planted Markdown made no request, even with Disable")
         if not quiet:
             print("        " + " ".join(sorted(set(planted)))[:300])
+        ok &= quiet
+
+        # The image preview, part of the workbench since VS Code 1.144 (media-preview
+        # was an extension before): the planted SVG, opened from the Explorer as a
+        # person would, must show as an <img> (where its script never runs, nor
+        # anything it links load), and make no request.
+        page.keyboard.press("Escape")
+        command("View: Show Explorer")
+        page.wait_for_timeout(2_000)
+        page.locator(".explorer-folders-view").get_by_text("preview.svg", exact=True).click()
+        try:
+            page.wait_for_selector(".image-preview-editor img", timeout=15_000)
+            src = page.locator(".image-preview-editor img").first.get_attribute("src") or ""
+        except Exception:  # not shown as an image
+            src = ""
+        page.wait_for_timeout(4_000)  # time for anything the SVG would ask for
+        shown = src.startswith("blob:")
+        print(f"{'ok  ' if shown else 'FAIL'}  browser: the image preview shows the planted SVG as an image")
+        if not shown:
+            print("        " + (src or "no image in the image preview")[:300])
+        ok &= shown
+        quiet = not planted_svg
+        print(f"{'ok  ' if quiet else 'FAIL'}  browser: the planted SVG made no request")
+        if not quiet:
+            print("        " + " ".join(sorted(set(planted_svg)))[:300])
         ok &= quiet
         browser.close()
     sys.exit(0 if ok else 1)

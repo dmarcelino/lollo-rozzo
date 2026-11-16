@@ -1,8 +1,33 @@
 #!/usr/bin/env bash
-# Test stub for `gh auth token`: prints STUB_GH_TOKEN (in stub.env), or fails like
-# a gh that is not logged in. Tests copy the stubs to $STUB_ROOT/bin.
+# Test stub for gh. Tests copy the stubs to $STUB_ROOT/bin.
+# - `gh auth token` prints STUB_GH_TOKEN (in stub.env), or fails like a gh that
+#   is not logged in.
+# - `gh api PATH [--jq EXPR]` logs "gh api PATH" and answers from
+#   $STUB_ROOT/gh-api/<PATH with / as _>.json, through jq -r when given --jq; a
+#   missing file fails like a 404.
+# - `gh attestation verify FILE --repo REPO` logs "gh attestation verify <file
+#   name> --repo REPO" and exits STUB_GH_ATTEST_RC (default 0).
 STUB_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=/dev/null
 [[ -f $STUB_ROOT/stub.env ]] && . "$STUB_ROOT/stub.env"
-[[ $* == "auth token" && -n ${STUB_GH_TOKEN:-} ]] || exit 1
-printf '%s\n' "$STUB_GH_TOKEN"
+STUB_LOG=$STUB_ROOT/calls.log
+case ${1:-} in
+  auth)
+    [[ $* == "auth token" && -n ${STUB_GH_TOKEN:-} ]] || exit 1
+    printf '%s\n' "$STUB_GH_TOKEN"
+    ;;
+  api)
+    path=$2 expr=""
+    [[ ${3:-} == --jq ]] && expr=$4
+    printf 'gh api %s\n' "$path" >>"$STUB_LOG"
+    f=$STUB_ROOT/gh-api/${path//\//_}.json
+    [[ -f $f ]] || exit 1
+    if [[ -n $expr ]]; then jq -r "$expr" "$f"; else cat "$f"; fi
+    ;;
+  attestation)
+    [[ ${2:-} == verify && ${4:-} == --repo ]] || exit 2
+    printf 'gh attestation verify %s --repo %s\n' "${3##*/}" "$5" >>"$STUB_LOG"
+    exit "${STUB_GH_ATTEST_RC:-0}"
+    ;;
+  *) exit 1 ;;
+esac

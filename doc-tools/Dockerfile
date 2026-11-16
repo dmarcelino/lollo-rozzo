@@ -8,11 +8,11 @@
 #
 # Upgrading OfficeAgent: change OFFICEAGENT_VERSION and OFFICEAGENT_SHA256 (from
 # the release's SHA256SUMS, checked against `gh attestation verify`).
-ARG OFFICEAGENT_VERSION=1.2.0
-ARG OFFICEAGENT_SHA256=c1d61b37d7bada1e93a004643a36ea8fa59eed8d1329913b6ce0fd8649dd5cb0
-ARG PYTHON_VERSION=3.12.15
+ARG OFFICEAGENT_VERSION=1.3.0
+ARG OFFICEAGENT_SHA256=434b74bdcc9017a3030ea22c3536bf528d82597a9aabd7fb686126f0e3c2772f
+ARG PYTHON_VERSION=3.12.16
 
-FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
 
 # Debian 12, like the app-server: what runs here runs there.
 FROM debian:12-slim AS base
@@ -50,7 +50,7 @@ RUN uv pip install --python /opt/lollo-doc-tools/venv --no-deps . \
  && find /opt/lollo-doc-tools -name __pycache__ -prune -exec rm -rf {} +
 
 FROM python AS test
-RUN uv pip install --python /opt/lollo-doc-tools/venv pytest==9.1.1
+RUN uv pip install --python /opt/lollo-doc-tools/venv pytest==9.2.0
 COPY tests ./tests
 ENV PATH=/opt/lollo-doc-tools/venv/bin:$PATH
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]

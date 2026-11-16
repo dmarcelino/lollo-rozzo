@@ -8,7 +8,7 @@
 # image, pinned by digest, so the Compose that runs the stacks is this one, not
 # the host's. To upgrade: the digest of `docker buildx imagetools inspect
 # docker:<version>-cli`.
-FROM docker:29.9.3-cli@sha256:2357639ad1ea7d0194134bf3292622fd4e562483966ed674e5d7c945b5f3b28d AS docker
+FROM docker:29.9.3-cli@sha256:5a7af0dcb0e46c803efe9b45371dd21cb500e5b4453250394ac6f06d49b6e6f1 AS docker
 
 FROM debian:12-slim
 RUN apt-get update \
