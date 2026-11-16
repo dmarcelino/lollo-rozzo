@@ -1569,7 +1569,9 @@ toolbox_builtins() {
 toolbox_personal() {
   local file=$1 line w a n=0 src dest mode val name
   [[ -f $file ]] || return 0
-  [[ -O $file ]] || die "$file is not owned by you"
+  # In release mode the wrapper checked the owner on the host, where it is real;
+  # here a macOS share may report another (check_mounts).
+  release_mode || [[ -O $file ]] || die "$file is not owned by you"
   ((((8#$(file_mode "$file")) & 8#022) == 0)) || die "$file is writable by others (chmod 600 $file)"
   while IFS= read -r line || [[ -n $line ]]; do
     read -ra w <<<"$line"

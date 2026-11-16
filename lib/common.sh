@@ -125,7 +125,11 @@ BIND_MOUNTS=""
 
 # check_mounts -> in release mode, reads this container's own mounts (one API
 # call) and dies unless every bind mount has the same source and destination
-# and LOLLO_DATA is one of them. It fails closed: no container found, no run.
+# and LOLLO_DATA is one of them, holding the wrapper (bin/lolloctl), which an
+# empty directory Docker made in its place cannot. Not its owner: the wrapper
+# checked that on the host, and in Docker's VM on macOS a share reports another
+# (Colima's virtiofs: whoever looked first, root when Docker starts a container).
+# It fails closed: no container found, no run.
 check_mounts() {
   local mounts bad
   release_mode || return 0
@@ -135,8 +139,8 @@ check_mounts() {
     die "could not read this container's mounts"
   [[ -z $bad ]] || die "host paths must be mounted at the same path inside lolloctl's container; these are not: $bad"
   BIND_MOUNTS=$(jq -r '.[] | select(.Type == "bind") | .Destination' <<<"$mounts")
-  if [[ $(stat -c %u "$LOLLO_DATA" 2>/dev/null) != "$(id -u)" ]] || ! grep -qxF -- "$LOLLO_DATA" <<<"$BIND_MOUNTS"; then
-    die "$LOLLO_DATA is not mounted, at the same path and owned by you, into lolloctl's container; run lolloctl through its wrapper"
+  if [[ ! -f $LOLLO_DATA/bin/lolloctl ]] || ! grep -qxF -- "$LOLLO_DATA" <<<"$BIND_MOUNTS"; then
+    die "$LOLLO_DATA is not mounted into lolloctl's container at the same path (no bin/lolloctl in it); run lolloctl through its wrapper"
   fi
 }
 

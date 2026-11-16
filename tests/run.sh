@@ -2494,6 +2494,30 @@ test_toolbox_refuses_a_builtin_mount_into_the_data_directory() {
   log_lacks "docker run"
 }
 
+test_toolbox_refuses_a_personal_file_of_someone_else() {
+  toolbox_ready
+  mkdir -p "$T/u/.config/lolloctl"
+  ln -s /etc/passwd "$T/u/.config/lolloctl/toolbox"
+  tb lucius
+  bad_rc
+  out_has "is not owned by you"
+  log_lacks "docker run"
+}
+
+# In release mode the wrapper checked the owner on the host; in the container a
+# macOS share reports another (Colima: whoever looked first). The file is a link
+# to root's, so the next check, of its mode (a link reads 777), stops it.
+test_release_mode_toolbox_leaves_the_owner_to_the_wrapper() {
+  toolbox_ready
+  release_on
+  mkdir -p "$T/u/.config/lolloctl"
+  ln -s /etc/passwd "$T/u/.config/lolloctl/toolbox"
+  tb lucius
+  bad_rc
+  out_lacks "not owned by you"
+  out_has "writable by others"
+}
+
 test_toolbox_refuses_a_personal_file_others_can_write() {
   toolbox_ready
   toolbox_file "env A=b"
@@ -5042,6 +5066,10 @@ release_on() {
   } >"$H/RELEASE"
   CTL_DATA=$D
   mounts "$D"
+  # The wrapper lives in the data directory's bin/, which is how lolloctl knows
+  # the real one is mounted.
+  mkdir -p "$D/bin"
+  : >"$D/bin/lolloctl"
 }
 
 # mounts PATH... -> lolloctl's container has PATHs bound at the same path
@@ -5117,6 +5145,32 @@ test_release_mode_needs_the_same_path_inside_and_outside() {
 test_release_mode_needs_the_data_directory_mounted() {
   release_on
   mounts /somewhere/else
+  ctl list
+  bad_rc
+  out_has "is not mounted"
+}
+
+# Colima's virtiofs share reports the owner of whoever looked first, root when
+# Docker started the container: the data directory is known by its wrapper.
+test_release_mode_trusts_the_mount_not_the_owner_the_share_reports() {
+  release_on
+  cat >"$T/bin/stat" <<'STAT'
+#!/usr/bin/env bash
+if [[ $1 == -c && $2 == %u ]]; then
+  echo 0
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+STAT
+  chmod 755 "$T/bin/stat"
+  ctl list
+  ok_rc
+}
+
+# An empty directory Docker made in place of a path it cannot see has no wrapper.
+test_release_mode_needs_the_wrapper_in_the_data_directory() {
+  release_on
+  rm "$D/bin/lolloctl"
   ctl list
   bad_rc
   out_has "is not mounted"
@@ -5208,7 +5262,7 @@ test_version_names_the_release() {
   ok_rc
   out_has "lollo-rozzo 1.2.3"
   CTL_DATA=""
-  rm "$H/RELEASE"
+  rm "$H/RELEASE" "$D/bin/lolloctl"
   ctl version
   ok_rc
   out_has "from a clone: $H"
