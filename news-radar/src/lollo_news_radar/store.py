@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS monitors (
   set_up_in TEXT NOT NULL DEFAULT '',
   where_terms TEXT NOT NULL DEFAULT '[]',
   from_now_at INTEGER,
+  where_unknown TEXT NOT NULL DEFAULT 'keep',
   UNIQUE (agent_id, name)
 );
 CREATE TABLE IF NOT EXISTS reports (
@@ -116,6 +117,13 @@ CREATE INDEX IF NOT EXISTS reports_by_agent ON reports (agent_id, at);
 CREATE TABLE IF NOT EXISTS tests (fingerprint TEXT PRIMARY KEY, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, pos INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS places (
+  key TEXT PRIMARY KEY,
+  phrase TEXT NOT NULL,
+  locality TEXT NOT NULL,
+  added_by TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
 """
 
 # queued: waiting for the executor; claimed: handed to it, waiting for its result.
@@ -131,8 +139,10 @@ class Monitor:
     conversation: str = "new"
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
-    # Places an event's venue must name; events without a venue are kept.
+    # Places an item must be at (places.PlaceMap says where it is).
     where: list[str] = field(default_factory=list)
+    # With where, what happens to an item nothing places: "keep" or "drop".
+    where_unknown: str = "keep"
     days_ahead: int | None = None
     news: bool = False
     id: str = ""
@@ -167,6 +177,7 @@ class Monitor:
             "include": self.include,
             "exclude": self.exclude,
             "where": self.where,
+            "where_unknown": self.where_unknown,
             "days_ahead": self.days_ahead,
             "news": self.news,
             "paused": self.paused,
@@ -227,6 +238,15 @@ def _stored_item(r: sqlite3.Row) -> StoredItem:
 
 
 @dataclass(frozen=True)
+class PlaceEntry:
+    key: str
+    phrase: str
+    locality: str
+    added_by: str
+    at: int
+
+
+@dataclass(frozen=True)
 class Agent:
     id: str
     name: str
@@ -256,6 +276,7 @@ class Store:
             ("set_up_in", "TEXT NOT NULL DEFAULT ''"),
             ("where_terms", "TEXT NOT NULL DEFAULT '[]'"),
             ("from_now_at", "INTEGER"),
+            ("where_unknown", "TEXT NOT NULL DEFAULT 'keep'"),
         ):
             if name not in columns:
                 with self._db:
@@ -336,6 +357,33 @@ class Store:
 
     def source_users(self, name: str) -> list[Monitor]:
         return [m for m in self.monitors() if name in m.sources]
+
+    # -- the place map ------------------------------------------------------------
+    def places(self) -> list[PlaceEntry]:
+        rows = self._db.execute("SELECT * FROM places ORDER BY locality, phrase")
+        return [PlaceEntry(r["key"], r["phrase"], r["locality"], r["added_by"], r["at"]) for r in rows]
+
+    def put_places(self, entries: Sequence[tuple[str, str, str]], added_by: str, most: int) -> bool:
+        """Adds or replaces (key, phrase, locality) entries, all or none: False, and
+        nothing saved, when the map would then hold more than `most`."""
+        now = self.now()
+        with self._db:
+            keys = {r[0] for r in self._db.execute("SELECT key FROM places")}
+            if len(keys | {e[0] for e in entries}) > most:
+                return False
+            self._db.executemany(
+                "INSERT INTO places (key, phrase, locality, added_by, at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET phrase = excluded.phrase, locality = excluded.locality, "
+                "added_by = excluded.added_by, at = excluded.at",
+                [(*e, added_by, now) for e in entries],
+            )
+        return True
+
+    def delete_place(self, key: str) -> str | None:
+        """The phrase of the entry deleted, or None when there was none."""
+        with self._db:
+            row = self._db.execute("DELETE FROM places WHERE key = ? RETURNING phrase", (key,)).fetchone()
+        return row[0] if row else None
 
     # -- source state and health -----------------------------------------------
     @staticmethod
@@ -545,6 +593,7 @@ class Store:
             include=json.loads(row["include"]),
             exclude=json.loads(row["exclude"]),
             where=json.loads(row["where_terms"]),
+            where_unknown=row["where_unknown"],
             days_ahead=row["days_ahead"],
             news=bool(row["news"]),
             schedule=row["schedule"],
@@ -589,6 +638,7 @@ class Store:
             json.dumps(m.include),
             json.dumps(m.exclude),
             json.dumps(m.where),
+            m.where_unknown,
             m.days_ahead,
             int(m.news),
             m.schedule,
@@ -598,17 +648,18 @@ class Store:
             current = self.monitor_named(m.agent_id, m.name)
             if current:
                 self._db.execute(
-                    "UPDATE monitors SET sources=?, include=?, exclude=?, where_terms=?, days_ahead=?, news=?, "
-                    "schedule=?, conversation=?, set_up_in=?, updated=?, paused=0, failures=0 WHERE id=?",
+                    "UPDATE monitors SET sources=?, include=?, exclude=?, where_terms=?, where_unknown=?, "
+                    "days_ahead=?, news=?, schedule=?, conversation=?, set_up_in=?, updated=?, paused=0, failures=0 "
+                    "WHERE id=?",
                     (*values, m.set_up_in, now, current.id),
                 )
                 monitor_id = current.id
             else:
                 monitor_id = uuid.uuid4().hex[:16]
                 self._db.execute(
-                    "INSERT INTO monitors (sources, include, exclude, where_terms, days_ahead, news, schedule, "
-                    "conversation, set_up_in, created, updated, id, agent_id, name) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO monitors (sources, include, exclude, where_terms, where_unknown, days_ahead, news, "
+                    "schedule, conversation, set_up_in, created, updated, id, agent_id, name) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (*values, m.set_up_in, now, now, monitor_id, m.agent_id, m.name),
                 )
             if delivered_upto is not None:

@@ -8,6 +8,7 @@ firing into reports."""
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -32,7 +33,7 @@ from . import icons
 from .config import HEARTBEAT_STALE_SECONDS, INTERNAL_NAME, LOST_AFTER_SECONDS, MAX_CLAIM, NAME, PREFIX
 from .cron import Schedule
 from .mcp_tools import build_server
-from .service import Service, reports_per_day
+from .service import Service, ToolError, reports_per_day
 from .store import MONITOR_ID, ExecutorQueue, Monitor
 
 log = logging.getLogger("lollo_news_radar.app")
@@ -55,7 +56,11 @@ NOTICES = {
     "deleted": "Monitor deleted.",
     "source-deleted": "Source deleted.",
     "conversation": "Where its reports go is changed.",
+    "place-added": "Place saved.",
+    "place-deleted": "Place deleted.",
 }
+# A place's key in its delete URL: compacted letters and digits.
+PLACE_KEY = re.compile(r"\w{1,80}")
 # What the page offers for where a monitor's reports go; "here" is the
 # conversation the agent set it up in, offered only when the agent said which.
 CONVERSATION_CHOICES = {
@@ -211,6 +216,7 @@ def create_app(
                     "kind": raw.get("kind", ""),
                     "host": urlsplit(str(raw.get("url", ""))).hostname or "",
                     "every": raw.get("every", ""),
+                    "place": raw.get("place", ""),
                     "healthy": st.healthy if st else True,
                     "reason": st.unhealthy_reason if st else "",
                     "last_ok": st.last_ok if st else None,
@@ -224,6 +230,7 @@ def create_app(
             groups=sorted(((names.get(a, a), ms) for a, ms in groups.items()), key=lambda g: g[0].lower()),
             last_reports=store.last_reports(),
             sources=sources,
+            places=store.places(),
             banners=banners(),
             timezone=service.settings.timezone,
             notice=NOTICES.get(request.query_params.get("done", "")),
@@ -272,6 +279,23 @@ def create_app(
         store.delete_source(name)
         return back("/?done=source-deleted")
 
+    async def add_place(request: Request, email: str) -> Response:
+        form = await request.form()
+        entry = {"phrase": form.get("phrase"), "locality": form.get("locality")}
+        try:
+            service.place_put(None, [entry], added_by="page")
+        except ToolError as e:
+            raise FormError(f"{str(e)[:1].upper()}{str(e)[1:]}.") from e
+        log.info("place added on the page")
+        return back("/?done=place-added")
+
+    async def delete_place(request: Request, email: str) -> Response:
+        key = request.path_params["key"]
+        if not PLACE_KEY.fullmatch(key) or store.delete_place(key) is None:
+            raise FormError("This place doesn't exist (any more).")
+        log.info("place deleted on the page")
+        return back("/?done=place-deleted")
+
     def static(body: bytes, media_type: str) -> Handler:
         async def serve(request: Request, email: str) -> Response:
             return Response(body, media_type=media_type, headers={**SECURITY_HEADERS, "cache-control": "no-cache"})
@@ -297,6 +321,8 @@ def create_app(
         Route("/m/{mid}/delete", page(delete_monitor, post=True), methods=["POST"]),
         Route("/m/{mid}/conversation", page(set_conversation, post=True), methods=["POST"]),
         Route("/s/{name}/delete", page(delete_source, post=True), methods=["POST"]),
+        Route("/p", page(add_place, post=True), methods=["POST"]),
+        Route("/p/{key}/delete", page(delete_place, post=True), methods=["POST"]),
         Route("/lollo.css", page(static(lollo_css, "text/css"), asset=True)),
         Route("/app.css", page(static(app_css, "text/css"), asset=True)),
         Route("/icon-192.png", page(icon(192), asset=True)),

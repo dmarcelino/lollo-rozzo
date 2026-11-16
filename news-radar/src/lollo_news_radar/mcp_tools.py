@@ -72,7 +72,8 @@ def build_server(service: Service) -> MCPServer:
         "item has (fill_rates), problems (it fails: no items, events without dates, every event in the past), "
         "warnings (it passes: a listing that looks cut short) and any failure; with retry_after, the site asked "
         "for a pause: don't call again before then. A passing test lets source_put save that spec for 15 minutes "
-        '(every may change without a new test). The argument is {"spec": {...}}. Spec fields: name, url, kind '
+        "(every and place may change without a new test). "
+        'The argument is {"spec": {...}}. Spec fields: name, url, kind '
         "(rss, json, html, schema_org, ical, sitemap), item_kind (event or article), every (like 6h; at least the "
         "admin's minimum), extract (json: items and fields as JMESPath; html: items and fields as CSS selectors, "
         "'sel@attr' for an attribute; schema_org: types; sitemap: match, plain pieces of URL to keep, sitemaps, "
@@ -82,8 +83,11 @@ def build_server(service: Service) -> MCPServer:
         "{max}, its newest unseen pages read for schema.org data), dates ({languages}), "
         "watch (fields whose change makes an item changed), group_by (a field or extra whose value names one item "
         "listed several times, such as a film in several formats: reports show them as one row with its "
-        "variants; groups_in_sample says how many rows the sample makes). Item fields: title, url, start, end, "
-        "venue, summary, image, published, outlet; extra holds up to 10 others (true and false are kept as text).",
+        "variants; groups_in_sample says how many rows the sample makes), place (the town every item is in, for a "
+        "single-venue agenda or a festival's page: where places every item of the source there, as well as by its "
+        "venue). Item fields: title, url, start, end, venue, locality (the town, when the site gives it apart from "
+        "the venue; schema_org fills it), summary, image, published, outlet; extra holds up to 10 others (true and "
+        "false are kept as text).",
         annotations=ToolAnnotations(title="Test a source", read_only_hint=True, open_world_hint=True),
     )
     async def source_test(spec: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +128,34 @@ def build_server(service: Service) -> MCPServer:
         return _call(service.source_delete, name)
 
     @server.tool(
+        description="Add or replace entries of this stack's place map, which tells monitors' where filters where "
+        "an item is: entries is a list of up to 50 {phrase, locality}, phrase naming one place (a venue, as "
+        "specific as it can be: 'Grand Theatre Northtown', not 'Grand Theatre') and locality its town. Phrases are "
+        "compared with letters and digits only, ignoring case, accents, spaces and punctuation, so they also find "
+        "a place in a link (grand_theatre_northtown) and inside longer words: a short or common phrase places the "
+        "wrong items. A phrase already in the map is replaced. Propose the entries to the person and save them "
+        "only once they agree: they decide what reaches their reports. agent_id is your own ($LETTA_AGENT_ID).",
+        annotations=ToolAnnotations(title="Save places", read_only_hint=False, open_world_hint=False),
+    )
+    async def place_put(agent_id: str, entries: list[dict[str, str]]) -> dict[str, Any]:
+        return _call(service.place_put, agent_id, entries)
+
+    @server.tool(
+        description="The stack's place map: each phrase, its locality, who added it and when.",
+        annotations=ToolAnnotations(title="List places", **ro),
+    )
+    async def place_list() -> dict[str, Any]:
+        return service.place_list()
+
+    @server.tool(
+        description="Delete entries of the place map by their phrases (case, accents, spaces and punctuation "
+        "aside). Ask the person first.",
+        annotations=ToolAnnotations(title="Delete places", read_only_hint=False, destructive_hint=True),
+    )
+    async def place_delete(phrases: list[str]) -> dict[str, Any]:
+        return _call(service.place_delete, phrases)
+
+    @server.tool(
         description="Create or replace one of your monitors. agent_id is your own ($LETTA_AGENT_ID). set_up_in: the "
         "conversation you are in ($LETTA_CONVERSATION_ID); pass it when creating a monitor or moving its reports here. "
         "A saved monitor is replaced whole: send back every field this tool takes, as monitor_list gives them, "
@@ -136,9 +168,12 @@ def build_server(service: Service) -> MCPServer:
         "(the person may have chosen on the page), or, for a new monitor, to report here. include/exclude: up to 60 "
         "words or phrases an item must have / must not have, found as whole words anywhere in its title, summary, "
         "venue, outlet or extra fields, ignoring case and accents ('tool' does not find 'toolbox'; end a term with * "
-        "for a prefix: 'caric*'). where: places an event's venue must name (whole words, as above); events without a "
-        "venue are kept. days_ahead: only events starting within that many days. from_now: true to report only what "
-        "the sources list or change from now on, not what they already hold (for 'tell me about new announcements'); "
+        "for a prefix: 'caric*'). where: towns or places an item must be at (whole words, as above), looked for in "
+        "its venue and locality, the towns of place map entries its venue names (place_put) and its source's place; "
+        "with none of those, in the towns of entries its title, link or linked extras name. where_unknown: keep "
+        "(the default) or drop the items none of that places. days_ahead: only events starting within that many "
+        "days. from_now: true to report only what the sources list or change from now on, not what they already "
+        "hold (for 'tell me about new announcements'); "
         "refused until every source has been fetched once (not_fetched_yet). news: true to group articles into stories "
         "by how many outlets carry them. Preview it as a draft with monitor_preview first. warnings: filters that let "
         "too much through, as monitor_preview gives them; saving goes ahead.",
@@ -157,6 +192,7 @@ def build_server(service: Service) -> MCPServer:
         set_up_in: str | None = None,
         where: list[str] | None = None,
         from_now: bool = False,
+        where_unknown: str | None = None,
     ) -> dict[str, Any]:
         return _call(
             service.monitor_put,
@@ -172,6 +208,7 @@ def build_server(service: Service) -> MCPServer:
             set_up_in=set_up_in,
             where=where,
             from_now=from_now,
+            where_unknown=where_unknown,
         )
 
     @server.tool(
@@ -191,14 +228,17 @@ def build_server(service: Service) -> MCPServer:
     @server.tool(
         description="What one of your monitors would report if its schedule fired now, without starting a turn or "
         "marking anything reported: show it to the person when setting a monitor up. With sources (and optionally "
-        "include, exclude, where, days_ahead, news, from_now, as for monitor_put), it previews that draft instead, "
-        "saving nothing: test a filter before monitor_put. A draft's rows are what its first report would hold; a row "
+        "include, exclude, where, where_unknown, days_ahead, news, from_now, as for monitor_put), it previews that "
+        "draft instead, saving nothing: test a filter before monitor_put. A draft's rows are what its first report "
+        "would hold; a row "
         "with also_in is one event other sources list too, and one with status known an event the person already had "
-        "(in a report, or when from_now was set), newly listed elsewhere. terms says what each term did: items each include and where "
-        "term finds, and items each exclude term removes, with examples; read it rather than trying term after term. "
+        "(in a report, or when from_now was set), newly listed elsewhere. terms says what each term did: items each "
+        "include and where term finds, and items each exclude term removes, with examples; with where, also the "
+        "items placed elsewhere (where_elsewhere), the ones nothing places (where_unknown) and how many items each "
+        "place map entry or source place placed (placed_by). Read it rather than trying term after term. "
         "warnings: an include term that alone lets through a third or more of the rows, twice as many as any other "
         "term (a word too common to choose by), or "
-        "articles that pass in an events monitor, which days_ahead and where can't narrow. "
+        "articles that pass in an events monitor, which days_ahead can't narrow. "
         "over_cap: more rows than a report holds. not_fetched_yet: sources whose items aren't in yet; preview again in "
         "a minute. existing_skipped (with from_now): rows left out as already there. A saved monitor's preview shows "
         "only what is new or changed since shows_since (its last report, or at most 7 days back), so an empty preview "
@@ -215,6 +255,7 @@ def build_server(service: Service) -> MCPServer:
         news: bool = False,
         where: list[str] | None = None,
         from_now: bool = False,
+        where_unknown: str | None = None,
     ) -> dict[str, Any]:
         return _call(
             service.monitor_preview,
@@ -227,6 +268,7 @@ def build_server(service: Service) -> MCPServer:
             news,
             where=where,
             from_now=from_now,
+            where_unknown=where_unknown,
         )
 
     @server.tool(

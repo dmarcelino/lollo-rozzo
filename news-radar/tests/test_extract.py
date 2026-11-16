@@ -82,6 +82,63 @@ def test_schema_org_json_ld_and_microdata():
     assert by_title["A Play"]["venue"] == "Stage 2"
 
 
+def test_schema_org_gives_the_town_of_a_place_apart_from_its_name():
+    ld = """<html><script type="application/ld+json">[
+      {"@type": "MusicEvent", "name": "Named", "startDate": "2027-03-01",
+       "location": {"@type": "Place", "name": "Big Room",
+                    "address": {"@type": "PostalAddress", "addressLocality": "Northtown"}}},
+      {"@type": "MusicEvent", "name": "Address only", "startDate": "2027-03-02",
+       "location": {"@type": "Place", "address": {"addressLocality": "Southtown", "streetAddress": "1 Quay"}}},
+      {"@type": "MusicEvent", "name": "Two places", "startDate": "2027-03-03",
+       "location": [{"@type": "Place", "name": "Hall", "address": {"addressLocality": "Easttown"}},
+                    {"@type": "Place", "name": "Other"}]},
+      {"@type": "MusicEvent", "name": "Text", "startDate": "2027-03-04", "location": "Open Air, Westtown"}
+    ]</script></html>"""
+    s = spec({"name": "v", "url": "https://v.example.org/", "kind": "schema_org"})
+    by_title = {i.fields["title"]: i.fields for i in extract(s, page("https://v.example.org/", ld))}
+    assert (by_title["Named"]["venue"], by_title["Named"]["locality"]) == ("Big Room", "Northtown")
+    assert (by_title["Address only"]["venue"], by_title["Address only"]["locality"]) == ("", "Southtown")
+    assert (by_title["Two places"]["venue"], by_title["Two places"]["locality"]) == ("Hall", "Easttown")
+    assert (by_title["Text"]["venue"], by_title["Text"]["locality"]) == ("Open Air, Westtown", "")
+
+
+def test_the_town_leaves_a_venue_as_it_was():
+    # A changed venue marks a stored item changed, so the venue stays what it was
+    # before towns were read: the first named place of a list, an online event's link.
+    ld = """<html><script type="application/ld+json">[
+      {"@type": "MusicEvent", "name": "Unnamed first", "startDate": "2027-03-01",
+       "location": [{"@type": "Place", "address": {"addressLocality": "Northtown"}},
+                    {"@type": "Place", "name": "Hall"}]},
+      {"@type": "MusicEvent", "name": "Online", "startDate": "2027-03-02",
+       "location": {"@type": "VirtualLocation", "url": "https://stream.example.org/live"}}
+    ]</script></html>"""
+    s = spec({"name": "v", "url": "https://v.example.org/", "kind": "schema_org"})
+    by_title = {i.fields["title"]: i.fields for i in extract(s, page("https://v.example.org/", ld))}
+    assert (by_title["Unnamed first"]["venue"], by_title["Unnamed first"]["locality"]) == ("Hall", "Northtown")
+    assert by_title["Online"]["venue"] == "https://stream.example.org/live"
+
+
+def test_json_and_html_specs_can_map_a_locality():
+    body = '{"data": {"list": {"items": [{"name": "A", "date": "2027-02-01", "city": "Northtown"}]}}}'
+    s = spec(
+        json_spec(
+            extract={"items": "data.list.items", "fields": {"title": "name", "start": "date", "locality": "city"}}
+        )
+    )
+    [item] = extract(s, page("https://agenda.example.org/api/events", body, "application/json"))
+    assert item.fields["locality"] == "Northtown"
+
+
+def test_a_source_place_is_a_short_town_and_needs_no_new_test():
+    base = parse_spec(json_spec(), 300)
+    placed = parse_spec({**json_spec(), "place": " Northtown "}, 300)
+    assert placed.place == "Northtown" and placed.raw["place"] == "Northtown"
+    assert placed.fingerprint == base.fingerprint
+    for bad in ("", "x" * 61, 3, ["Northtown"]):
+        with pytest.raises(SpecError, match="place"):
+            parse_spec({**json_spec(), "place": bad}, 300)
+
+
 def test_rss_articles_take_their_outlet():
     feed = """<?xml version="1.0"?><rss version="2.0"><channel><title>Search</title>
       <item><title>Talks resume in the capital - Daily Example</title><link>https://news.example.org/a</link>

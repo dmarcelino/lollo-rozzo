@@ -9,7 +9,7 @@ from conftest import AGENT, EVENTS_JSON, OTHER_AGENT, json_spec
 
 from lollo_news_radar.config import CARRY_SECONDS, MAX_PROMPT
 from lollo_news_radar.service import ToolError, minutes_between
-from lollo_news_radar.store import CLAIMED, FAILED, LOST, OK, QUEUED
+from lollo_news_radar.store import CLAIMED, FAILED, LOST, OK, QUEUED, Agent
 
 pytestmark = pytest.mark.anyio
 
@@ -866,8 +866,11 @@ async def test_a_preview_warns_about_articles_in_an_events_monitor(service, web)
     await add_titles(service, web)
     await add_articles(service, web)
     [warning] = warnings_of(service, sources=["city-agenda", "city-news"])
-    assert "3 article(s) from city-news pass" in warning and "days_ahead and where" in warning
+    assert "3 article(s) from city-news pass" in warning and "days_ahead doesn't narrow them" in warning
+    assert "where_unknown: drop" in warning
     assert warnings_of(service, sources=["city-agenda", "city-news"], include=["tool"]) == []  # none passes
+    # Unplaced articles left out by where_unknown don't pass, so nothing to warn about.
+    assert warnings_of(service, sources=["city-agenda", "city-news"], where=["x"], where_unknown="drop") == []
     assert warnings_of(service, sources=["city-agenda", "city-news"], news=True) == []
     assert warnings_of(service, sources=["city-news"]) == []
     assert len(warnings_of(service, sources=["city-news"], days_ahead=30)) == 1
@@ -902,6 +905,206 @@ def test_a_store_from_before_where_gains_the_column(settings, clock):
     db.close()
     [m] = Store(settings.db_path, clock=clock).monitors()
     assert m.where == []
+
+
+# -- places: where an item is, worked out by the service -----------------------------------------
+PLACED = [
+    {"name": "Rock at the north coliseum", "venue": "Coliseum Northtown"},
+    {"name": "Quartet at the cultural centre", "venue": "Centre Culturel de Belvué"},
+    {"name": "Tour of two cities", "venue": "Old Royal Theatre, Coliseum Northtown"},
+    {"name": "Venue names its town", "venue": "Studio 5 | Southtown"},
+    {"name": "Ticket names the hall", "ticket": "https://t.example.org/b/9-grand_coliseum_hall/Sessions"},
+    {"name": "Concert at Grand Coliseum Hall"},
+    {"name": "Town given apart", "city": "Southtown"},
+    {"name": "Mystery night"},
+]
+SOUTHTOWN = {
+    "Quartet at the cultural centre",
+    "Tour of two cities",
+    "Venue names its town",
+    "Ticket names the hall",
+    "Concert at Grand Coliseum Hall",
+    "Town given apart",
+}
+
+
+def placed_spec(**over):
+    fields = {"title": "name", "start": "date", "url": "link", "venue": "venue", "locality": "city"}
+    return json_spec(extract={"items": "data.list.items", "fields": fields, "extra": {"ticket_url": "ticket"}}, **over)
+
+
+async def add_placed(service, web, rows=PLACED, name="city-agenda", url=URL, **over):
+    items = [{"date": "2027-02-01", "link": f"/p/{i}", **r} for i, r in enumerate(rows)]
+    web.add(url, json.dumps({"data": {"list": {"items": items}}}), "application/json")
+    spec = placed_spec(name=name, url=url, **over)
+    assert (await service.source_test(spec))["passed"]
+    service.source_put(spec)
+    await service.fetch_source(name)
+
+
+def map_southtown(service):
+    return service.place_put(
+        AGENT,
+        [
+            {"phrase": "Centre Culturel de Belvué", "locality": "Southtown"},
+            {"phrase": "Old Royal", "locality": "Southtown"},
+            {"phrase": "Grand Coliseum Hall", "locality": "Southtown"},
+        ],
+    )
+
+
+async def test_where_places_items_by_venue_town_and_the_place_map(service, web):
+    await add_placed(service, web)
+    before = set(titles_of(service, where=["southtown"]))
+    # Without the map, the venues that don't spell out their town are elsewhere.
+    assert before == {
+        "Venue names its town",
+        "Ticket names the hall",
+        "Concert at Grand Coliseum Hall",
+        "Town given apart",
+        "Mystery night",
+    }
+    map_southtown(service)
+    assert set(titles_of(service, where=["southtown"])) == SOUTHTOWN | {"Mystery night"}
+    assert set(titles_of(service, where=["southtown"], where_unknown="drop")) == SOUTHTOWN
+    # A tour placed in both towns is kept for either.
+    assert set(titles_of(service, where=["northtown"], where_unknown="drop")) == {
+        "Rock at the north coliseum",
+        "Tour of two cities",
+    }
+
+
+async def test_the_place_map_matches_letters_and_digits_only(service, web):
+    rows = [{"name": "Night", "ticket": "https://t.example.org/grand-coliseum-hall"}, {"name": "Room 22 opens"}]
+    await add_placed(service, web, rows=rows)
+    service.place_put(AGENT, [{"phrase": "GRAND coliseum hall!", "locality": "Southtown"}])
+    service.place_put(AGENT, [{"phrase": "Room 2", "locality": "Northtown"}])
+    kept = titles_of(service, where=["southtown"], where_unknown="drop")
+    assert kept == ["Night"]
+    # "room2" is in "room22": compacted phrases match inside words, so keep them specific.
+    assert titles_of(service, where=["northtown"], where_unknown="drop") == ["Room 22 opens"]
+
+
+async def test_a_source_place_places_every_item_of_the_source(service, web):
+    # A one-venue agenda names its rooms, not its town: the source's place keeps them.
+    rows = [
+        {"name": "Here"},
+        {"name": "In a room", "venue": "Stage 2"},
+        {"name": "Touring", "venue": "Hall, Northtown"},
+    ]
+    await add_placed(service, web, rows=rows, place="Southtown")
+    assert set(titles_of(service, where=["southtown"], where_unknown="drop")) == {"Here", "In a room", "Touring"}
+    assert titles_of(service, where=["northtown"], where_unknown="drop") == ["Touring"]
+    out = service.source_list()
+    assert out["sources"][0]["place"] == "Southtown"
+
+
+async def test_a_town_given_apart_is_shown_and_still_merges_one_event(service, web):
+    await add_placed(service, web, rows=[{"name": "Big Night", "venue": "Hall", "city": "Southtown"}])
+    await add_placed(service, web, rows=[{"name": "Big Night", "venue": "Hall"}], name="other", url=URL2)
+    await add_placed(
+        service, web, rows=[{"name": "Star night", "venue": "Grandiose Hall", "city": "Grand*"}], name="third", url=URL3
+    )
+    rows = service.monitor_preview(AGENT, "x", sources=["city-agenda", "other", "third"])["rows"]
+    by_title = {r["title"]: r for r in rows}
+    assert len(rows) == 2 and by_title["Big Night"]["also_in"]
+    [row] = service.monitor_preview(AGENT, "x", sources=["city-agenda"])["rows"]
+    assert (row["where"], row["locality"]) == ("Hall", "Southtown")
+    # A town is shown as it is: never read as a filter term.
+    assert by_title["Star night"]["locality"] == "Grand*"
+
+
+async def test_articles_placed_by_their_source_raise_no_warning(service, web):
+    await add_titles(service, web)
+    await add_articles(service, web)
+    assert warnings_of(service, sources=["city-news"], where=["northtown"])  # kept, but nothing placed them
+    stored = service.store.source_spec("city-news")
+    service.source_put({**stored, "place": "Northtown"})
+    assert warnings_of(service, sources=["city-news"], where=["northtown"]) == []
+    # Placed or not, articles among events are still worth a word.
+    assert warnings_of(service, sources=["city-agenda", "city-news"], where=["northtown"])
+
+
+async def test_a_preview_says_where_items_were_placed(service, web):
+    await add_placed(service, web)
+    map_southtown(service)
+    terms = service.monitor_preview(AGENT, "x", sources=["city-agenda"], where=["southtown"], where_unknown="drop")[
+        "terms"
+    ]
+    assert terms["where"] == {"southtown": 6}
+    assert terms["where_elsewhere"] == {"removed": 1, "examples": ["Rock at the north coliseum"]}
+    assert terms["where_unknown"] == {"items": 1, "then": "dropped", "examples": ["Mystery night"]}
+    assert terms["placed_by"] == {"Centre Culturel de Belvué": 1, "Old Royal": 1, "Grand Coliseum Hall": 2}
+
+
+async def test_where_unknown_is_saved_and_checked(service, web):
+    await add_placed(service, web)
+    service.monitor_put(AGENT, "lx", ["city-agenda"], where=["southtown"], where_unknown="drop", schedule="0 9 * * *")
+    [m] = service.monitor_list(AGENT)["monitors"]
+    assert m["where_unknown"] == "drop"
+    assert "Mystery night" not in [r["title"] for r in service.monitor_preview(AGENT, "lx")["rows"]]
+    with pytest.raises(ToolError, match="where_unknown"):
+        service.monitor_put(AGENT, "lx", ["city-agenda"], where=["southtown"], where_unknown="maybe")
+
+
+async def test_the_place_map_is_listed_replaced_and_deleted(service, web, store):
+    store.set_agents([Agent(AGENT, "lucius")])
+    out = map_southtown(service)
+    assert out["saved"] == ["Centre Culturel de Belvué", "Old Royal", "Grand Coliseum Hall"]
+    service.place_put(AGENT, [{"phrase": "old royal", "locality": "South Town"}])
+    places = {p["phrase"]: p for p in service.place_list()["places"]}
+    assert set(places) == {"Centre Culturel de Belvué", "old royal", "Grand Coliseum Hall"}
+    assert places["old royal"]["locality"] == "South Town" and places["old royal"]["added_by"] == "lucius"
+    assert service.place_delete(["OLD ROYAL", "nowhere"]) == {"deleted": ["old royal"], "not_found": ["nowhere"]}
+    assert len(service.place_list()["places"]) == 2
+
+
+@pytest.mark.parametrize(
+    "entries, message",
+    [
+        ([{"phrase": "CCB", "locality": "Southtown"}], "4 to 80 letters or digits"),
+        ([{"phrase": "Somewhere", "locality": ""}], "locality"),
+        ([{"phrase": "Somewhere", "locality": "x" * 61}], "locality"),
+        ([{"phrase": "Somewhere"}], "locality"),
+        ([], "1 to 50"),
+        ([{"phrase": f"Hall number {i}", "locality": "Southtown"} for i in range(51)], "1 to 50"),
+        ("Somewhere", "1 to 50"),
+    ],
+)
+def test_place_entries_are_checked(service, entries, message):
+    with pytest.raises(ToolError, match=message):
+        service.place_put(AGENT, entries)
+
+
+def test_the_place_map_has_a_size_limit(service, monkeypatch):
+    from lollo_news_radar import places
+
+    monkeypatch.setattr(places, "MAX_PLACES", 2)
+    service.place_put(AGENT, [{"phrase": "First hall", "locality": "A"}, {"phrase": "Second hall", "locality": "A"}])
+    service.place_put(AGENT, [{"phrase": "first hall", "locality": "B"}])  # a replacement fits
+    with pytest.raises(ToolError, match="at most 2"):
+        service.place_put(AGENT, [{"phrase": "Third hall", "locality": "A"}])
+
+
+def test_a_store_from_before_where_unknown_gains_the_column(settings, clock):
+    import sqlite3
+
+    from lollo_news_radar.store import Store
+
+    Store(settings.db_path, clock=clock)
+    db = sqlite3.connect(settings.db_path)
+    db.execute("ALTER TABLE monitors DROP COLUMN where_unknown")
+    db.execute("DROP TABLE places")
+    db.execute(
+        "INSERT INTO monitors (id, agent_id, name, sources, include, exclude, news, schedule, conversation, "
+        f"created, updated) VALUES ('0123456789abcdef', '{AGENT}', 'films', '[\"a\"]', '[]', '[]', 0, "
+        "'0 9 * * *', 'default', 1, 1)"
+    )
+    db.commit()
+    db.close()
+    reopened = Store(settings.db_path, clock=clock)
+    [m] = reopened.monitors()
+    assert m.where_unknown == "keep" and reopened.places() == []
 
 
 # -- rc.2: listings, merged rows, from_now, previews, unused sources ---------------------------
