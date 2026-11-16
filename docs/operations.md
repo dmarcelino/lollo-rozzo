@@ -61,9 +61,9 @@ lolloctl toolbox alfred lucius          # bash in /work/<agent-id>
 lolloctl toolbox alfred lucius claude   # straight into Claude Code
 ```
 It brings in whatever of these the host has, read-only, and says which:
-- your ssh-agent (`SSH_AUTH_SOCK`; the key itself never enters) and `~/.ssh/known_hosts`;
+- your ssh-agent (`SSH_AUTH_SOCK`; the key itself never enters) and `~/.ssh/known_hosts`. On macOS the agent reaches the container through Docker's VM: at Docker Desktop's and OrbStack's fixed socket, and under Colima through an ssh tunnel into its VM that the wrapper opens for the run and closes after;
 - `~/.gitconfig`, and with a logged-in `gh`, a GitHub token git uses for `https://github.com`;
-- Claude Code's `CLAUDE.md`, `settings.json`, `skills`, `agents` and `commands` (from `~/.claude`, or `CLAUDE_CONFIG_DIR`), and a Claude token: `CLAUDE_CODE_OAUTH_TOKEN` if you set it, otherwise the keyring entry `service claude-toolbox`. Set that entry up once with `claude setup-token`, then `secret-tool store --label='Claude toolbox' service claude-toolbox` (Ubuntu package `libsecret-tools`).
+- Claude Code's `CLAUDE.md`, `settings.json`, `skills`, `agents` and `commands` (from `~/.claude`, or `CLAUDE_CONFIG_DIR`), and a Claude token: `CLAUDE_CODE_OAUTH_TOKEN` if you set it, otherwise the keyring entry `claude-toolbox`. Set that entry up once with `claude setup-token`, then on Linux `secret-tool store --label='Claude toolbox' service claude-toolbox` (Ubuntu package `libsecret-tools`), or on macOS `security add-generic-password -s claude-toolbox -a "$USER" -w` (the login keychain).
 
 `/root` and `/tmp` are in memory, so history, caches and logins made inside are gone on exit; only what you write to the workspace stays, and the agent sees it. Tokens reach the container through docker's environment, never its command line. The container is not on the stack's network and is labelled `lolloctl.toolbox=<name>`.
 
@@ -76,7 +76,7 @@ mount ~/scratch /scratch rw
 secret AWS_SESSION_TOKEN secret-tool lookup service aws-session
 env AWS_PROFILE=dev
 ```
-`mount SRC [DEST] [rw]` is read-only unless `rw`, and `DEST` defaults to `SRC`; `~` is your home in `SRC` and `/root` in `DEST`. `secret NAME COMMAND...` runs the command without a shell and passes its output as `NAME`; a secret overrides a built-in of the same name.
+`mount SRC [DEST] [rw]` is read-only unless `rw`, and `DEST` defaults to `SRC`; `~` is your home in `SRC` and `/root` in `DEST`. A mount may not hold the data directory, nor be inside it: with the data directory under your home, `mount ~` would hand every stack's secrets to the agent. `secret NAME COMMAND...` runs the command without a shell and passes its output as `NAME`; a secret overrides a built-in of the same name.
 
 The tools agents installed (`/opt/agent-tools`: `npm i -g`, `go install`, `uv tool install`, downloaded binaries) are left out unless you ask for them, before the stack name:
 ```bash
@@ -125,7 +125,9 @@ lolloctl profiles cloudflared,search,google    # set the list everywhere, then u
 `check` (run by every `up`) refuses a stack whose profiles differ from `config.env`.
 
 ## Files on the host
-Everything lolloctl keeps is in one data directory: `/srv/lollo-rozzo` for a release install (the directory above the wrapper's `bin/`), or `data/` in a clone. Keep it private, mode 700: it holds every secret of the installation.
+Everything lolloctl keeps is in one data directory: the directory above the wrapper's `bin/` for a release install (`~/lollo-rozzo` in the [quickstart](../README.md#quickstart)), or `data/` in a clone. Keep it private, mode 700: it holds every secret of the installation.
+
+Any directory you own works, since the wrapper takes the data directory from where it sits. `~/lollo-rozzo` needs no sudo, and on macOS Docker's VM shares the home by default, which a directory elsewhere would need set up. One case calls for a directory outside the home: on Linux with an encrypted home that unlocks only at login (fscrypt, ecryptfs, systemd-homed), Docker restarts the stacks at boot before the data is there, so use, say, `/srv/lollo-rozzo` (`sudo install -d -o "$USER" -g "$(id -gn)" -m 700 /srv/lollo-rozzo /srv/lollo-rozzo/bin`). To move an install, see [moving to another host](#moving-to-another-host).
 
 | Path | What |
 |---|---|
@@ -135,12 +137,12 @@ Everything lolloctl keeps is in one data directory: `/srv/lollo-rozzo` for a rel
 | `.secrets/cloudflare-api-token` | Cloudflare API token (mode 600) |
 | `upstream/<tag>/` | Lettuce's source at `LETTUCE_REF`, downloaded by `init` and `upgrade` |
 | `stacks/<name>/stack.env` | that stack's secrets and Cloudflare ids (mode 600) |
-| `stacks/<name>/state/` | that stack's data: `letta-home/`, `letta-data/`, `workspaces/`, `tools/` (the tools agents installed), and `landing/` for Gmail trigger rules |
+| `stacks/<name>/state/` | that stack's data: `letta-home/`, `letta-data/`, `workspaces/`, `tools/` (the tools agents installed), and `lollo/` for Gmail trigger rules |
 
 Named Docker volumes hold the rest (the vault, pipelock's receipts, News Radar, Lettuce's Google tokens): [architecture.md](architecture.md) lists them.
 
 ## Installing and upgrading
-A release install is a wrapper script, `/srv/lollo-rozzo/bin/lolloctl`, which runs lolloctl from its published image, pinned by digest, with the data directory mounted at the same path. Every image a stack runs is published too, except two that are built on the host: the document tools (their PDF library, PyMuPDF, is AGPL-3.0, so they are not published) and the code editor's shell (it is built on the app-server's image). The [README's quickstart](../README.md#quickstart) installs it.
+A release install is a wrapper script, `~/lollo-rozzo/bin/lolloctl`, which runs lolloctl from its published image, pinned by digest, with the data directory mounted at the same path. Every image a stack runs is published too, except two that are built on the host: the document tools (their PDF library, PyMuPDF, is AGPL-3.0, so they are not published) and the code editor's shell (it is built on the app-server's image). The [README's quickstart](../README.md#quickstart) installs it.
 
 The wrapper needs the data directory to exist and be yours, and refuses to run from anywhere but its `bin/`. lolloctl refuses to start unless the data directory, and the backup directory you name, are mounted at the same path inside its container: Docker reads every path lolloctl gives it on the host, and a path that differed would start a stack with an empty, root-owned directory in place of its data.
 
@@ -148,11 +150,20 @@ Each release's page lists the images that changed. A changed image restarts its 
 ```bash
 lolloctl version                    # this release, and the Lettuce tag it was tested with
 lolloctl self-upgrade vX.Y.Z        # fetch that release's wrapper, pull its image, swap, then up all
-/srv/lollo-rozzo/bin/lolloctl.previous version   # the previous release, kept to go back to
+~/lollo-rozzo/bin/lolloctl.previous version   # the previous release, kept to go back to
 ```
-`self-upgrade` checks the new wrapper against its release's `SHA256SUMS` and pulls its image before it replaces anything, so a typo or a failed download leaves the install as it was. It then moves Lettuce forward to the tag the new release was tested with, never back. To go back, run `bin/lolloctl.previous`, or move it to `bin/lolloctl`. To check where a wrapper comes from: `gh attestation verify /srv/lollo-rozzo/bin/lolloctl --repo dmarcelino/lollo-rozzo`.
+`self-upgrade` checks the new wrapper against its release's `SHA256SUMS` and pulls its image before it replaces anything, so a typo or a failed download leaves the install as it was. It then moves Lettuce forward to the tag the new release was tested with, never back. To go back, run `bin/lolloctl.previous`, or move it to `bin/lolloctl`. To check where a wrapper comes from: `gh attestation verify ~/lollo-rozzo/bin/lolloctl --repo dmarcelino/lollo-rozzo`.
 
 In release mode, `toolbox` sees your home read-only, plus your toolbox file and Claude Code config (`CLAUDE_CONFIG_DIR`) wherever they are; a `mount` line in the toolbox file must name something under your home. The toolbox file's `secret` commands run on the host, in the wrapper, which first checks that the file is yours and that nobody else can write it.
+
+## Running on macOS
+The wrapper runs on macOS with Colima, Docker Desktop or OrbStack, and bash 4 or later: macOS's own `/bin/bash` is 3.2, so `brew install bash` and put Homebrew's first on your `PATH` (cron and launchd jobs too). Docker runs in a VM there, so:
+- **The data directory must be shared with the VM at the same path.** All three share your home by default, so `~/lollo-rozzo` just works; Colima mounts nothing else unless `colima.yaml` lists it under `mounts`. The same goes for the directories `backup`, `restore` and `receipts` use: on Colima the wrapper refuses one its VM does not see (an external disk under `/Volumes`, say), where Docker would otherwise write into an empty directory inside the VM. A path the VM does not share would start the stacks on empty directories. Owners on a shared path are not what the VM reports (Colima's virtiofs gives the user who looked first, root when Docker starts a container), so lolloctl checks ownership on the Mac, in its wrapper, not in its container.
+- **The Docker socket** the wrapper mounts is the VM's own `/var/run/docker.sock`, whatever your Docker context points at. It asks the VM for that socket's group once per Docker daemon, and keeps the answer in `.docker-gid` in the data directory. lolloctl runs as you, so that group must be able to write the socket; the wrapper stops with the socket's mode when it cannot.
+- **Colima settings.** `colima start --vm-type vz --mount-type virtiofs --cpu 6 --memory 16` (each app-server may use up to 8 GiB; size it for your stacks), and `brew services start colima` so it starts at login. No `forwardAgent`: `toolbox` brings your ssh agent in itself, the one `SSH_AUTH_SOCK` names, through an ssh tunnel into the VM.
+- **The ssh agent with Docker Desktop or OrbStack** is the one macOS starts at login, which those apps forward into their VM, not one your shell's `SSH_AUTH_SOCK` points at (1Password, Secretive, gpg-agent). Add your keys to it (`ssh-add --apple-use-keychain`), or use Colima.
+- **Keep it awake.** A Mac that sleeps takes every stack down with it: in System Settings, prevent sleeping when the display is off, start up automatically after a power failure, and log in automatically, since Colima, Docker Desktop and OrbStack only start once you are logged in.
+- **Apple silicon.** Lettuce publishes its images for `amd64` only, so `init` sets them to be built here, which takes a while the first time; lollo-rozzo's own are published for both. The document tools (`lollo-doc-tools`) are built here too, for `arm64`, on the first `up` with that profile.
 
 ## Upgrading Lettuce
 Lettuce tags look like `vX.Y.Z-letta_<letta-code version>`. Each one pins the server version its UI was compiled against. Never change versions any other way. Each lollo-rozzo release is tested with one of them, and `self-upgrade` moves to it; `upgrade` to another tag warns that it was not tested.
@@ -171,10 +182,11 @@ lolloctl backup all /mnt/backup --compress     # a .tar.gz per stack instead
 - agents, conversations and memory (`state/letta-data`);
 - settings, schedules, transcripts, Claude Code/Codex/gh logins and skills installed from Settings (`state/letta-home`);
 - agents' workspaces (`state/workspaces`) and the tools agents installed (`state/tools`, left out with `--no-tools`);
-- `stack.env`, and the vault, whenever its volume exists (turning the `lollo-vault` profile off keeps it);
+- `stack.env` and `config.env` (no secrets in it: your settings and cached Cloudflare ids), and the vault, whenever its volume exists (turning the `lollo-vault` profile off keeps it);
 - pipelock's receipts and their signing key, whenever their volume exists (`lollo-pipelock` profile);
 - the monitors, their sources and what they found, whenever their volume exists (`lollo-news-radar` profile);
-- Gmail trigger rules (`state/lollo`).
+- Gmail trigger rules (`state/lollo`);
+- with `--with-google` only, Lettuce's Google client and tokens (the `google-policy` and `google-creds` volumes). They are left out by default because a refresh token opens the person's mail and Drive, while reconnecting Google after a restore costs them a minute; use it for a one-off copy, such as moving to another host, not for routine backups.
 
 It leaves out caches and the skills that come back by themselves: upstream's, which the BFF reinstalls on every connect, and those from `agent-skills/`, which `lolloctl skills` reinstalls. The state is root-owned, so `backup` reads it from a container of a small image (`backup/Dockerfile`: pulled by a release install, built from a clone; `lolloctl version` names it), with no network and read-only mounts. No sudo is needed.
 
@@ -187,42 +199,37 @@ It leaves out caches and the skills that come back by themselves: upstream's, wh
 
 A nightly cron job (`crontab -e`) for every stack that keeps two weeks:
 ```
-30 3 * * * /srv/lollo-rozzo/bin/lolloctl backup all /mnt/backup --pause --keep 14
+30 3 * * * $HOME/lollo-rozzo/bin/lolloctl backup all /mnt/backup --pause --keep 14
 ```
-A backup holds credentials: provider keys, Claude/Codex/gh logins and `stack.env`. Keep the destination private, and encrypt any copy that leaves the host. The vault inside it stays encrypted with the person's passphrase, which is stored nowhere, so nobody (you included) can recover a vault whose passphrase is forgotten. `config.env`, `stacks.conf` and `.secrets/` are not included; keep a copy of them too.
+A backup holds credentials: provider keys, Claude/Codex/gh logins and `stack.env` (with `--with-google`, Google tokens too). Keep the destination private, and encrypt any copy that leaves the host. The vault inside it stays encrypted with the person's passphrase, which is stored nowhere, so nobody (you included) can recover a vault whose passphrase is forgotten. `stacks.conf` and `.secrets/` are not included: `restore` rebuilds a stack's line in `stacks.conf`, and the Cloudflare API token is better made anew than copied.
 
-To restore, work in the data directory, with `B` the backup image. Stop the stack (`lolloctl down alfred`), or on a new host create its directory: `(umask 077 && mkdir -p stacks/alfred/state)`. Then, from a snapshot `S` (the state goes back to root, the vault to its uid 10001, and `state/` itself stays yours):
+### Restoring
 ```bash
-cd /srv/lollo-rozzo
-B=$(lolloctl version | sed -n 's/^backup image: //p')
-S=/mnt/backup/alfred/20261018T033000Z
-install -m 600 "$S/stack.env" stacks/alfred/stack.env
-docker run --rm -v "$S/state:/b:ro" -v "$PWD/stacks/alfred/state:/d" "$B" \
-  sh -c "rsync -aH --numeric-ids --delete --chown=0:0 /b/ /d/ && chown $(id -u):$(id -g) /d"
-# if the vault is in the snapshot:
-docker run --rm -v "$S/vault:/b:ro" -v lollo-alfred_vault-data:/d "$B" \
-  rsync -a --numeric-ids --delete --chown=10001:10001 /b/ /d/
-# if pipelock's receipts are in the snapshot:
-docker run --rm -v "$S/pipelock:/b:ro" -v lollo-alfred_pipelock-data:/d "$B" \
-  rsync -a --numeric-ids --delete --chown=65532:65532 /b/ /d/
-lolloctl up alfred
+lolloctl down alfred                                          # restore refuses a running or paused stack
+lolloctl restore alfred /mnt/backup/alfred/20261018T033000Z   # a snapshot
+lolloctl restore alfred /mnt/backup/alfred/20261018T033000Z.tar.gz   # or an archive
+lolloctl up alfred && lolloctl skills alfred
 ```
-`--delete` makes the state match the snapshot, so it also deletes what the backup left out. The caches and skills come back by themselves, but for a snapshot taken with `--no-tools`, add `--exclude=/tools/` to the first `rsync` to keep the tools already there.
+`restore` makes the stack match one backup: its state, `stack.env`, and each volume the backup holds (the vault, pipelock's receipts, News Radar, and the Google volumes of a `--with-google` backup), deleting what the backup does not have. A volume that does not exist yet is created as Compose would, so `up` takes it as the stack's. The copy runs in the backup image with the same limits as `backup`, and needs no sudo:
+- **Owners.** From an archive, every file keeps its owner. A snapshot keeps none, so the state goes back to root (what nearly all of it is) and each volume to its service's user; `state/` itself stays yours.
+- **`stack.env`** is written last, so a failed copy leaves the old one, with `LETTA_STATE_DIR` pointing at this host's state directory, wherever the backup came from.
+- **Tools.** A backup taken with `--no-tools`, or on a host of another architecture (each backup records its host's platform), leaves the tools already here alone.
+- **Asking first.** When the stack already has data here, `restore` lists what it replaces and asks you to type the stack's name; `--yes` answers ahead of time, and without a terminal and without `--yes` it stops.
+- **Only into the same stack.** A backup holds its stack's tunnel and Cloudflare ids, so `restore` refuses one of another stack: two stacks would share a tunnel, and `remove` of one would delete the other's.
+- **Who may sign in** stays as it is: when `stacks.conf` lists the stack, the restored `ALLOWED_USERS` becomes its users, which match the Access policy. When it does not (a new host), the stack's line is written from the backup; if you changed who may sign in after that backup, run `lolloctl users <name> <emails>`.
+- **`config.env`** is written only when this host has none.
 
-From an archive `A`, extract the same parts in the same image instead (the archive keeps the owners), then `up`:
-```bash
-docker run --rm -v "$A:/a.tar.gz:ro" -v "$PWD/stacks/alfred/state:/d" "$B" \
-  tar -xzpf /a.tar.gz --numeric-owner -C /d --strip-components=2 ./state
-docker run --rm -v "$A:/a.tar.gz:ro" -v lollo-alfred_vault-data:/d "$B" \
-  sh -c 'tar -xzpf /a.tar.gz --numeric-owner -C /d --strip-components=2 ./vault && chown 10001:10001 /d && chmod 700 /d'
-# if pipelock's receipts are in the archive:
-docker run --rm -v "$A:/a.tar.gz:ro" -v lollo-alfred_pipelock-data:/d "$B" \
-  sh -c 'tar -xzpf /a.tar.gz --numeric-owner -C /d --strip-components=2 ./pipelock && chown 65532:65532 /d && chmod 700 /d'
-(umask 077 && tar -xzOf "$A" ./stack.env >stacks/alfred/stack.env)
-```
-On another host, first install the same release's wrapper ([README](../README.md#quickstart)), copy `config.env`, `stacks.conf` and `.secrets/` into its data directory, and run `lolloctl init`. If the data directory is at a different path there, fix `LETTA_STATE_DIR` in the restored `stack.env`. Cloudflare needs no change: the tunnel token travels inside `stack.env`. Never run the same stack on two hosts at once.
+People reconnect Google in **Settings -> Google** after a restore, unless the backup was taken with `--with-google`.
 
-The named volume `lollo-<name>_bff-data` holds push-notification subscriptions and pinned-agent lists. It is not backed up; losing it is harmless. `remove` deletes the vault's volume and pipelock's receipts along with the stack.
+### Moving to another host
+1. On the old host, stop every stack and make one archive each, with the Google tokens: `lolloctl down all`, then `lolloctl backup all /mnt/backup --compress --with-google`.
+2. On the new host, install the same release's wrapper ([README](../README.md#quickstart)), copy the archives over, and run `lolloctl restore <name> <archive>` for each stack. The first one also brings back `config.env`. Moving to another CPU architecture (a Linux `amd64` host to an Apple silicon Mac), `restore` leaves out the tools agents installed (`state/tools`): they are native programs that would not run there, and agents install them again when they need them. Anything else an agent compiled or downloaded for the old architecture, in its workspace for instance, has to be rebuilt the same way.
+3. Make a new Cloudflare API token for the new host ([cloudflare-setup.md, step 5](cloudflare-setup.md#5-create-the-api-token-for-lolloctl)) and revoke the old one. Then run `lolloctl init`: it checks the Cloudflare setup, downloads Lettuce and looks up again what `config.env` caches, such as whether Lettuce's images are published for this host.
+4. `lolloctl up all && lolloctl skills all`, and delete the archives, which hold every stack's secrets.
+
+Cloudflare needs no other change: each tunnel's token travels inside its `stack.env`. Never run the same stack on two hosts at once: both would serve its address from diverging copies. Leave the old host's stacks stopped, and never run `lolloctl remove` there: it would delete the tunnels, DNS records and Access applications the new host now uses.
+
+The named volume `lollo-<name>_bff-data` holds push-notification subscriptions, pinned-agent lists and uploaded avatars. It is not backed up; after a restore, people turn notifications on again on each device, and upload their avatar again. `remove` deletes the vault's volume and pipelock's receipts along with the stack.
 
 Each stack's push-notification keypairs (`PUSH_VAPID_*` for Lettuce, `VAULT_VAPID_*` for the vault, in `stack.env`) are generated by `add` and kept from then on. Do not change or delete them: every device that enabled notifications would have to enable them again.
 

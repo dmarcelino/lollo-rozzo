@@ -61,7 +61,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 - A new safety rule goes into `check_stack`, with a `test_check_*` test, and into [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-rule) or its folder's "Rules". Remember that a container Docker restarts on its own is not re-checked.
 
 ### Features
-- **Vault** ([rules](vault/README.md#rules)): never add an MCP tool that edits secrets or bypasses approval; never write vault data, keys or the passphrase unencrypted or to logs; never mount `vault-data` elsewhere (only `backup`, read-only); agent activity must not extend the auto-lock; an erase without the passphrase always waits its delay and tells every device.
+- **Vault** ([rules](vault/README.md#rules)): never add an MCP tool that edits secrets or bypasses approval; never write vault data, keys or the passphrase unencrypted or to logs; never mount `vault-data` elsewhere (only `backup`, read-only, and `restore`); agent activity must not extend the auto-lock; an erase without the passphrase always waits its delay and tells every device.
 - **Code editor** ([rules](code-server/README.md#rules)): nothing an agent wrote may run in the editor's container. Never add an extension, setting or flag that runs code, trusts a workspace or opens a port.
 - **Lollo pages** ([lollo-common rules](lollo-common/README.md#rules), [landing rules](landing/README.md#rules)): every page checks Fetch Metadata (`check_fetch`) and sets COOP; the landing page has no script; every lollo service accepts only `CF_LOLLO_AUD` and `LOLLO_ORIGIN`.
 - **Executor** ([install](landing/executor/README.md#install), [trust](landing/executor/README.md#trust)): only `sync_executor` installs or removes it (from `up`, `add` and `profiles`), through `compose exec`, replacing only its own files; its token is never rotated automatically. The executor runs `letta` from an argument array, never a shell. It and the sidecars share no directory and treat each other's data as untrusted.
@@ -69,7 +69,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 - **Pipelock** ([rules](pipelock/README.md#rules)): it is advisory; never describe it as a boundary. A service agents or the executor call inside the stack goes in `NO_PROXY`.
 - **Doc-tools** ([rules](doc-tools/README.md#rules)): lolloctl owns the image, volume and networks; Compose only uses them. Only the app-server mounts the tools.
 - **Skills** ([rules](agent-skills/README.md#rules)): only `skills` installs them, replacing only its own; names never match upstream's; text stays generic.
-- **Backup** ([rules](backup/README.md#rules)): it reads the state only through its own container, never into this repo.
+- **Backup and restore** ([rules](backup/README.md#rules)): they touch the state only through their own container, never into this repo; Lettuce's Google volumes only with `--with-google`, the Cloudflare API token never; `restore` refuses a running stack.
 - **Releases** ([rules](release/README.md#rules)): images are named by content, never by release; `doc-tools` and `code-server/exec` are never published; no `latest`; a file lolloctl reads at run time goes into the `lolloctl` image.
 
 ### Docs ([CONTRIBUTING.md](CONTRIBUTING.md#writing-docs))

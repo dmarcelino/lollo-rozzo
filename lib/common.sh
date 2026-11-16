@@ -125,7 +125,11 @@ BIND_MOUNTS=""
 
 # check_mounts -> in release mode, reads this container's own mounts (one API
 # call) and dies unless every bind mount has the same source and destination
-# and LOLLO_DATA is one of them. It fails closed: no container found, no run.
+# and LOLLO_DATA is one of them, holding the wrapper (bin/lolloctl), which an
+# empty directory Docker made in its place cannot. Not its owner: the wrapper
+# checked that on the host, and in Docker's VM on macOS a share reports another
+# (Colima's virtiofs: whoever looked first, root when Docker starts a container).
+# It fails closed: no container found, no run.
 check_mounts() {
   local mounts bad
   release_mode || return 0
@@ -135,14 +139,14 @@ check_mounts() {
     die "could not read this container's mounts"
   [[ -z $bad ]] || die "host paths must be mounted at the same path inside lolloctl's container; these are not: $bad"
   BIND_MOUNTS=$(jq -r '.[] | select(.Type == "bind") | .Destination' <<<"$mounts")
-  if [[ $(stat -c %u "$LOLLO_DATA" 2>/dev/null) != "$(id -u)" ]] || ! grep -qxF -- "$LOLLO_DATA" <<<"$BIND_MOUNTS"; then
-    die "$LOLLO_DATA is not mounted, at the same path and owned by you, into lolloctl's container; run lolloctl through its wrapper"
+  if [[ ! -f $LOLLO_DATA/bin/lolloctl ]] || ! grep -qxF -- "$LOLLO_DATA" <<<"$BIND_MOUNTS"; then
+    die "$LOLLO_DATA is not mounted into lolloctl's container at the same path (no bin/lolloctl in it); run lolloctl through its wrapper"
   fi
 }
 
 # require_mounted PATH -> in release mode, dies unless PATH is at or below one
 # of this container's bind mounts (the wrapper mounts backup's and receipts'
-# destinations); always passes from a clone
+# destinations, and the backup restore reads); always passes from a clone
 require_mounted() {
   local m p
   release_mode || return 0
@@ -220,7 +224,7 @@ conf_unset() {
 inside() {
   local p
   p=$(realpath -m -- "$1")
-  [[ $p == "$2" || $p == "$2"/* ]]
+  [[ $p == "$2" || $p == "${2%/}"/* ]]
 }
 
 # cfg KEY -> value from config.env
@@ -564,27 +568,25 @@ host_docker() {
   env -i PATH="$PATH" HOME="$HOME" ${DOCKER_HOST:+DOCKER_HOST="$DOCKER_HOST"} docker "$@"
 }
 
-# vault_volume NAME -> the Docker volume holding the stack's vault
-vault_volume() { printf 'lollo-%s_vault-data' "$1"; }
+# stack_volume NAME VOLUME -> the Docker volume Compose names VOLUME in the stack
+stack_volume() { printf 'lollo-%s_%s' "$1" "$2"; }
 
-# has_vault NAME -> success when the vault's volume exists. Turning the lollo-vault
-# profile off keeps it, and `compose down -v` deletes it either way.
-has_vault() { host_docker volume inspect "$(vault_volume "$1")" >/dev/null 2>&1; }
+# has_volume NAME VOLUME -> success when the stack's VOLUME exists. Turning a
+# profile off keeps its volume, and `compose down -v` deletes it either way.
+has_volume() { host_docker volume inspect "$(stack_volume "$1" "$2")" >/dev/null 2>&1; }
+
+# vault_volume NAME -> the Docker volume holding the stack's vault
+vault_volume() { stack_volume "$1" vault-data; }
+has_vault() { has_volume "$1" vault-data; }
 
 # receipts_volume NAME -> the Docker volume holding the stack's pipelock receipts
 # and their signing key
-receipts_volume() { printf 'lollo-%s_pipelock-data' "$1"; }
-
-# has_receipts NAME -> success when that volume exists; like the vault's, it
-# outlives the profile and goes with `compose down -v`
-has_receipts() { host_docker volume inspect "$(receipts_volume "$1")" >/dev/null 2>&1; }
+receipts_volume() { stack_volume "$1" pipelock-data; }
+has_receipts() { has_volume "$1" pipelock-data; }
 
 # news_radar_volume NAME -> the Docker volume holding the stack's monitors, sources and items
-news_radar_volume() { printf 'lollo-%s_news-radar-data' "$1"; }
-
-# has_news_radar NAME -> success when that volume exists; it outlives the profile
-# and goes with `compose down -v`
-has_news_radar() { host_docker volume inspect "$(news_radar_volume "$1")" >/dev/null 2>&1; }
+news_radar_volume() { stack_volume "$1" news-radar-data; }
+has_news_radar() { has_volume "$1" news-radar-data; }
 
 # compose_label_mask CONFIG -> `--label KEY=` for each Compose label of an
 # image's config (`image inspect`'s .Config, as JSON). A container inherits its
@@ -600,6 +602,14 @@ stack_running() {
   local running
   running=$(compose "$1" ps --status running --services) || die "$1: docker compose ps failed"
   [[ -n $running ]]
+}
+
+# stack_live NAME -> success when any of the stack's containers has processes:
+# running, paused (they resume where they were) or restarting
+stack_live() {
+  local live
+  live=$(compose "$1" ps --status running --status paused --status restarting --services) || die "$1: docker compose ps failed"
+  [[ -n $live ]]
 }
 
 # stale_services NAME -> services that have a container in the stack but are not
@@ -810,9 +820,6 @@ check_stack() {
       | "\(.key) shares the network namespace of the code editor (\($m))"] | join("; ")' <<<"$rendered")
   [[ -z $k ]] || die "$name: $k"
   check_images "$name" "$rendered"
-  if has_profile "$profiles" lollo-doc-tools && [[ $(host_platform 2>/dev/null) != linux/amd64 ]]; then
-    die "$name: lollo-doc-tools needs a linux/amd64 host (OfficeAgent is pinned for x86_64 only); this one is $(host_platform 2>/dev/null || echo unknown)"
-  fi
   if has_profile "$profiles" lollo-vault; then
     check_sidecar "$name" "$rendered" lollo-vault lollo-vault compose/vault.yml
   fi

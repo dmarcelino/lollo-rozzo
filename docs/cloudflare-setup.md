@@ -1,6 +1,6 @@
 # One-time Cloudflare and Google setup
 
-You do this once per installation. Afterwards each person is one line in `stacks.conf` and a `lolloctl apply`. Install `lolloctl` on the host first ([README, step 2](../README.md#quickstart)): steps 2.6 and 5 use it and its data directory, `/srv/lollo-rozzo` below (`data/` if you run it from a clone). `lolloctl init` checks each step below in order and names the first one missing.
+You do this once per installation. Afterwards each person is one line in `stacks.conf` and a `lolloctl apply`. Install `lolloctl` on the host first ([README, step 2](../README.md#quickstart)): steps 2.6 and 5 use it and its data directory, `~/lollo-rozzo` below (`data/` if you run it from a clone). `lolloctl init` checks each step below in order and names the first one missing.
 
 Placeholders used below:
 - `example.com`: your domain.
@@ -205,8 +205,8 @@ Changes on Google's side can take from 5 minutes to a few hours to apply.
 8. Click **Continue to summary**, check the list, then click **Create Token**.
 9. **The token is shown only once.** Without pasting it into any chat or file, store it on the host in the data directory. The command doesn't echo it, and the token never reaches your shell history:
    ```bash
-   cd /srv/lollo-rozzo && mkdir -p .secrets && chmod 700 .secrets
-   (umask 077 && read -rs -p 'Cloudflare API token: ' T && printf '%s\n' "$T" > .secrets/cloudflare-api-token)
+   cd ~/lollo-rozzo && mkdir -p .secrets && chmod 700 .secrets
+   (umask 077 && printf 'Cloudflare API token: ' && read -rs T && printf '%s\n' "$T" > .secrets/cloudflare-api-token)
    ```
    Then close the Cloudflare page.
 
@@ -217,7 +217,7 @@ This is a *user* token. An account-owned token (**Manage Account -> Account API 
 ## 6. Initialise and add people
 ```bash
 lolloctl init        # first run creates config.env: set DOMAIN, PUSH_CONTACT_EMAIL, TZ, PROFILES; then run init again
-$EDITOR /srv/lollo-rozzo/stacks.conf   # one line per person: alfred alfred@gmail.com
+$EDITOR ~/lollo-rozzo/stacks.conf   # one line per person: alfred alfred@gmail.com
 lolloctl apply       # shows the plan, then sets up and starts every stack, and installs the agent skills
 ```
 `init` checks this guide's steps in order, each scope the token needs (step 5) and whether the zone is active (step 2.8), and stops at the first one missing. `apply` runs `lolloctl add` for each new stack ([operations.md](operations.md#people)), which uses `<name>.example.com` for Lettuce and `<name>-lollo.example.com` for the lollo extras (the vault, Gmail triggers, the code editor), each with its own Access application; both use the stack's one list of people. When Lettuce's name already exists in DNS, it uses `lollo-<name>.example.com` instead (`HOSTNAME_FALLBACK`); the lollo's name always follows Lettuce's (`lollo-<name>-lollo.example.com` then), and when that one is taken, `add` uses the first free of `<...>-lollo-2` to `<...>-lollo-9`. Stack names are a single DNS label on purpose, and may not end in `-lollo`: Cloudflare's free certificate covers `*.example.com` but not `a.b.example.com`.
