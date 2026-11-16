@@ -3022,7 +3022,11 @@ test_backup_copies_a_stopped_stack_without_asking() {
   log_has "docker build -q -t lollo-backup:local $H/backup"
   # --init: sh as PID 1 would ignore the signal docker forwards on Ctrl-C.
   log_has "docker run --rm --init --network none --read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --label lolloctl.backup=alfred"
-  log_has "-v $D/stacks/alfred/state:/src/state:ro -v $D/stacks/alfred/stack.env:/src/stack.env:ro -v $D/config.env:/src/config.env:ro -v $B/alfred:/dst lollo-backup:local"
+  log_has "-v $D/stacks/alfred/state:/src/state:ro -v $D/stacks/alfred/stack.env:/src/stack.env:ro -v $D/config.env:/src/config.env:ro -v $B/alfred/.partial-"
+  # The host's platform, so that restore can tell a backup from another architecture.
+  log_has "docker version --format {{.Server.Os}}/{{.Server.Arch}}"
+  log_has ".platform:/src/platform:ro -v $B/alfred:/dst lollo-backup:local"
+  eq "$(find "$B/alfred" -name '.partial-*')" ""
   log_has "sh rsync /src /dst $(id -u):$(id -g)  .partial-"
   log_has "state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups"
   log_lacks "state/tools"
@@ -3089,7 +3093,7 @@ test_backup_includes_the_receipts() {
   ctl backup alfred "$B"
   ok_rc
   log_has "docker volume inspect lollo-alfred_pipelock-data"
-  log_has "-v lollo-alfred_pipelock-data:/src/pipelock:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_pipelock-data:/src/pipelock:ro -v $B/alfred/.partial-"
   log_lacks "/src/vault"
 }
 
@@ -3098,7 +3102,7 @@ test_backup_skips_receipts_that_do_not_exist() {
   stub "STUB_VOLUMES_MISSING='lollo-alfred_pipelock-data lollo-alfred_news-radar-data'"
   ctl backup alfred "$B"
   ok_rc
-  log_has "-v lollo-alfred_vault-data:/src/vault:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_vault-data:/src/vault:ro -v $B/alfred/.partial-"
   log_lacks "/src/pipelock"
 }
 
@@ -3108,7 +3112,7 @@ test_backup_includes_the_news_radar() {
   ctl backup alfred "$B"
   ok_rc
   log_has "docker volume inspect lollo-alfred_news-radar-data"
-  log_has "-v lollo-alfred_news-radar-data:/src/news-radar:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_news-radar-data:/src/news-radar:ro -v $B/alfred/.partial-"
 }
 
 test_backup_skips_a_news_radar_that_does_not_exist() {
@@ -3419,6 +3423,28 @@ test_restore_keeps_the_tools_of_a_backup_without_them() {
   log_has " sh rsync /b /r 1 state 0:0 $(id -u):$(id -g) 700"
 }
 
+# Agent tools (state/tools) are native programs and modules of the host they
+# were installed on: from another architecture (a Linux amd64 host's backup on
+# an Apple silicon Mac) they would fail with "exec format error". The ones here stay.
+test_restore_leaves_out_the_tools_of_another_architecture() {
+  a_snapshot
+  printf 'linux/amd64\n' >"$S/platform"
+  a_new_host
+  stub STUB_PLATFORM=linux/arm64
+  ctl restore alfred "$S"
+  ok_rc
+  out_has "alfred: the backup comes from a linux/amd64 host and this one is linux/arm64: its agent tools (state/tools) would not run here, so they are left out; agents install what they need again"
+  log_has " sh rsync /b /r 1 state "
+  # The same architecture: the tools come back.
+  rm -rf "$D/stacks/alfred"
+  : >"$T/calls.log"
+  stub STUB_PLATFORM=linux/amd64
+  ctl restore alfred "$S"
+  ok_rc
+  out_lacks "would not run here"
+  log_has " sh rsync /b /r  state "
+}
+
 # A backup carries its stack's tunnel and Cloudflare ids: under another name,
 # two stacks would share a tunnel, and removing one would delete the other's.
 test_restore_refuses_a_backup_of_another_stack() {
@@ -3600,6 +3626,11 @@ test_restore_script_brings_back_what_backup_copied() {
   sh -c "$restore_script" sh tar "$T/no-tools.tar.gz" "$dst" 1 state "$me" "$me" 700
   [[ -f $dst/state/tools/bin/node && ! -e $dst/state/stale && -f $dst/state/workspaces/agent-1/notes.md ]] ||
     fail "tar: tools not kept, or stale files left: $(cd "$dst" && find .)"
+  # An archive with tools, from another architecture: its tools stay out.
+  rm -rf "$dst" && mkdir -p "$dst/state/tools/bin" && touch "$dst/state/tools/bin/node"
+  sh -c "$restore_script" sh tar "$T/a.tar.gz" "$dst" 1 state "$me" "$me" 700
+  [[ -f $dst/state/tools/bin/node && ! -e $dst/state/tools/bin/uv && -f $dst/state/workspaces/agent-1/notes.md ]] ||
+    fail "tar: the archive's tools came in: $(cd "$dst" && find .)"
 }
 
 # ── document tools ───────────────────────────────────────────────────────────
@@ -5717,7 +5748,7 @@ test_wrapper_on_macos_mounts_the_vms_socket_with_its_group() {
   on_mac colima
   wctl "$T/srv" list
   ok_rc
-  log_has "docker run --rm --entrypoint stat -v /var/run/docker.sock:/var/run/docker.sock $WIMAGE -c %g /var/run/docker.sock"
+  log_has "docker run --rm --entrypoint stat -v /var/run/docker.sock:/var/run/docker.sock $WIMAGE -c %g %a /var/run/docker.sock"
   local run
   run=$(grep '^docker run --rm -i ' "$T/calls.log")
   [[ $run == *" --group-add 990 "* ]] || fail "not in the VM socket's group: $run"
@@ -5756,6 +5787,19 @@ test_wrapper_version_needs_no_docker() {
   ok_rc
   out_has "lollo-rozzo "
   log_lacks "docker "
+}
+
+# lolloctl runs as you: the socket's group gets you in only when it may write.
+test_wrapper_on_macos_refuses_a_socket_its_group_cannot_write() {
+  wrapper_in "$T/srv"
+  on_mac docker-desktop
+  stub STUB_SOCKET_GID=0
+  stub STUB_SOCKET_MODE=755
+  wctl "$T/srv" list
+  bad_rc
+  out_has "Docker's socket in its VM (/var/run/docker.sock) is mode 755, group 0: that group cannot write it, so lolloctl, which runs as you, cannot use Docker"
+  log_lacks "docker run --rm -i "
+  [[ ! -e $T/srv/.docker-gid ]] || fail "a group was kept: $(cat "$T/srv/.docker-gid")"
 }
 
 test_wrapper_on_macos_needs_docker_running() {
@@ -5812,7 +5856,7 @@ test_wrapper_on_colima_tunnels_the_ssh_agent_into_the_vm() {
   log_has "colima ssh-config --profile default"
   local tunnel vm run
   tunnel=$(grep '^ssh .* -N ' "$T/calls.log")
-  [[ $tunnel == *" -o ExitOnForwardFailure=yes -R /tmp/lolloctl-agent-"*".sock:$W_SOCK colima" ]] ||
+  [[ $tunnel == *" -o ExitOnForwardFailure=yes -o ControlMaster=no -o ControlPath=none -R /tmp/lolloctl-agent-"*".sock:$W_SOCK colima" ]] ||
     fail "not a tunnel into Colima's VM: $tunnel"
   vm=${tunnel#* -R }
   vm=${vm%%:*}
@@ -5858,6 +5902,30 @@ test_wrapper_on_colima_goes_on_without_an_agent_when_the_tunnel_fails() {
   ok_rc
   out_has "could not open an ssh tunnel into Colima's VM (default); no ssh agent"
   log_lacks "SSH_AUTH_SOCK"
+  # Closed once: before the tunnel, and once after it failed, not again at exit.
+  eq "$(grep -c '^ssh -F .* colima rm -f ' "$T/calls.log")" 2
+}
+
+# Colima shares only the home (and colima.yaml's mounts) with its VM. For any
+# other path Docker would bind an empty directory it makes in the VM: a backup
+# would land there, and a restore would read nothing.
+test_wrapper_on_colima_refuses_a_path_its_vm_does_not_share() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub "STUB_COLIMA_UNSHARED=$T/usb"
+  mkdir -p "$T/usb/backup/alfred/20261018T033000Z" "$T/nas"
+  wctl "$T/srv" backup all "$T/usb/backup"
+  bad_rc
+  out_has "$T/usb/backup is not shared with Colima's VM (default)"
+  log_lacks "docker run --rm -i "
+  wctl "$T/srv" restore alfred "$T/usb/backup/alfred/20261018T033000Z"
+  bad_rc
+  out_has "is not shared with Colima's VM"
+  log_has "colima ssh --profile default -- test -d $T/usb/backup"
+  : >"$T/calls.log"
+  wctl "$T/srv" backup all "$T/nas"
+  ok_rc
+  log_has "-v $T/nas:$T/nas "
 }
 
 test_wrapper_on_docker_desktop_and_orbstack_uses_their_agent_socket() {

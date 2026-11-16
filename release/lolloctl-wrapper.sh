@@ -57,16 +57,20 @@ fi
 # vm_socket_gid SOCK -> the group of SOCK inside Docker's VM, read there by
 # this release's image. That costs a container, so it is kept in <data>/.docker-gid
 # for as long as the daemon is the same one: a new VM is a new daemon (its ID),
-# whose socket may have another group.
+# whose socket may have another group. lolloctl runs as you, so the group must
+# be able to write the socket.
 vm_socket_gid() {
-  local cache=$data/.docker-gid saved="" gid=""
+  local cache=$data/.docker-gid saved="" gid="" mode=""
   [[ ! -f $cache ]] || read -r saved gid <"$cache" || true
   if [[ $saved == "$docker_id" && $gid =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$gid"
     return
   fi
-  gid=$(docker run --rm --entrypoint stat -v "$1:$1" "$IMAGE" -c %g "$1" </dev/null) && [[ $gid =~ ^[0-9]+$ ]] ||
+  read -r gid mode < <(docker run --rm --entrypoint stat -v "$1:$1" "$IMAGE" -c '%g %a' "$1" </dev/null) || true
+  [[ $gid =~ ^[0-9]+$ && $mode =~ ^[0-7]+$ ]] ||
     die "could not read the Docker socket's group in Docker's VM; is Docker (Colima, Docker Desktop, OrbStack) running?"
+  (((8#$mode & 8#060) == 8#060)) ||
+    die "Docker's socket in its VM ($1) is mode $mode, group $gid: that group cannot write it, so lolloctl, which runs as you, cannot use Docker"
   printf '%s %s\n' "$docker_id" "$gid" >"$cache"
   printf '%s\n' "$gid"
 }
@@ -110,12 +114,34 @@ fi
 # Relative paths in the arguments mean the same inside.
 args+=(-w "$PWD")
 
+# colima_profile -> the Colima profile Docker runs in, or nothing when Docker's VM
+# is not Colima's
+colima_profile() {
+  case $docker_name in
+    colima) printf default ;;
+    colima-*) printf '%s' "${docker_name#colima-}" ;;
+  esac
+}
+
+# vm_shares DIR -> dies unless Docker's VM sees DIR, on Colima. It shares only
+# the home (and what colima.yaml's `mounts` add), and for any other path Docker
+# binds an empty directory it creates in the VM, without a word: a backup would
+# land there. Docker Desktop and OrbStack refuse a path they do not share.
+vm_shares() {
+  local profile
+  profile=$(colima_profile)
+  [[ -n $profile ]] || return 0
+  colima ssh --profile "$profile" -- test -d "$1" </dev/null >/dev/null 2>&1 ||
+    die "$1 is not shared with Colima's VM ($profile): Docker would use an empty directory inside the VM instead. Use a directory under your home, or add it to colima.yaml's mounts (colima stop, then colima start --edit)"
+}
+
 # mount_same PATH [ro] -> mounts PATH (an existing directory) at the same path
 mount_same() {
   local p
   p=$(existing "$1") || return 0
   [[ -d $p ]] || return 0
   [[ $p != *[:,]* ]] || die "$p cannot contain ':' or ','"
+  [[ $os != Darwin ]] || vm_shares "$p"
   args+=(-v "$p:$p${2:+:$2}")
 }
 
@@ -139,6 +165,7 @@ mount_ro_outside_home() {
   p=$(existing "$1") || return 0
   [[ $p != "$HOME" && $p != "$HOME"/* ]] || return 0
   [[ $p != *[:,]* ]] || die "$p cannot contain ':' or ','"
+  [[ $os != Darwin ]] || vm_shares "$(dirname -- "$p")"
   args+=(-v "$p:$p:ro")
 }
 
@@ -149,6 +176,8 @@ close_tunnel() {
   # sshd leaves the socket behind.
   [[ -z $tunnel_host ]] || ssh -F "$tunnel_cfg" "$tunnel_host" rm -f "$tunnel_sock" </dev/null >/dev/null 2>&1 || true
   [[ -z $tunnel_cfg ]] || rm -f "$tunnel_cfg"
+  # Once: vm_agent closes a failed tunnel itself, and the EXIT trap runs after.
+  tunnel_pid="" tunnel_host="" tunnel_cfg=""
 }
 
 # colima_agent PROFILE VMPATH -> serves the ssh agent at VMPATH inside Colima's
@@ -166,7 +195,9 @@ colima_agent() {
   # the wait below: it goes first.
   ssh -F "$tunnel_cfg" "$host" rm -f "$2" </dev/null >/dev/null 2>&1 || return 1
   tunnel_host=$host tunnel_sock=$2
-  ssh -F "$tunnel_cfg" -N -o ExitOnForwardFailure=yes \
+  # Lima's ssh config shares one master connection (ControlMaster), which would
+  # take over the forward and outlive this process: the tunnel gets its own.
+  ssh -F "$tunnel_cfg" -N -o ExitOnForwardFailure=yes -o ControlMaster=no -o ControlPath=none \
     -R "$2:$SSH_AUTH_SOCK" "$host" </dev/null >/dev/null 2>&1 &
   tunnel_pid=$!
   for ((i = 0; i < 50; i++)); do
@@ -187,12 +218,11 @@ vm_agent() {
   case $name in
     docker-desktop | orbstack) vm=/run/host-services/ssh-auth.sock ;;
     colima | colima-*)
-      profile=${name#colima}
-      profile=${profile#-}
+      profile=$(colima_profile)
       vm=/tmp/lolloctl-agent-$$-$RANDOM.sock
-      if ! colima_agent "${profile:-default}" "$vm"; then
+      if ! colima_agent "$profile" "$vm"; then
         close_tunnel
-        warn "toolbox: could not open an ssh tunnel into Colima's VM (${profile:-default}); no ssh agent"
+        warn "toolbox: could not open an ssh tunnel into Colima's VM ($profile); no ssh agent"
         return 0
       fi
       ;;

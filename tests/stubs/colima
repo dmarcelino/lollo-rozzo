@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # Test stub for colima: logs "colima <args>" to $STUB_ROOT/calls.log.
 # `colima ssh-config --profile P` prints an ssh config for the host colima (or
-# colima-P), or fails with STUB_COLIMA_RC. Tests copy the stubs to $STUB_ROOT/bin.
+# colima-P); any call fails with STUB_COLIMA_RC. Tests copy the stubs to $STUB_ROOT/bin.
 STUB_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=/dev/null
 [[ -f $STUB_ROOT/stub.env ]] && . "$STUB_ROOT/stub.env"
 printf 'colima %s\n' "$*" >>"$STUB_ROOT/calls.log"
 [[ ${STUB_COLIMA_RC:-0} == 0 ]] || exit "$STUB_COLIMA_RC"
+# `colima ssh --profile P -- test -d PATH`: whether the VM sees PATH; it does not
+# for a path under one of STUB_COLIMA_UNSHARED's (space-separated).
+if [[ ${1:-} == ssh && ${4:-} == -- ]]; then
+  for u in ${STUB_COLIMA_UNSHARED:-}; do
+    [[ ${*: -1} == "$u" || ${*: -1} == "$u"/* ]] && exit 1
+  done
+  exit 0
+fi
 if [[ ${1:-} == ssh-config ]]; then
   profile=${3:-default}
   host=colima

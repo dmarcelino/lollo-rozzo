@@ -39,7 +39,7 @@ case $args in
   # The wrapper on macOS reading the socket's group inside Docker's VM.
   " run "*" --entrypoint stat "*)
     [[ ${STUB_SOCKET_GID_RC:-0} == 0 ]] || exit "$STUB_SOCKET_GID_RC"
-    echo "${STUB_SOCKET_GID:-0}"
+    echo "${STUB_SOCKET_GID:-0} ${STUB_SOCKET_MODE:-660}"
     ;;
   # The registry: STUB_MANIFEST_PLATFORMS="linux/amd64 ..." publishes the image
   # for those platforms; unset, it is not there.

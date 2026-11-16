@@ -43,7 +43,7 @@ With any of the vault, Gmail triggers, News Radar or the code editor on, the lol
    ```bash
    install -d -m 700 ~/lollo-rozzo ~/lollo-rozzo/bin
    curl -fsSL -o ~/lollo-rozzo/bin/lolloctl https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/lolloctl
-   (cd ~/lollo-rozzo/bin && curl -fsSL https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/SHA256SUMS | grep ' lolloctl$' | shasum -a 256 -c)
+   (cd ~/lollo-rozzo/bin && curl -fsSL https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/SHA256SUMS | grep ' lolloctl$' | sha256sum -c)   # macOS: shasum -a 256 -c
    chmod 755 ~/lollo-rozzo/bin/lolloctl
    mkdir -p ~/.local/bin && ln -s ~/lollo-rozzo/bin/lolloctl ~/.local/bin/lolloctl   # or another directory on your PATH
    ```

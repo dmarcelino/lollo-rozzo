@@ -1819,8 +1819,11 @@ BACKUP_VOLUMES=(
   "google-creds google-creds 0:0 755 google"
 )
 
+# The platform file backup_stack writes, removed when its subshell exits.
+BACKUP_PLATFORM_FILE=
+
 # backup_stack NAME -> one backup of the stack into $dest/NAME. Run in a subshell:
-# the lock it takes is released when that exits.
+# the lock it takes is released, and its platform file removed, when that exits.
 backup_stack() {
   local name=$1 f state dir ts prev s p e v only lock choice="" mounts=() excludes=() stale=()
   f=$(stack_env "$name")
@@ -1862,6 +1865,14 @@ backup_stack() {
   backup_rm "$name" "$dir" "${stale[@]}"
   ts=$(date -u +%Y%m%dT%H%M%SZ)
   [[ ! -e $dir/$ts && ! -e $dir/$ts.tar.gz ]] || die "$name: $dir/$ts already exists; run again in a second"
+  # The host's platform, as `platform`: agent tools are native programs, and
+  # restore leaves them out on a host of another architecture. Removed when the
+  # subshell this runs in exits; named .partial-*, so one a kill left goes with
+  # the rest on the next run.
+  BACKUP_PLATFORM_FILE=$dir/.partial-$ts.platform
+  trap 'rm -f -- "$BACKUP_PLATFORM_FILE"' EXIT
+  (umask 077 && host_platform >"$BACKUP_PLATFORM_FILE") || die "$name: could not ask Docker for this host's platform"
+  mounts+=(-v "$BACKUP_PLATFORM_FILE:/src/platform:ro")
   if stack_running "$name"; then
     choice=$(backup_choice "$name")
   fi
@@ -2014,7 +2025,8 @@ receipt_sessions() {
 # the backup's ENTRY: MODE rsync copies the directory SRC/ENTRY (a snapshot
 # keeps no owners, so OWNER gets them all); MODE tar extracts every ENTRY from
 # the archive SRC, with their owners, in one pass. With KEEP_TOOLS (a backup
-# taken with --no-tools), DST/state/tools stays as it is. DST/ENTRY itself ends
+# taken with --no-tools, or from another architecture), DST/state/tools stays as
+# it is, and the backup's tools stay out. DST/ENTRY itself ends
 # up ROOT_OWNER's, mode ROOT_MODE. Entry names have no spaces.
 # shellcheck disable=SC2016 # expanded by sh in the container
 RESTORE_COPY='set -e
@@ -2048,7 +2060,7 @@ finish() {
 }
 members=""
 prepare "$@"
-if [ "$mode" = tar ]; then tar -xzpf "$src" --numeric-owner -C "$dst" $members; fi
+if [ "$mode" = tar ]; then tar -xzpf "$src" --numeric-owner -C "$dst" ${keep_tools:+--exclude=./state/tools} $members; fi
 finish "$@"'
 
 # has_entry ENTRIES ENTRY -> success when ENTRY is one of the lines of ENTRIES
@@ -2064,10 +2076,11 @@ archive_entries() {
 RESTORE_FILES=
 
 # backup_files KIND BACKUP ENTRIES DIR -> the backup's stack.env, and its
-# config.env when it has one, copied into DIR, mode 600; an archive is read once
+# config.env and platform when it has them, copied into DIR, mode 600; an
+# archive is read once
 backup_files() {
   local kind=$1 b=$2 entries=$3 dir=$4 e files=()
-  for e in stack.env config.env; do
+  for e in stack.env config.env platform; do
     ! has_entry "$entries" "$e" || files+=("$e")
   done
   (
@@ -2090,7 +2103,7 @@ backup_stack_name() {
 cmd_restore() {
   local usage="usage: lolloctl restore <name> <backup> [--yes]"
   local yes="" args=() name b kind entries dir state f files lock e v owner mode vol keep_tools="" answer
-  local emails conf from me src=() mounts=() specs=() names=()
+  local emails conf from here me src=() mounts=() specs=() names=()
   while (($#)); do
     case $1 in
       --yes) yes=1 ;;
@@ -2172,6 +2185,15 @@ cmd_restore() {
   if ! has_entry "$entries" state/tools; then
     keep_tools=1
     warn "$name: the backup has no agent tools (taken with --no-tools); keeping the ones here"
+  elif [[ -f $files/platform ]]; then
+    # Agent tools are native programs and modules: another architecture's would
+    # fail here with "exec format error".
+    from=$(<"$files/platform")
+    here=$(host_platform) || die "could not ask Docker for this host's platform"
+    if [[ $from != "$here" ]]; then
+      keep_tools=1
+      warn "$name: the backup comes from a $from host and this one is $here: its agent tools (state/tools) would not run here, so they are left out; agents install what they need again"
+    fi
   fi
   mounts=(-v "$state:/r/state")
   specs=(state 0:0 "$me" 700)

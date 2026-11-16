@@ -92,7 +92,7 @@ Before `sync_doc_tools` starts Gotenberg (`check_gotenberg`): a rendered shared 
 
 ## Build and test
 ```bash
-tests/run-sidecar.sh doc-tools            # the PDF server's tests (pytest in the image's test stage), and the OfficeAgent download's hash check
+tests/run-sidecar.sh doc-tools            # the PDF server's tests (pytest in the image's test stage), and the OfficeAgent download's hash check; CI runs it on amd64 and arm64
 node --test tests/mcp-servers.test.mjs    # lib/mcp-servers.mjs against temp settings files
 tests/run.sh doc_tools                    # the CLI: tag, image, volume, network, checks
 tests/run.sh gotenberg
