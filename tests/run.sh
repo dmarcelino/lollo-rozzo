@@ -5560,6 +5560,20 @@ test_publish_fetches_each_images_own_digests_by_exact_name() {
   done
 }
 
+test_publish_puts_the_release_notes_highlights_first() {
+  local p="$ROOT/.github/workflows/publish.yml" highlights tested
+  highlights=$(grep -n 'cat release/NOTES.md' "$p" | cut -d: -f1)
+  tested=$(grep -n 'tested with Lettuce' "$p" | cut -d: -f1)
+  [[ -n $highlights && -n $tested ]] || fail "publish.yml does not write release/NOTES.md into the notes"
+  ((highlights < tested)) || fail "publish.yml writes release/NOTES.md after the generated notes"
+}
+
+test_publish_ci_ignores_a_push_of_only_the_release_notes() {
+  # The notes commit is the tagged one: it must not need [ci skip] to save a CI run.
+  grep -qF "paths-ignore: ['release/NOTES.md']" "$ROOT/.github/workflows/ci.yml" ||
+    fail "ci.yml runs on a push that changes only release/NOTES.md"
+}
+
 # ── the wrapper (release/lolloctl-wrapper.sh) ─────────────────────────────
 # wrapper_in DIR -> the wrapper, filled in as publish.yml fills it, in DIR/bin,
 # and a socket for it to find

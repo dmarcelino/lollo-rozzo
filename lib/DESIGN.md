@@ -263,8 +263,8 @@ published images by mistake. `doc-tools` is built by lolloctl in both modes, as 
   registry for both platforms: upstream found that `compose build --push` can exit 0 having pushed
   nothing.
 - **Release:** it attaches the wrapper (with the `lolloctl` image's digest filled in),
-  `SHA256SUMS` and the release notes (the changed images) to the GitHub release, with an
-  attestation for the wrapper too.
+  `SHA256SUMS` and the release notes (`release/NOTES.md`'s highlights, then the changed images)
+  to the GitHub release, with an attestation for the wrapper too.
 - The GHCR packages are made public once, by hand, so a host pulls without credentials.
 
 `code-server-editor` and `doc-tools` are pinned for both platforms (`SHA256_AMD64` and
