@@ -5377,6 +5377,30 @@ test_after_upgrade_moves_lettuce_forward_only() {
   log_has "up -d --no-build"
 }
 
+test_after_upgrade_installs_the_skills() {
+  added
+  release_on
+  skill alpha
+  ctl _after-upgrade
+  ok_rc
+  log_has "up -d --no-build"
+  out_has "alfred: 1 skill(s) installed"
+  log_has "exec -T app-server sh -c"
+}
+
+test_after_upgrade_says_how_to_install_skills_that_failed() {
+  added
+  release_on
+  skill alpha
+  # A name upstream also ships fails only the skills step.
+  mkdir -p "$U/docker/agent-skills/alpha"
+  ctl _after-upgrade
+  bad_rc
+  log_has "up -d --no-build"
+  out_has "is in place, but its agent skills are not installed in every stack"
+  out_has "then run: lolloctl skills all"
+}
+
 test_after_upgrade_moves_lettuce_to_the_tested_tag() {
   added
   release_on
@@ -5752,6 +5776,18 @@ test_apply_carries_on_past_a_stack_that_fails() {
   [[ -n $(senv hal CF_DNS_RECORD_ID) ]] || fail "hal was not added after alfred failed"
   grep -q '^docker compose -p lollo-hal .* up -d --no-build' "$T/calls.log" || fail "hal was not started"
   log_has "/root/.letta/skills"
+}
+
+test_apply_reports_skills_that_failed() {
+  added
+  skill alpha
+  # A name upstream also ships fails the skills step, after every stack is up.
+  mkdir -p "$U/docker/agent-skills/alpha"
+  ctl apply --yes
+  bad_rc
+  log_has "up -d --no-build"
+  out_has "apply did not finish: skills all"
+  out_lacks "skill(s) installed"
 }
 
 test_apply_starts_the_other_stacks_when_one_fails_to_start() {
