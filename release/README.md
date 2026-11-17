@@ -48,7 +48,7 @@ A file lolloctl reads at run time (a compose file, a skill, the executor, a buil
 The `release` skill does steps 2 to 4 (`/release rc`, `/release final`); without an agent, do them by hand.
 
 1. Make sure `VERSION` is the version to release (and set `REBUILD`, for a rebuild release) on `main`, and that `config.env.example`'s `LETTUCE_REF` is the Lettuce tag you tested with ([CONTRIBUTING.md](../CONTRIBUTING.md#upgrading-lettuce_ref)).
-2. Write the highlights in `NOTES.md`: what is new for people and admins since the last full release, breaking changes and what to do about them first among the rest. Commit it to `main`, without `[ci skip]`.
+2. Write the highlights in `NOTES.md`: what is new for people and admins since the last full release, breaking changes and what to do about them first among the rest. They are a summary: at most five items, one bullet each with no sub-bullets; the PRs hold the details. Commit it to `main`, without `[ci skip]`.
 3. Tag that commit: `git tag vX.Y.Z && git push origin vX.Y.Z`. For a candidate to try on a test host first, `vX.Y.Z-rc.N`, published as a pre-release; fix `NOTES.md` between candidates.
 4. After a final release, start the next version: set `VERSION` to the next minor, delete `NOTES.md`, and commit both as `Set VERSION to X.Y.Z [ci skip]`. A smaller next version is chosen at its first tag.
 5. Check that hosts can pull without credentials: logged out of `ghcr.io`, `docker manifest inspect` each image `RELEASE` names and the wrapper's `lolloctl` image. The packages `publish.yml` creates from this public repository come out public (as for `v0.1.0-rc.1`); one that does not is made public in its package settings.
