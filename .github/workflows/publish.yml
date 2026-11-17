@@ -19,10 +19,11 @@
 # 5. ctl (one job per platform): the lolloctl image, carrying RELEASE, pushed
 #    by digest.
 # 6. release: the lolloctl image's tag on both digests, the wrapper pinned to
-#    its digest, SHA256SUMS, the release notes (which images changed, and so
-#    which sidecars restart), and the GitHub release.
+#    its digest, SHA256SUMS, the release notes (release/NOTES.md's highlights,
+#    then which images changed, and so which sidecars restart), and the GitHub
+#    release.
 # The GHCR packages it creates come out public, as this repository is, so hosts
-# pull without credentials (release/README.md, "Cutting a release", step 3).
+# pull without credentials (release/README.md, "Cutting a release", step 5).
 name: Publish
 
 on:
@@ -356,6 +357,14 @@ jobs:
           : >"$RUNNER_TEMP/prev"
           [[ -z $prev ]] || gh release download "$prev" --pattern RELEASE --output "$RUNNER_TEMP/prev" --clobber || true
           {
+            # The highlights the release skill wrote (release/README.md),
+            # when there are any: an RC shows the next release's draft.
+            if [[ -f release/NOTES.md ]] && grep -q '[^[:space:]]' release/NOTES.md; then
+              cat release/NOTES.md
+              echo
+              echo "## Release details"
+              echo
+            fi
             echo "lollo-rozzo $TAG, tested with Lettuce $(sed -n 's/^LETTUCE_REF=//p' RELEASE)."
             echo
             echo "Install or upgrade: release/README.md. Verify the wrapper: \`gh attestation verify lolloctl --repo $GITHUB_REPOSITORY\`."

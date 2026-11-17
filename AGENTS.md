@@ -27,7 +27,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 | `doc-tools/` | [doc-tools/README.md](doc-tools/README.md#rules) | [doc-tools](doc-tools/README.md#build-and-test) |
 | `agent-skills/` | [agent-skills/README.md](agent-skills/README.md#rules) | [agent-skills](agent-skills/README.md#build-and-test) |
 | `backup/` | [backup/README.md](backup/README.md#rules) | [backup](backup/README.md#build-and-test) |
-| `release/`, `VERSION`, `REBUILD`, `.github/workflows/publish.yml` | [release/README.md](release/README.md#rules) | [release](release/README.md#build-and-test) |
+| `release/`, `VERSION`, `REBUILD`, `.github/workflows/publish.yml`, `.agents/skills/release/` | [release/README.md](release/README.md#rules) | [release](release/README.md#build-and-test) |
 | `tests/` | [tests/README.md](tests/README.md) (the stubs and helpers) | [tests](tests/README.md#build-and-test) |
 | `.github/renovate.json5`, `.github/workflows/renovate.yml`, `scripts/renovate-post-upgrade.sh` | [CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates) | `tests/run.sh test_post_upgrade_`, and `renovate-config-validator --strict` (Commands) |
 | `docs/`, any `*.md` | [CONTRIBUTING.md](CONTRIBUTING.md#writing-docs) | `node scripts/check-doc-links.mjs` |
@@ -70,7 +70,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 - **Doc-tools** ([rules](doc-tools/README.md#rules)): lolloctl owns the image, volume and networks; Compose only uses them. Only the app-server mounts the tools.
 - **Skills** ([rules](agent-skills/README.md#rules)): only `skills` installs them, replacing only its own; names never match upstream's; text stays generic.
 - **Backup and restore** ([rules](backup/README.md#rules)): they touch the state only through their own container, never into this repo; Lettuce's Google volumes only with `--with-google`, the Cloudflare API token never; `restore` refuses a running stack.
-- **Releases** ([rules](release/README.md#rules)): images are named by content, never by release; `doc-tools` and `code-server/exec` are never published; no `latest`; a file lolloctl reads at run time goes into the `lolloctl` image.
+- **Releases** ([rules](release/README.md#rules)): images are named by content, never by release; `doc-tools` and `code-server/exec` are never published; no `latest`; a file lolloctl reads at run time goes into the `lolloctl` image. Cut a release with the `release` skill (`.agents/skills/release/`): its highlights go in `release/NOTES.md`, never `[ci skip]` on a commit that gets tagged.
 
 ### Docs ([CONTRIBUTING.md](CONTRIBUTING.md#writing-docs))
 - README introduces and indexes, `docs/` is for users and admins, and CONTRIBUTING, ARCHITECTURE and the folder READMEs are for developers. This file holds directives only.

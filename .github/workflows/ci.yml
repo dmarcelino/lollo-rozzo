@@ -2,11 +2,14 @@
 # "Commands"), run as an operator would run them, on every branch push, by
 # hand, and by publish.yml before it publishes anything (workflow_call). A new
 # test script or linted file goes here too, and in both docs.
+# A push that changes only release/NOTES.md (the release skill's commit, just
+# before its tag) runs nothing: publish.yml runs these checks on the tag.
 name: CI
 
 on:
   push:
     branches: ['**']
+    paths-ignore: ['release/NOTES.md']
   workflow_dispatch:
   workflow_call:
 

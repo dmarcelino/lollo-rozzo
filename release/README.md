@@ -13,6 +13,7 @@ An interactive version, [release-workflow.html](../docs/diagrams/release-workflo
 | `content-tag` | `release/content-tag <image>` prints the image's content tag: a hash of its build context and shared context (docs, tests, caches and the top-level names its `.dockerignore` lists left out), its name, and `../REBUILD`. |
 | `lolloctl.Dockerfile` | The `lolloctl` image: Debian with `curl`, `jq`, `openssl`, `dig` and `flock`; the Docker CLI, Compose and Buildx from Docker's own `docker:<version>-cli` image, pinned by digest; and this repo's runtime files, with `RELEASE`. Built from the repo root. |
 | `lolloctl.Dockerfile.dockerignore` | What the `lolloctl` image takes from the repo (an allowlist). |
+| `NOTES.md` | The highlights of the next release, which `publish.yml` puts at the top of its notes, RCs included. No version in its name, so changing the version changes nothing in it. It does not exist between a final release and the next release's first tag. |
 | `lolloctl-wrapper.sh` | The wrapper, with `@VERSION@`, `@IMAGE@` and `@REPOSITORY@` for `publish.yml` to fill in. It runs the image with the data directory, the Docker socket (on macOS, the VM's `/var/run/docker.sock` and its group there), the directories `backup` and `receipts` write to, and the backup `restore` reads (read-only), mounted at the same path; for `toolbox`, the operator's home read-only, the ssh agent (on macOS, through Docker's VM) and what only the host's commands give; and it does `self-upgrade`. It runs on Linux and macOS (bash 4+, BSD or GNU tools), and needs no Docker Desktop, Colima or OrbStack setting of its own. |
 
 `VERSION` (the release's version) and `REBUILD` (a date; changing it rebuilds every image on fresh base images) are at the repo root. `RELEASE`, written by `publish.yml` and baked into the `lolloctl` image, holds the version, the Lettuce tag the release was tested with (`config.env.example`'s `LETTUCE_REF`), the repository, and each published image's full name, `ghcr.io/<owner>/lollo-<image>:<content tag>@sha256:<digest>`; it is also attached to the GitHub release.
@@ -20,7 +21,8 @@ An interactive version, [release-workflow.html](../docs/diagrams/release-workflo
 ## How it plugs in
 - **Release mode.** lolloctl runs in release mode when `RELEASE` exists ([lib/README.md](../lib/README.md#release-mode-is-a-file-not-a-setting)): it names the published images from it, builds only the two it cannot pull (the document tools and the code editor's shell), and checks that every host path is mounted at the same path in its container.
 - **The overlays** name each published image `${LOLLO_IMAGE_<IMAGE>:-lollo-<image>:local}`, so a clone builds and runs its own ([compose/README.md](../compose/README.md)).
-- **`publish.yml`** runs on a `vX.Y.Z` or `vX.Y.Z-rc.N` tag, after every job of `ci.yml`. Each image whose content tag is not in the registry yet is built once per platform, each on a runner of that architecture (`ubuntu-24.04` for `linux/amd64`, `ubuntu-24.04-arm` for `linux/arm64`, never under emulation) and pushed by digest with an SBOM and BuildKit provenance; one job per image then puts the content tag on both digests and adds a GitHub attestation. Then `RELEASE`, the `lolloctl` image (built the same way), the wrapper, `SHA256SUMS`, the notes (which images changed since the last release) and the GitHub release.
+- **`publish.yml`** runs on a `vX.Y.Z` or `vX.Y.Z-rc.N` tag, after every job of `ci.yml`. Each image whose content tag is not in the registry yet is built once per platform, each on a runner of that architecture (`ubuntu-24.04` for `linux/amd64`, `ubuntu-24.04-arm` for `linux/arm64`, never under emulation) and pushed by digest with an SBOM and BuildKit provenance; one job per image then puts the content tag on both digests and adds a GitHub attestation. Then `RELEASE`, the `lolloctl` image (built the same way), the wrapper, `SHA256SUMS`, the notes (`NOTES.md`'s highlights, when it has any, then which images changed since the last release) and the GitHub release.
+- **The `release` skill** ([.agents/skills/release/SKILL.md](../.agents/skills/release/SKILL.md), for Claude Code through `.claude/skills/release`, and for Codex) writes `NOTES.md` from the PRs merged since the last full release, commits it, pushes the tag, and after a final release starts the next version.
 
 ## Rules
 
@@ -36,13 +38,20 @@ No `latest`, nothing published from `main`: the `lolloctl` image holds the Docke
 ### Base images get fixes through `REBUILD`
 Reused images keep their base images. To pick up their security fixes, change `REBUILD` to the day's date in a release of its own: every content tag changes, every sidecar restarts and every vault locks, and the release notes say so.
 
+### Never `[ci skip]` a commit that gets tagged
+GitHub skips a push's workflows when its commit message has `[ci skip]`, and that can take the tag's `publish.yml` with it. The notes commit a tag points at goes without it: `ci.yml` ignores a push that changes only `NOTES.md`, and `publish.yml` runs the checks itself. Only the commit that starts the next version, never tagged, carries `[ci skip]`.
+
 ### What the image carries is what lolloctl reads
 A file lolloctl reads at run time (a compose file, a skill, the executor, a build context built on the host) goes into `lolloctl.Dockerfile` and its `.dockerignore`, or a release install cannot find it.
 
 ## Cutting a release
-1. Set `VERSION` to the new version (and `REBUILD`, for a rebuild release) on `main`, and make sure `config.env.example`'s `LETTUCE_REF` is the Lettuce tag you tested with ([CONTRIBUTING.md](../CONTRIBUTING.md#upgrading-lettuce_ref)).
-2. Tag it: `git tag vX.Y.Z && git push origin vX.Y.Z`. For a candidate to try on a test host first, `vX.Y.Z-rc.N`, published as a pre-release.
-3. Check that hosts can pull without credentials: logged out of `ghcr.io`, `docker manifest inspect` each image `RELEASE` names and the wrapper's `lolloctl` image. The packages `publish.yml` creates from this public repository come out public (as for `v0.1.0-rc.1`); one that does not is made public in its package settings.
+The `release` skill does steps 2 to 4 (`/release rc`, `/release final`); without an agent, do them by hand.
+
+1. Make sure `VERSION` is the version to release (and set `REBUILD`, for a rebuild release) on `main`, and that `config.env.example`'s `LETTUCE_REF` is the Lettuce tag you tested with ([CONTRIBUTING.md](../CONTRIBUTING.md#upgrading-lettuce_ref)).
+2. Write the highlights in `NOTES.md`: what is new for people and admins since the last full release, breaking changes and what to do about them first among the rest. Commit it to `main`, without `[ci skip]`.
+3. Tag that commit: `git tag vX.Y.Z && git push origin vX.Y.Z`. For a candidate to try on a test host first, `vX.Y.Z-rc.N`, published as a pre-release; fix `NOTES.md` between candidates.
+4. After a final release, start the next version: set `VERSION` to the next minor, delete `NOTES.md`, and commit both as `Set VERSION to X.Y.Z [ci skip]`. A smaller next version is chosen at its first tag.
+5. Check that hosts can pull without credentials: logged out of `ghcr.io`, `docker manifest inspect` each image `RELEASE` names and the wrapper's `lolloctl` image. The packages `publish.yml` creates from this public repository come out public (as for `v0.1.0-rc.1`); one that does not is made public in its package settings.
 
 ## Build and test
 ```bash
