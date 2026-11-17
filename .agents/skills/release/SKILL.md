@@ -59,12 +59,19 @@ gh release view "$prev" --json body --jq .body   # the previous highlights, for 
 ## 4. Write release/NOTES.md
 ```markdown
 ## Highlights
-- **New: <feature>.** What a person or an admin can now do, in a sentence or two. Its details
-  as sub-bullets when there are several (#N).
+- **New: <feature>.** What a person or an admin can now do, in a sentence or two (#N).
 - **Breaking:** what stops working and what the admin must do (#N).
 - **Behaviour change:** what works differently, and how to keep the old result (#N).
-- **<Improvement or fix people notice>.** One line each; group a feature's small ones (#N).
+- **<Improvement or fix people notice>.** One line (#N).
 ```
+- The highlights are a summary, not a changelog: **at most 5 items**, the most important for
+  people and admins. Fewer is fine. Leave the rest out; the commit history and the closed PRs
+  have it.
+- **No sub-bullets.** Each item is one bullet of one or two sentences; its details stay in its
+  PR, which the `#N` points to.
+- A breaking change always makes the cut, since the admin must act on it. With more than 5
+  candidates, drop the smallest improvements first, then merge related items (a feature and
+  its follow-up, say) into one. A feature's small fixes fold into its item or are left out.
 - Order: new features, then breaking changes and behaviour changes, then improvements and
   fixes. The biggest first within each.
 - Write for the people and admins who install it: what changes for them, not how the code does
@@ -79,7 +86,8 @@ gh release view "$prev" --json body --jq .body   # the previous highlights, for 
 When `release/NOTES.md` already exists:
 - Changed since `$prev` (`git log --oneline "$prev"..HEAD -- release/NOTES.md` prints
   something): it is this version's, from an earlier RC or a hand edit. Keep its wording and add
-  only what is not in it yet.
+  only what is not in it yet. The cap and the one level still hold: a new item may replace the
+  least important one, and an item with sub-bullets is cut to one line.
 - Not changed since `$prev`: it is left over from the previous release (its reset was
   skipped). Write it from scratch.
 
