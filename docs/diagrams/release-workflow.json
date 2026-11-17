@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "1293abf1f033b35bf7f97afbd1544a5f97cd8596"
     },
     "legend": {
       "entries": {
@@ -86,17 +86,23 @@
       "col": 0,
       "type": "external",
       "label": "push a tag",
-      "sublabel": "vX.Y.Z or vX.Y.Z-rc.N",
+      "sublabel": "on the notes commit",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 28,
-          "end_line": 30,
+          "line": 29,
+          "end_line": 31,
           "label": "on: push tags"
         },
         {
           "path": "VERSION",
           "line": 1
+        },
+        {
+          "path": ".agents/skills/release/SKILL.md",
+          "line": 94,
+          "end_line": 107,
+          "label": "release skill: notes commit, then the tag"
         }
       ]
     },
@@ -110,8 +116,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 40,
-          "end_line": 41,
+          "line": 41,
+          "end_line": 42,
           "label": "uses ci.yml"
         }
       ]
@@ -127,8 +133,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 43,
-          "end_line": 66,
+          "line": 44,
+          "end_line": 67,
           "label": "tag check, image list"
         },
         {
@@ -148,14 +154,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 57,
-          "end_line": 61,
+          "line": 58,
+          "end_line": 62,
           "label": "tag and VERSION disagree"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 234,
-          "end_line": 238,
+          "line": 235,
+          "end_line": 239,
           "label": "not on both platforms"
         }
       ]
@@ -171,14 +177,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 68,
-          "end_line": 86,
+          "line": 69,
+          "end_line": 87,
           "label": "one job per image and platform"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 97,
-          "end_line": 113,
+          "line": 98,
+          "end_line": 114,
           "label": "reuse, or build and push by digest"
         },
         {
@@ -199,14 +205,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 157,
-          "end_line": 184,
+          "line": 158,
+          "end_line": 185,
           "label": "reuse, or tag both digests"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 185,
-          "end_line": 190,
+          "line": 186,
+          "end_line": 191,
           "label": "attestation"
         }
       ]
@@ -222,14 +228,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 108,
-          "end_line": 110,
+          "line": 109,
+          "end_line": 111,
           "label": "per platform, SBOM, provenance"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 173,
-          "end_line": 184,
+          "line": 174,
+          "end_line": 185,
           "label": "tagged, full name with digest"
         }
       ]
@@ -244,14 +250,14 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 221,
-          "end_line": 238,
+          "line": 222,
+          "end_line": 239,
           "label": "write RELEASE"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 246,
-          "end_line": 288,
+          "line": 247,
+          "end_line": 289,
           "label": "lolloctl, one job per platform"
         },
         {
@@ -271,8 +277,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 322,
-          "end_line": 336,
+          "line": 323,
+          "end_line": 337,
           "label": "tagged on both digests"
         }
       ]
@@ -283,18 +289,24 @@
       "col": 5,
       "type": "backend",
       "label": "wrapper, sums, notes",
-      "sublabel": "pinned to the digest",
+      "sublabel": "NOTES.md first",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 342,
-          "end_line": 352,
+          "line": 343,
+          "end_line": 353,
           "label": "wrapper and SHA256SUMS"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 353,
-          "end_line": 379,
+          "line": 360,
+          "end_line": 367,
+          "label": "release/NOTES.md's highlights first"
+        },
+        {
+          "path": ".github/workflows/publish.yml",
+          "line": 354,
+          "end_line": 388,
           "label": "notes: what restarts"
         }
       ]
@@ -309,8 +321,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 383,
-          "end_line": 389,
+          "line": 392,
+          "end_line": 398,
           "label": "gh release create"
         }
       ]
@@ -334,6 +346,22 @@
           "line": 30,
           "end_line": 34,
           "label": "the new wrapper pulls"
+        }
+      ]
+    },
+    {
+      "id": "next-version",
+      "lane": "maintainer",
+      "col": 5,
+      "type": "external",
+      "label": "next version",
+      "sublabel": "next minor, NOTES.md gone",
+      "sources": [
+        {
+          "path": ".agents/skills/release/SKILL.md",
+          "line": 109,
+          "end_line": 131,
+          "label": "after a final release"
         }
       ]
     }
@@ -430,6 +458,13 @@
       "to": "upgrade",
       "label": "new wrapper",
       "variant": "emphasis"
+    },
+    {
+      "id": "release-next",
+      "from": "gh-release",
+      "to": "next-version",
+      "label": "final release",
+      "role": "branch"
     }
   ],
   "cards": [
@@ -455,7 +490,8 @@
       "title": "Nothing moves after a release",
       "items": [
         "no latest and nothing from main: the wrapper names the lolloctl image by digest",
-        "the notes list the images that changed, so which containers restart and whether vaults lock"
+        "the notes start with release/NOTES.md's highlights, then list the images that changed, so which containers restart and whether vaults lock",
+        "after a final release, the release skill sets VERSION to the next minor and deletes release/NOTES.md"
       ]
     }
   ]

@@ -11,8 +11,9 @@
 # lolloctl to release mode.
 /RELEASE
 
-# Local git worktrees (git worktree add .worktrees/<branch>)
+# Local git worktrees: ours (git worktree add .worktrees/<branch>) and Claude Code's
 /.worktrees/
+/.claude/worktrees
 
 # Build and test output of vault/
 __pycache__/
