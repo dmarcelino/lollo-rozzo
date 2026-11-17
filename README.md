@@ -2,7 +2,9 @@
 
 Run personal AI agents with memory, that learn and improve over time. Lollo Rozzo comes with batteries included: tools that let your agents do real tasks. Your data stays on your own server.
 
-_Lollo Rozzo stands on the leaves of giants._ Built on [Lettuce](https://github.com/dmarchevsky/lettuce), it gives you [Letta Code](https://github.com/letta-ai/letta-code) agents that have memory, identity and a sense of experience over time. They learn and evolve over long horizons by rewriting their own memory, skills and prompts.
+> Lollo Rozzo stands on the leaves of giants.
+
+Built on [Lettuce](https://github.com/dmarchevsky/lettuce), it gives you [Letta Code](https://github.com/letta-ai/letta-code) agents that have memory, identity and a sense of experience over time. They learn and evolve over long horizons by rewriting their own memory, skills and prompts.
 
 You host it yourself, on one Linux machine or Mac with Docker, for yourself or for several people. Each person gets their own private stack: their agents, a web app that works on phone and desktop, and the extras you turn on. Everyone signs in with Google through Cloudflare Access, and nobody can reach anyone else's stack. One command line tool, `lolloctl`, sets it all up and runs it: who has a stack is one file, and `lolloctl apply` gives each person their own Cloudflare Tunnel, sign-in and DNS records, and starts their stack.
 
