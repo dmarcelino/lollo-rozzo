@@ -325,6 +325,17 @@ def _walk_jsonld(node: Any, depth: int = 0) -> list[dict[str, Any]]:
     return out
 
 
+def _locality(location: Any) -> Any:
+    """The town of a schema.org location: its address's addressLocality, also when
+    the location is the address itself; of the first location of a list."""
+    if isinstance(location, list):
+        location = location[0] if location else None
+    if not isinstance(location, dict):
+        return ""
+    address = location.get("address", location)
+    return (address.get("addressLocality") or "") if isinstance(address, dict) else ""
+
+
 def _schema_fields(node: dict[str, Any]) -> dict[str, Any]:
     location = node.get("location")
     if isinstance(location, dict) and not location.get("name") and isinstance(location.get("address"), dict | str):
@@ -336,6 +347,7 @@ def _schema_fields(node: dict[str, Any]) -> dict[str, Any]:
         "start": node.get("startDate") or node.get("releaseDate"),
         "end": node.get("endDate"),
         "venue": location,
+        "locality": _locality(node.get("location")),
         "summary": node.get("description"),
         "image": node.get("image"),
         "published": node.get("datePublished"),

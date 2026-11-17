@@ -9,7 +9,7 @@ from conftest import AGENT, EVENTS_JSON, OTHER_AGENT, json_spec
 
 from lollo_news_radar.config import CARRY_SECONDS, MAX_PROMPT
 from lollo_news_radar.service import ToolError, minutes_between
-from lollo_news_radar.store import CLAIMED, FAILED, LOST, OK, QUEUED
+from lollo_news_radar.store import CLAIMED, FAILED, LOST, OK, QUEUED, Agent
 
 pytestmark = pytest.mark.anyio
 
@@ -138,6 +138,8 @@ async def test_a_report_carries_new_items_once(service, web, store, clock):
     assert request["name"] == "News Radar: at 09:00, Monday to Friday"
     assert "The Long Night" in request["prompt"] and "untrusted" in request["prompt"]
     assert len(request["prompt"]) <= MAX_PROMPT
+    # Rows not worth telling make the agent propose a filter change and ask before saving it.
+    assert "ask the person" in request["prompt"] and "only once they agree" in request["prompt"]
     # Still on its way: the next fire queues nothing.
     assert fire_at(service, "2027-01-18T09:00") == []
     assert store.finish(rid, True, "task-1", "")
@@ -805,6 +807,87 @@ async def test_monitors_take_up_to_sixty_terms(service, web):
         service.monitor_put(AGENT, "many", ["city-agenda"], include=[f"t{i}" for i in range(61)])
 
 
+# -- warnings about loose filters ------------------------------------------------------------
+LIVE_TITLES = [
+    "Jazz live at the pier",
+    "Live: the quartet",
+    "Live strings",
+    "Live in the park",
+    "Choir live",
+    "Live opera night",
+    "The Example Band announces a tour",
+]
+
+
+def warnings_of(service, sources=("city-agenda",), **filters):
+    return service.monitor_preview(AGENT, "x", sources=list(sources), **filters).get("warnings", [])
+
+
+async def test_a_preview_warns_about_an_include_term_that_lets_most_through(service, web):
+    await add_titles(service, web, titles=LIVE_TITLES)
+    [warning] = warnings_of(service, include=["live", "The Example Band"])
+    assert '"live" alone lets through 6 of the 7 rows' in warning and "Example Band" not in warning
+    assert warnings_of(service, include=["live"]) == []  # the only term: all it finds is its own
+
+
+async def test_a_loose_term_needs_enough_rows_to_warn(service, web):
+    await add_titles(service, web, titles=[*LIVE_TITLES[:4], LIVE_TITLES[-1]])
+    assert warnings_of(service, include=["live", "The Example Band"]) == []
+
+
+async def test_terms_that_share_what_passes_evenly_do_not_warn(service, web):
+    titles = [f"Radiohead in {c}" for c in "ABC"] + [f"Bjork night {c}" for c in "ABC"]
+    await add_titles(service, web, titles=titles)
+    assert warnings_of(service, include=["Radiohead", "Bjork"]) == []
+
+
+async def test_a_loose_term_is_judged_on_report_rows_not_listings(service, web):
+    # One film in six sessions is one row: its name is not a loose term.
+    items = [{"name": "Dune", "date": f"2027-02-0{d}", "link": f"/d/{d}"} for d in range(1, 7)]
+    items.append({"name": "A Nolan night", "date": "2027-02-08", "link": "/n"})
+    await add_source(service, web, body=json.dumps({"data": {"list": {"items": items}}}), group_by="title")
+    await service.fetch_source("city-agenda")
+    assert warnings_of(service, include=["Dune", "Nolan"]) == []
+
+
+NEWS_URL = "https://news.example.org/api/stories"
+
+
+async def add_articles(service, web):
+    items = [{"name": f"Story {i}", "link": f"/s/{i}"} for i in range(3)]
+    web.add(NEWS_URL, json.dumps({"data": {"list": {"items": items}}}), "application/json")
+    spec = json_spec(name="city-news", url=NEWS_URL, item_kind="article")
+    assert (await service.source_test(spec))["passed"]
+    service.source_put(spec)
+    await service.fetch_source("city-news")
+
+
+async def test_a_preview_warns_about_articles_in_an_events_monitor(service, web):
+    await add_titles(service, web)
+    await add_articles(service, web)
+    [warning] = warnings_of(service, sources=["city-agenda", "city-news"])
+    assert "3 article(s) from city-news pass" in warning and "days_ahead doesn't narrow them" in warning
+    assert "where_unknown: drop" in warning
+    assert warnings_of(service, sources=["city-agenda", "city-news"], include=["tool"]) == []  # none passes
+    # Unplaced articles left out by where_unknown don't pass, so nothing to warn about.
+    assert warnings_of(service, sources=["city-agenda", "city-news"], where=["x"], where_unknown="drop") == []
+    assert warnings_of(service, sources=["city-agenda", "city-news"], news=True) == []
+    assert warnings_of(service, sources=["city-news"]) == []
+    assert len(warnings_of(service, sources=["city-news"], days_ahead=30)) == 1
+
+
+async def test_monitor_put_returns_the_warnings_and_still_saves(service, web):
+    await add_titles(service, web)
+    await add_articles(service, web)
+    out = service.monitor_put(AGENT, "mixed", ["city-agenda", "city-news"], schedule="0 9 * * *")
+    assert out["saved"] == "mixed" and "article(s) from city-news" in out["warnings"][0]
+    assert "warnings" in out["next"]
+    clean = service.monitor_put(AGENT, "plain", ["city-agenda"], schedule="0 9 * * *")
+    assert "warnings" not in clean and "warnings" not in clean["next"]
+    saved = service.monitor_preview(AGENT, "mixed")
+    assert saved["warnings"] == out["warnings"]
+
+
 def test_a_store_from_before_where_gains_the_column(settings, clock):
     import sqlite3
 
@@ -822,6 +905,206 @@ def test_a_store_from_before_where_gains_the_column(settings, clock):
     db.close()
     [m] = Store(settings.db_path, clock=clock).monitors()
     assert m.where == []
+
+
+# -- places: where an item is, worked out by the service -----------------------------------------
+PLACED = [
+    {"name": "Rock at the north coliseum", "venue": "Coliseum Northtown"},
+    {"name": "Quartet at the cultural centre", "venue": "Centre Culturel de Belvué"},
+    {"name": "Tour of two cities", "venue": "Old Royal Theatre, Coliseum Northtown"},
+    {"name": "Venue names its town", "venue": "Studio 5 | Southtown"},
+    {"name": "Ticket names the hall", "ticket": "https://t.example.org/b/9-grand_coliseum_hall/Sessions"},
+    {"name": "Concert at Grand Coliseum Hall"},
+    {"name": "Town given apart", "city": "Southtown"},
+    {"name": "Mystery night"},
+]
+SOUTHTOWN = {
+    "Quartet at the cultural centre",
+    "Tour of two cities",
+    "Venue names its town",
+    "Ticket names the hall",
+    "Concert at Grand Coliseum Hall",
+    "Town given apart",
+}
+
+
+def placed_spec(**over):
+    fields = {"title": "name", "start": "date", "url": "link", "venue": "venue", "locality": "city"}
+    return json_spec(extract={"items": "data.list.items", "fields": fields, "extra": {"ticket_url": "ticket"}}, **over)
+
+
+async def add_placed(service, web, rows=PLACED, name="city-agenda", url=URL, **over):
+    items = [{"date": "2027-02-01", "link": f"/p/{i}", **r} for i, r in enumerate(rows)]
+    web.add(url, json.dumps({"data": {"list": {"items": items}}}), "application/json")
+    spec = placed_spec(name=name, url=url, **over)
+    assert (await service.source_test(spec))["passed"]
+    service.source_put(spec)
+    await service.fetch_source(name)
+
+
+def map_southtown(service):
+    return service.place_put(
+        AGENT,
+        [
+            {"phrase": "Centre Culturel de Belvué", "locality": "Southtown"},
+            {"phrase": "Old Royal", "locality": "Southtown"},
+            {"phrase": "Grand Coliseum Hall", "locality": "Southtown"},
+        ],
+    )
+
+
+async def test_where_places_items_by_venue_town_and_the_place_map(service, web):
+    await add_placed(service, web)
+    before = set(titles_of(service, where=["southtown"]))
+    # Without the map, the venues that don't spell out their town are elsewhere.
+    assert before == {
+        "Venue names its town",
+        "Ticket names the hall",
+        "Concert at Grand Coliseum Hall",
+        "Town given apart",
+        "Mystery night",
+    }
+    map_southtown(service)
+    assert set(titles_of(service, where=["southtown"])) == SOUTHTOWN | {"Mystery night"}
+    assert set(titles_of(service, where=["southtown"], where_unknown="drop")) == SOUTHTOWN
+    # A tour placed in both towns is kept for either.
+    assert set(titles_of(service, where=["northtown"], where_unknown="drop")) == {
+        "Rock at the north coliseum",
+        "Tour of two cities",
+    }
+
+
+async def test_the_place_map_matches_letters_and_digits_only(service, web):
+    rows = [{"name": "Night", "ticket": "https://t.example.org/grand-coliseum-hall"}, {"name": "Room 22 opens"}]
+    await add_placed(service, web, rows=rows)
+    service.place_put(AGENT, [{"phrase": "GRAND coliseum hall!", "locality": "Southtown"}])
+    service.place_put(AGENT, [{"phrase": "Room 2", "locality": "Northtown"}])
+    kept = titles_of(service, where=["southtown"], where_unknown="drop")
+    assert kept == ["Night"]
+    # "room2" is in "room22": compacted phrases match inside words, so keep them specific.
+    assert titles_of(service, where=["northtown"], where_unknown="drop") == ["Room 22 opens"]
+
+
+async def test_a_source_place_places_every_item_of_the_source(service, web):
+    # A one-venue agenda names its rooms, not its town: the source's place keeps them.
+    rows = [
+        {"name": "Here"},
+        {"name": "In a room", "venue": "Stage 2"},
+        {"name": "Touring", "venue": "Hall, Northtown"},
+    ]
+    await add_placed(service, web, rows=rows, place="Southtown")
+    assert set(titles_of(service, where=["southtown"], where_unknown="drop")) == {"Here", "In a room", "Touring"}
+    assert titles_of(service, where=["northtown"], where_unknown="drop") == ["Touring"]
+    out = service.source_list()
+    assert out["sources"][0]["place"] == "Southtown"
+
+
+async def test_a_town_given_apart_is_shown_and_still_merges_one_event(service, web):
+    await add_placed(service, web, rows=[{"name": "Big Night", "venue": "Hall", "city": "Southtown"}])
+    await add_placed(service, web, rows=[{"name": "Big Night", "venue": "Hall"}], name="other", url=URL2)
+    await add_placed(
+        service, web, rows=[{"name": "Star night", "venue": "Grandiose Hall", "city": "Grand*"}], name="third", url=URL3
+    )
+    rows = service.monitor_preview(AGENT, "x", sources=["city-agenda", "other", "third"])["rows"]
+    by_title = {r["title"]: r for r in rows}
+    assert len(rows) == 2 and by_title["Big Night"]["also_in"]
+    [row] = service.monitor_preview(AGENT, "x", sources=["city-agenda"])["rows"]
+    assert (row["where"], row["locality"]) == ("Hall", "Southtown")
+    # A town is shown as it is: never read as a filter term.
+    assert by_title["Star night"]["locality"] == "Grand*"
+
+
+async def test_articles_placed_by_their_source_raise_no_warning(service, web):
+    await add_titles(service, web)
+    await add_articles(service, web)
+    assert warnings_of(service, sources=["city-news"], where=["northtown"])  # kept, but nothing placed them
+    stored = service.store.source_spec("city-news")
+    service.source_put({**stored, "place": "Northtown"})
+    assert warnings_of(service, sources=["city-news"], where=["northtown"]) == []
+    # Placed or not, articles among events are still worth a word.
+    assert warnings_of(service, sources=["city-agenda", "city-news"], where=["northtown"])
+
+
+async def test_a_preview_says_where_items_were_placed(service, web):
+    await add_placed(service, web)
+    map_southtown(service)
+    terms = service.monitor_preview(AGENT, "x", sources=["city-agenda"], where=["southtown"], where_unknown="drop")[
+        "terms"
+    ]
+    assert terms["where"] == {"southtown": 6}
+    assert terms["where_elsewhere"] == {"removed": 1, "examples": ["Rock at the north coliseum"]}
+    assert terms["where_unknown"] == {"items": 1, "then": "dropped", "examples": ["Mystery night"]}
+    assert terms["placed_by"] == {"Centre Culturel de Belvué": 1, "Old Royal": 1, "Grand Coliseum Hall": 2}
+
+
+async def test_where_unknown_is_saved_and_checked(service, web):
+    await add_placed(service, web)
+    service.monitor_put(AGENT, "lx", ["city-agenda"], where=["southtown"], where_unknown="drop", schedule="0 9 * * *")
+    [m] = service.monitor_list(AGENT)["monitors"]
+    assert m["where_unknown"] == "drop"
+    assert "Mystery night" not in [r["title"] for r in service.monitor_preview(AGENT, "lx")["rows"]]
+    with pytest.raises(ToolError, match="where_unknown"):
+        service.monitor_put(AGENT, "lx", ["city-agenda"], where=["southtown"], where_unknown="maybe")
+
+
+async def test_the_place_map_is_listed_replaced_and_deleted(service, web, store):
+    store.set_agents([Agent(AGENT, "lucius")])
+    out = map_southtown(service)
+    assert out["saved"] == ["Centre Culturel de Belvué", "Old Royal", "Grand Coliseum Hall"]
+    service.place_put(AGENT, [{"phrase": "old royal", "locality": "South Town"}])
+    places = {p["phrase"]: p for p in service.place_list()["places"]}
+    assert set(places) == {"Centre Culturel de Belvué", "old royal", "Grand Coliseum Hall"}
+    assert places["old royal"]["locality"] == "South Town" and places["old royal"]["added_by"] == "lucius"
+    assert service.place_delete(["OLD ROYAL", "nowhere"]) == {"deleted": ["old royal"], "not_found": ["nowhere"]}
+    assert len(service.place_list()["places"]) == 2
+
+
+@pytest.mark.parametrize(
+    "entries, message",
+    [
+        ([{"phrase": "CCB", "locality": "Southtown"}], "4 to 80 letters or digits"),
+        ([{"phrase": "Somewhere", "locality": ""}], "locality"),
+        ([{"phrase": "Somewhere", "locality": "x" * 61}], "locality"),
+        ([{"phrase": "Somewhere"}], "locality"),
+        ([], "1 to 50"),
+        ([{"phrase": f"Hall number {i}", "locality": "Southtown"} for i in range(51)], "1 to 50"),
+        ("Somewhere", "1 to 50"),
+    ],
+)
+def test_place_entries_are_checked(service, entries, message):
+    with pytest.raises(ToolError, match=message):
+        service.place_put(AGENT, entries)
+
+
+def test_the_place_map_has_a_size_limit(service, monkeypatch):
+    from lollo_news_radar import places
+
+    monkeypatch.setattr(places, "MAX_PLACES", 2)
+    service.place_put(AGENT, [{"phrase": "First hall", "locality": "A"}, {"phrase": "Second hall", "locality": "A"}])
+    service.place_put(AGENT, [{"phrase": "first hall", "locality": "B"}])  # a replacement fits
+    with pytest.raises(ToolError, match="at most 2"):
+        service.place_put(AGENT, [{"phrase": "Third hall", "locality": "A"}])
+
+
+def test_a_store_from_before_where_unknown_gains_the_column(settings, clock):
+    import sqlite3
+
+    from lollo_news_radar.store import Store
+
+    Store(settings.db_path, clock=clock)
+    db = sqlite3.connect(settings.db_path)
+    db.execute("ALTER TABLE monitors DROP COLUMN where_unknown")
+    db.execute("DROP TABLE places")
+    db.execute(
+        "INSERT INTO monitors (id, agent_id, name, sources, include, exclude, news, schedule, conversation, "
+        f"created, updated) VALUES ('0123456789abcdef', '{AGENT}', 'films', '[\"a\"]', '[]', '[]', 0, "
+        "'0 9 * * *', 'default', 1, 1)"
+    )
+    db.commit()
+    db.close()
+    reopened = Store(settings.db_path, clock=clock)
+    [m] = reopened.monitors()
+    assert m.where_unknown == "keep" and reopened.places() == []
 
 
 # -- rc.2: listings, merged rows, from_now, previews, unused sources ---------------------------
@@ -1083,3 +1366,284 @@ async def test_from_now_waits_for_a_source_fetched_long_ago(service, web, store,
     await service.fetch_source("city-agenda")
     out = service.monitor_put(AGENT, "news", ["city-agenda"], schedule="0 9 * * *", from_now=True)
     assert "from now" in out["from_now"]
+
+
+# -- events a monitor already had, and sources broken for days ---------------------------------
+async def known_setup(service, web, store, clock, first, later):
+    """A from_now monitor over city-agenda (listing `first`) and other, which then lists
+    `later`; the report's rows."""
+    await add_named(service, web, "city-agenda", URL, sessions_body(first))
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-03-01", "/o/old", "Hall A")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    web.add(URL2, sessions_body([("Old", "2027-03-01", "/o/old", "Hall A"), *later]), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    return {r["title"] + " " + r["when"]: r for r in service.digest_more(rid, 0)["rows"]}
+
+
+async def test_an_event_another_source_already_had_is_known(service, web, store, clock):
+    rows = await known_setup(
+        service,
+        web,
+        store,
+        clock,
+        [("Winter Concert", "2027-02-01T21:00", "/f/wc", "Opera House")],
+        [
+            ("Winter Concert", "2027-02-01T21:00", "/o/wc", "Ópera House"),
+            ("Spring Gig", "2027-02-05", "/o/sg", "Hall A"),
+        ],
+    )
+    known = rows["Winter Concert 2027-02-01T21:00"]
+    assert known["status"] == "known" and known["source"] == "other"
+    assert known["also_in"] == [
+        {
+            "source": "city-agenda",
+            "url": "https://agenda.example.org/f/wc",
+            "when": "2027-02-01T21:00",
+            "where": "Opera House",
+        }
+    ]
+    assert rows["Spring Gig 2027-02-05"]["status"] == "new"
+    assert "also_in" not in rows["Spring Gig 2027-02-05"]
+
+
+async def test_known_needs_the_same_event(service, web, store, clock):
+    rows = await known_setup(
+        service,
+        web,
+        store,
+        clock,
+        [("Gig", "2027-02-01T21:00", "/f/gig", "Hall A"), ("Talk", "2027-02-02", "/f/talk", "Hall A")],
+        [
+            ("Gig", "2027-02-01T18:00", "/o/gig", "Hall A"),  # another session
+            ("Gig", "2027-02-03T21:00", "/o/gig3", "Hall A"),  # another day
+            ("Talk", "2027-02-02", "/o/talk", "Hall B"),  # another venue
+        ],
+    )
+    assert sorted(rows) == ["Gig 2027-02-01T18:00", "Gig 2027-02-03T21:00", "Talk 2027-02-02"]
+    assert all(r["status"] == "new" and "also_in" not in r for r in rows.values())
+
+
+def needs_repair(prompt):
+    lines = prompt.splitlines()
+    return [json.loads(line.removeprefix("needs_repair ")) for line in lines if line.startswith("needs_repair ")]
+
+
+async def test_a_source_broken_for_days_is_asked_about_once(service, web, store, clock):
+    await add_named(service, web, "city-agenda", URL, events_body(["2027-02-01"]))
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-03-01", "/o/old", "Hall A")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    web.add(URL, "Payment required\n\nDEPLOYMENT_DISABLED", "text/plain", status=402)
+    out = await service.source_test(json_spec())
+    assert not out["passed"] and "DEPLOYMENT_DISABLED" in out["sample"]
+    for _ in range(3):
+        clock.t += 60
+        await service.fetch_source("city-agenda")
+    st = store.source_state("city-agenda")
+    assert st.last_error == "HTTP 402" and "DEPLOYMENT_DISABLED" in st.sample
+
+    def report():
+        rids = fire_at(service, "2027-01-15T09:00")
+        if not rids:
+            return None
+        [request] = store.claim(20)
+        store.finish(rids[0], True, "t", "")
+        return request["prompt"]
+
+    clock.t += 60
+    [first] = needs_repair(report())  # broken a few minutes: repair it
+    assert "broken_for_days" not in first and "already_asked" not in first
+    assert "DEPLOYMENT_DISABLED" in first["sample"]
+    clock.t += 3 * 86400
+    await service.fetch_source("city-agenda")
+    prompt = report()
+    [stuck] = needs_repair(prompt)  # three days: propose removing it from the monitor
+    assert stuck["broken_for_days"] == 3 and "already_asked" not in stuck
+    assert "propose removing it from the monitor" in prompt
+    clock.t += 86400
+    assert report() is None  # asked: never a report on its own again
+    later = [("Old", "2027-03-01", "/o/old", "Hall A"), ("New", "2027-03-02", "/o/new", "Hall A")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [asked] = needs_repair(report())  # rides along with something new
+    assert asked["already_asked"] is True and asked["broken_for_days"] == 4
+
+
+async def test_only_known_rows_start_no_turn(service, web, store, clock):
+    await add_named(service, web, "city-agenda", URL, sessions_body([("Gig", "2027-02-01T21:00", "/f/gig", "Hall")]))
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-03-01", "/o/old", "Hall A")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    later = [("Old", "2027-03-01", "/o/old", "Hall A"), ("Gig", "2027-02-01T21:00", "/o/gig", "Hall")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    assert fire_at(service, "2027-01-15T09:00") == []
+
+
+async def test_an_event_outside_the_window_when_first_seen_is_not_known(service, web, store, clock):
+    # T0 is 2027-01-15: 30 days out, past days_ahead, so the first listing was never reported.
+    await add_named(service, web, "city-agenda", URL, sessions_body([("Gig", "2027-02-14T21:00", "/f/gig", "Hall")]))
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-02-20", "/o/old", "Hall A")]))
+    service.monitor_put(
+        AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", days_ahead=7, from_now=True
+    )
+    clock.t += 25 * 86400
+    later = [("Old", "2027-02-20", "/o/old", "Hall A"), ("Gig", "2027-02-14T21:00", "/o/gig", "Hall")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    [row] = service.digest_more(rid, 0)["rows"]
+    assert row["title"] == "Gig" and row["status"] == "new"
+
+
+async def test_a_row_holding_an_earlier_listing_is_not_known_by_it(service, web, store, clock):
+    spec = json_spec(group_by="title")
+    web.add(URL, sessions_body([("Play", "2027-02-01T21:00", "/p/1", "Hall")]), "application/json")
+    assert (await service.source_test(spec))["passed"]
+    service.source_put(spec)
+    await service.fetch_source("city-agenda")
+    service.monitor_put(AGENT, "shows", ["city-agenda"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    sessions = [("Play", "2027-02-01T21:00", "/p/1", "Hall"), ("Play", "2027-02-08T21:00", "/p/2", "Hall")]
+    web.add(URL, sessions_body(sessions), "application/json")
+    await service.fetch_source("city-agenda")  # a new session
+    clock.t += 7 * 3600
+    sessions[0] = ("Play", "2027-02-01T21:00", "/p/1", "Main Hall")
+    web.add(URL, sessions_body(sessions), "application/json")
+    await service.fetch_source("city-agenda")  # the first one changes, and leads the row
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    [row] = service.digest_more(rid, 0)["rows"]
+    assert row["when"].startswith("2027-02-01") and row["status"] == "new"
+
+
+async def test_alerts_about_a_shared_source_are_per_monitor(service, web, store, clock):
+    await add_named(service, web, "city-agenda", URL, events_body(["2027-02-01"]))
+    service.monitor_put(AGENT, "a", ["city-agenda"], schedule="0 9 * * *", from_now=True)
+    service.monitor_put(OTHER_AGENT, "b", ["city-agenda"], schedule="0 10 * * *", from_now=True)
+    web.add(URL, "Payment required", "text/plain", status=402)
+    for _ in range(3):
+        clock.t += 60
+        await service.fetch_source("city-agenda")
+
+    def report(minute):
+        rids = fire_at(service, f"2027-01-15T{minute}")
+        if not rids:
+            return None
+        [request] = store.claim(20)
+        store.finish(rids[0], True, "t", "")
+        return needs_repair(request["prompt"])
+
+    clock.t += 60
+    assert report("09:00")  # a is told
+    clock.t += 3600
+    assert report("10:00")  # so is b: a's report says nothing to b's person
+    clock.t += 3 * 86400
+    assert "already_asked" not in report("09:00")[0]  # a asks
+    clock.t += 3600
+    assert "already_asked" not in report("10:00")[0]  # and so does b
+    clock.t += 86400
+    assert report("09:00") is None and report("10:00") is None  # both asked: never alone again
+
+
+async def test_an_error_without_an_answer_keeps_the_last_errors_sample(service, web, store, clock):
+    await add_source(service, web)
+    web.add(URL, "Payment required\n\nDEPLOYMENT_DISABLED", "text/plain", status=402)
+    await service.fetch_source("city-agenda")
+    challenge = '<html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x"></script>'
+    web.add(URL, challenge, status=403)
+    clock.t += 60
+    await service.fetch_source("city-agenda")
+    st = store.source_state("city-agenda")
+    assert "challenge" in st.last_error and "DEPLOYMENT_DISABLED" in st.sample
+
+
+async def test_an_event_never_told_is_not_known(service, web, store, clock):
+    # First seen 20 days before the monitor's first report, which reaches back 7: never told.
+    await add_named(service, web, "city-agenda", URL, sessions_body([("Gig", "2027-03-20T21:00", "/f/gig", "Hall")]))
+    clock.t += 20 * 86400
+    await add_named(service, web, "other", URL2, sessions_body([("Old", "2027-03-25", "/o/old", "Hall A")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    assert [r["title"] for r in service.digest_more(rid, 0)["rows"]] == ["Old"]
+    store.claim(20)
+    store.finish(rid, True, "t", "")
+    clock.t += 60
+    later = [("Old", "2027-03-25", "/o/old", "Hall A"), ("Gig", "2027-03-20T21:00", "/o/gig", "Hall")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    [row] = service.digest_more(rid, 0)["rows"]
+    assert row["title"] == "Gig" and row["status"] == "new"
+
+
+async def test_an_event_told_in_a_report_is_known_when_listed_again(service, web, store, clock):
+    await add_named(service, web, "city-agenda", URL, sessions_body([("Old", "2027-03-01", "/f/old", "Hall")]))
+    await add_named(service, web, "other", URL2, sessions_body([("Old2", "2027-03-02", "/o/old", "Hall")]))
+    service.monitor_put(AGENT, "shows", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    gig = ("Gig", "2027-02-01T21:00", "/f/gig", "Hall")
+    web.add(URL, sessions_body([("Old", "2027-03-01", "/f/old", "Hall"), gig]), "application/json")
+    await service.fetch_source("city-agenda")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    store.claim(20)
+    store.finish(rid, True, "t", "")
+    clock.t += 60
+    later = [("Old2", "2027-03-02", "/o/old", "Hall"), ("Gig", "2027-02-01T21:00", "/o/gig", "")]
+    web.add(URL2, sessions_body(later), "application/json")
+    await service.fetch_source("other")
+    clock.t += 60
+    [row] = service.monitor_preview(AGENT, "shows")["rows"]
+    assert row["status"] == "known" and row["also_in"][0]["source"] == "city-agenda"
+    assert fire_at(service, "2027-01-15T09:00") == []  # known alone: no turn
+
+
+async def test_a_grouped_row_with_new_sessions_is_not_known_by_its_first(service, web, store, clock):
+    spec = json_spec(group_by="title")
+    web.add(URL, sessions_body([("Old", "2027-03-01", "/c/old", "Hall")]), "application/json")
+    assert (await service.source_test(spec))["passed"]
+    service.source_put(spec)
+    await service.fetch_source("city-agenda")
+    await add_named(service, web, "other", URL2, sessions_body([("Film", "2027-02-01T21:00", "/o/film", "Hall")]))
+    service.monitor_put(AGENT, "films", ["city-agenda", "other"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    sessions = [
+        ("Old", "2027-03-01", "/c/old", "Hall"),
+        ("Film", "2027-02-08T21:00", "/c/f2", "Hall"),
+        ("Film", "2027-02-01T21:00", "/c/f1", "Hall"),
+    ]
+    web.add(URL, sessions_body(sessions), "application/json")
+    await service.fetch_source("city-agenda")
+    clock.t += 60
+    [rid] = fire_at(service, "2027-01-15T09:00")
+    [row] = service.digest_more(rid, 0)["rows"]
+    assert row["when"].startswith("2027-02-01") and row["variants"] and row["status"] == "new"
+
+
+def test_a_cut_prompt_counts_as_told_only_the_repairs_it_holds():
+    from lollo_news_radar.digest import Alert, MonitorDigest, render
+    from lollo_news_radar.store import Monitor
+
+    names = [f"source-{i}" for i in range(40)]
+    alerts = [Alert(n, "3 failed runs in a row; the last: HTTP 500", 0, "x" * 300, True) for n in names]
+    digest = MonitorDigest(Monitor(AGENT, "m", names, "0 9 * * *", id="m1"), [], 0, alerts)
+    prompt, _, alerted = render([digest], "at 09:00", "d1")
+    assert 0 < len(alerted) < len(names)
+    assert all(f'"source": "{n}"' in prompt for n in alerted)
+
+
+def test_rows_left_out_are_not_called_older():
+    from lollo_news_radar.digest import MonitorDigest, render
+    from lollo_news_radar.store import Monitor
+
+    digest = MonitorDigest(Monitor(AGENT, "m", ["s"], "0 9 * * *", id="m1"), [{"source": "s", "status": "new"}], 3)
+    prompt, _, _ = render([digest], "at 09:00", "d1")
+    assert "3 row(s) left out" in prompt and "older" not in prompt

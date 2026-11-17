@@ -130,6 +130,21 @@ async def test_challenge_pages_and_errors_fail(fetcher, web):
         await fetcher.get("https://b.example.org/b")
 
 
+async def test_an_unreadable_robots_txt_carries_what_the_site_answered(fetcher, web):
+    web.add("https://e.example.org/robots.txt", "Origin is unreachable", "text/plain", status=503)
+    with pytest.raises(FetchError, match="robots.txt could not be read") as e:
+        await fetcher.get("https://e.example.org/x")
+    assert e.value.page is not None and b"Origin is unreachable" in e.value.page.body
+
+
+async def test_an_error_carries_what_the_site_answered(fetcher, web):
+    web.add("https://b.example.org/c", "Payment required\n\nDEPLOYMENT_DISABLED", "text/plain", status=402)
+    with pytest.raises(FetchError, match="^HTTP 402$") as e:
+        await fetcher.get("https://b.example.org/c")
+    assert e.value.page is not None and e.value.page.status == 402
+    assert b"DEPLOYMENT_DISABLED" in e.value.page.body
+
+
 async def test_size_cap(fetcher, web):
     web.add("https://c.example.org/big", "x" * 2000)
     with pytest.raises(FetchError, match="over 1000 bytes"):
