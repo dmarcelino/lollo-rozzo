@@ -9,7 +9,8 @@
 # code-server (the gate), the editor image's own tests also run, unless pytest
 # arguments narrow the run; its first build downloads code-server. For
 # doc-tools, the `office` stage is built too, unless pytest arguments narrow the
-# run: it downloads OfficeAgent and checks it against OFFICEAGENT_SHA256.
+# run: it downloads OfficeAgent for this host's architecture and checks it
+# against OFFICEAGENT_SHA256_AMD64 or OFFICEAGENT_SHA256_ARM64.
 #   tests/run-sidecar.sh <dir> [pytest args...]
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

@@ -9,7 +9,7 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 | File | What it does |
 |---|---|
 | `run.sh` | The CLI's tests, and `scripts/renovate-post-upgrade.sh`'s (`test_post_upgrade_*`): every `test_*` function, or those whose name contains the argument (`tests/run.sh test_add_`) |
-| `stubs/` | `docker`, `curl`, `dig`, `gh` and `secret-tool` stand-ins that `run.sh` puts first on `PATH` |
+| `stubs/` | `docker`, `curl`, `dig`, `gh`, `secret-tool`, `security`, `uname`, `colima` and `ssh` stand-ins that `run.sh` puts first on `PATH` |
 | `run-sidecar.sh <dir>` | Builds a sidecar's image to its `test` stage and runs its tests in it; extra arguments go to pytest |
 | `run-pipelock.sh` | The pipelock image and config against a real pipelock ([pipelock/README.md](../pipelock/README.md#build-and-test)) |
 | `mcp-servers.test.mjs` | `lib/mcp-servers.mjs` against temp settings files, with hooks that land a concurrent write before and after its rename |
@@ -19,7 +19,7 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 - Each test gets a copy of the repo in a temp dir: the code in `$H` (`$T/home`, `LOLLO_HOME`), its data in `$D` (`$H/data`, a clone's default `LOLLO_DATA`) and Lettuce's source at `config.env.example`'s tag in `$U` (`$D/upstream/$REF`). It runs under `set -e`, so a failing assert ends it.
 - Tests run in parallel, `TEST_JOBS` at a time (default: one per CPU; `TEST_JOBS=1` runs them one by one). Each prints its block, failure details then `ok` or `FAIL`, when it ends, so the order varies; the failures are listed again at the end. A test therefore keeps everything it writes under its own `$T` and never relies on another test's files or on timing. `TMPDIR` points into the run's own folder, removed when it ends, so every temp dir (the tests' and lolloctl's) goes with it.
 - `ctl` runs `lolloctl` with `LOLLO_DATA` set to `$CTL_DATA`, empty by default, so the tester's own environment never reaches it. `release_on` turns the copy into a released lolloctl: a `$H/RELEASE`, `CTL_DATA=$D`, and its container's mounts (`mounts PATH...`, in `$T/mounts.json`). `wrapper_in DIR` and `wctl DIR ARGS...` run the release wrapper from `DIR/bin`.
-- `tests/stubs/{docker,curl,dig,gh,secret-tool}` come first on `PATH`. Nothing reaches the network, Docker or the real home.
+- `tests/stubs/{docker,curl,dig,gh,secret-tool,security,uname,colima,ssh}` come first on `PATH`. Nothing reaches the network, Docker or the real home.
 - `lolloctl` runs docker under `env -i`, so the stubs read their settings from `$T/stub.env`, not the environment. Write one with `stub KEY=value`. Stub values can't hold spaces, since `stub.env` is sourced.
 
 ## The stubs
@@ -35,14 +35,14 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 ### docker
 - **Rendered config.** `compose config --format json` returns `$T/compose-config.json`, which tests overwrite to simulate rendered configs. It fills `${KEY}` from the `--env-file`, and logs that file's `COMPOSE_PROFILES` as a `docker-env-file` line in `calls.log`. When set, it logs `DOC_TOOLS_NETWORK` and `DOC_TOOLS_VOLUME` as a `docker-env` line. Every `compose` call logs a `docker-env-images` line: `LOLLO_HOME`, `APP_SERVER_IMAGE`, `LETTA_IMAGE_NS` and, in release mode, `LOLLO_IMAGE_VAULT`.
 - **Services.** `compose config --services` lists `app-server`, `bff` and the services of each profile in the `--env-file`'s `COMPOSE_PROFILES`, like upstream: `lollo-gmail-triggers`, `lollo-news-radar` and `lollo-pipelock` for their profiles, `lollo-code-server`, `lollo-code-server-editor` and `lollo-code-server-exec` for `lollo-code-server`, and `landing` with any profile `compose/landing.yml` gives it.
-- **Containers.** `docker ps -a --filter label=com.docker.compose.project=...` answers from `$T/containers.txt` lines of `project service` (helper `containers NAME SERVICE...`). `compose ps --status running --services` counts every container of the project there as running.
+- **Containers.** `docker ps -a --filter label=com.docker.compose.project=...` answers from `$T/containers.txt` lines of `project service` (helper `containers NAME SERVICE...`). `compose ps --status running --services` counts every container of the project there as running, but one with a third word `paused` (helper `paused NAME SERVICE...`); `ps --status running --status paused --status restarting --services` counts them all.
 - **`exec`.** `letta agents list` inside `compose exec` answers from `$T/agents.json` (helper `agents NAME...`, ids `agent-1`, `agent-2`, ...) and swallows stdin like the real thing. Any other `exec`:
   - appends its stdin to `$T/exec-stdin.log`;
   - saves its `sh -c` script to `$T/exec-script` and the arguments after it, NUL-separated, to `$T/exec-args`. `run_exec_script ROOT [STDIN]` replays the script with `/root/.letta` and `/etc/cron.d` under ROOT; `exec_args` prints the arguments;
   - prints `$T/exec-stdout`, or `$T/exec-stdout-<group>` for a `lib/mcp-servers.mjs` run of that group when it exists;
   - exits with `STUB_EXEC_RC`. `STUB_EXEC_FAIL_GROUP=<group>` makes that group's runs exit 3.
 - **`run`.** Writes the value of each `-e NAME` to `$T/run-env.log`, so tests can tell values passed through the environment from argv. Saves its `sh -c` script to `$T/run-script`. Creates the `.partial-*` it is given in the directory mounted at `/dst`, like the backup copy. Exits with `STUB_RUN_RC`, or 1 when its arguments contain `STUB_RUN_FAIL` (only the first `STUB_RUN_FAIL_TIMES` times when that is set).
-- **The host and the registry.** `version --format` answers `STUB_PLATFORM` (default `linux/amd64`); `manifest inspect` publishes the image for the platforms in `STUB_MANIFEST_PLATFORMS`, or fails when it is unset; `pull` exits with `STUB_PULL_RC`; `inspect --format {{json .Mounts}}` (`check_mounts`) prints `$T/mounts.json`, or fails without it.
+- **The host and the registry.** `version --format` answers `STUB_PLATFORM` (default `linux/amd64`); `info --format` fills `{{.ID}}` with `STUB_DOCKER_ID` (default `daemon-1`) and `{{.Name}}` with `STUB_DOCKER_NAME` (default `docker-host`), or fails with `STUB_DOCKER_INFO_RC`; a `run` with `--entrypoint stat` (the wrapper on macOS reading the socket's group) prints `STUB_SOCKET_GID` (default 0) and `STUB_SOCKET_MODE` (default 660), or fails with `STUB_SOCKET_GID_RC`; `manifest inspect` publishes the image for the platforms in `STUB_MANIFEST_PLATFORMS`, or fails when it is unset; `pull` exits with `STUB_PULL_RC`; `inspect --format {{json .Mounts}}` (`check_mounts`) prints `$T/mounts.json`, or fails without it.
 - **Images, volumes, pause.** `image inspect` answers a Compose-built image's config (fails with `STUB_IMAGE_RC`, or for an image in `STUB_IMAGES_MISSING`). `volume inspect` exits with `STUB_VOLUME_RC`, or 1 for a volume named in `STUB_VOLUMES_MISSING`. `compose pause` exits with `STUB_PAUSE_RC`. `restart --no-deps bff` exits with `STUB_RESTART_RC`.
 - **Doc-tools resources.**
   - Networks live in `$T/networks` (`name label internal attached-ids`): `network ls/inspect/create/connect/disconnect/rm`, with `STUB_NETWORK_LS_RC`, `STUB_NETWORK_CREATE_RC` and `STUB_NETWORK_RM_RC`.
@@ -52,9 +52,12 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
   - A `run` mounting a tools volume answers the marker check from `$T/volumes`, or, for the fill, saves its stdin to `$T/fill-stdin` and marks the volume complete.
   - `ps -aq --filter label=lolloctl.doc-tools=fill` prints `$T/fill-containers`.
 
-### dig, gh and secret-tool
+### dig, gh, secret-tool, security, uname, colima and ssh
 - `dig` answers from `$T/dns.txt` lines of `name TYPE answer`.
-- `gh auth token` and `secret-tool` print `STUB_GH_TOKEN` and `STUB_SECRET_TOOL`, or fail like a logged-out tool.
+- `gh auth token`, `secret-tool` and macOS's `security find-generic-password` print `STUB_GH_TOKEN`, `STUB_SECRET_TOOL` and `STUB_SECURITY`, or fail like a logged-out tool.
+- `uname -s` prints `STUB_UNAME_S` when set (`Darwin` for the wrapper on macOS); anything else is the real `uname`.
+- `colima` logs `colima <args>`; `colima ssh-config --profile P` prints a config for the host `colima` (`colima-P` for another profile); `colima ssh --profile P -- test -d PATH` fails for a path under one of `STUB_COLIMA_UNSHARED`'s (space-separated), as a path the VM does not share; any call fails with `STUB_COLIMA_RC`.
+- `ssh` logs `ssh <args>`. A tunnel (`-N`) writes its pid to `$T/tunnel.pid` and stays up until killed (or exits with `STUB_SSH_TUNNEL_RC`); `... test -S PATH` exits `STUB_SSH_TEST_RC` (default 0).
 - `gh api PATH [--jq EXPR]` logs `gh api PATH` and answers from `$T/gh-api/<PATH with / as _>.json` (helpers `gh_api PATH JSON` and `release_assets REPO TAG NAME=DIGEST...`), through `jq -r` with `--jq`; a missing file fails like a 404.
 - `gh attestation verify FILE --repo REPO` logs `gh attestation verify <file name> --repo REPO` and exits `STUB_GH_ATTEST_RC` (default 0).
 

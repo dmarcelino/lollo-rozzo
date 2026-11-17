@@ -34,7 +34,7 @@ The agent side, `vault-run`, `vault-fill` and their skill, lives in [agent-skill
 - **Tunnel:** the `PROFILE_ROUTES` row in [lib/cloudflare.sh](../lib/cloudflare.sh) sends `^/vault(/|$)` on the lollo host to `http://lollo-vault:8000`. Nothing else is routed to it: `/mcp` and `/redeem` answer only `Host: lollo-vault` with no `Origin`, from the stack network.
 - **Requests checked in the app:** every UI route goes through `lollo_common.auth` (Access JWT, Fetch Metadata, Origin and CSRF on posts, COOP); see [lollo-common](../lollo-common/README.md).
 - **Agents:** they reach `http://lollo-vault:8000/mcp` over the stack network. `lolloctl mcp` registers it in Settings -> MCP once per stack (group `vault` in `lib/mcp-servers.mjs`, marker `VAULT_MCP_REGISTERED`), `add` does so for a new stack, and `up`/`profiles` remove the entry when the profile is off. `lolloctl skills` installs `vault-run` and `vault-fill`.
-- **lolloctl:** `add` gives the vault its own VAPID pair (`push_env_lines`); `vault_volume`/`has_vault` let `backup` copy `vault-data` read-only and `remove` warn before `compose down -v` deletes it.
+- **lolloctl:** `add` gives the vault its own VAPID pair (`push_env_lines`); `vault_volume`/`has_vault` let `backup` copy `vault-data` read-only, `restore` put it back (owner 10001, mode 700), and `remove` warn before `compose down -v` deletes it.
 - **`check_stack`:** `lollo-vault` must be a hardened sidecar with no host path (`check_sidecar`), `vault-data` is mounted by nothing else and no `volumes_from` reaches it, every lollo service accepts only `CF_LOLLO_AUD` and `LOLLO_ORIGIN` (`check_lollo_audience`), the app-server's namespace drops `NET_RAW`, and with pipelock `NO_PROXY` lists `lollo-vault`. Why each matters: [Rules](#rules) below; every `check_stack` rule: [CONTRIBUTING.md](../CONTRIBUTING.md#what-check_stack-enforces).
 
 ## Build and test
@@ -73,7 +73,7 @@ The unlock page's erase is the one way to destroy the vault without knowing the 
 - Never shorten an erase without the passphrase below its delay, run it while unlocked, or let it run without a notice to every device.
 - Never add an MCP tool that edits secrets or bypasses approval.
 - Never write vault data, keys or the passphrase to disk unencrypted, or to logs.
-- Never mount `vault-data` into another service. Only `backup`'s one-off container may, read-only.
+- Never mount `vault-data` into another service. Only `backup`'s one-off container may, read-only, and `restore`'s, to put a backup back into a stopped stack.
 - Never let agent activity extend the auto-lock. The data key exists only in memory while the vault is unlocked.
 - Never pass `COMPOSE_PROFILES` or `LOLLO_PROFILES` to the vault: a profile change would recreate it, and recreating it locks it ([lib/README.md](../lib/README.md#tunnel-routes-follow-the-profiles)).
 

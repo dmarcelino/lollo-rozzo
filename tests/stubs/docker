@@ -26,6 +26,21 @@ case $args in
   " build "*) exit "${STUB_BUILD_RC:-0}" ;;
   " pull "*) exit "${STUB_PULL_RC:-0}" ;;
   " version --format "*) echo "${STUB_PLATFORM:-linux/amd64}" ;;
+  # The daemon's ID (STUB_DOCKER_ID) and name, which on macOS tells the VM apart
+  # (colima, docker-desktop, orbstack), filled into the format; STUB_DOCKER_INFO_RC
+  # fails it, as when Docker is not running.
+  " info --format "*)
+    [[ ${STUB_DOCKER_INFO_RC:-0} == 0 ]] || exit "$STUB_DOCKER_INFO_RC"
+    out=${args#* info --format }
+    out=${out% }
+    out=${out//'{{.ID}}'/${STUB_DOCKER_ID:-daemon-1}}
+    echo "${out//'{{.Name}}'/${STUB_DOCKER_NAME:-docker-host}}"
+    ;;
+  # The wrapper on macOS reading the socket's group inside Docker's VM.
+  " run "*" --entrypoint stat "*)
+    [[ ${STUB_SOCKET_GID_RC:-0} == 0 ]] || exit "$STUB_SOCKET_GID_RC"
+    echo "${STUB_SOCKET_GID:-0} ${STUB_SOCKET_MODE:-660}"
+    ;;
   # The registry: STUB_MANIFEST_PLATFORMS="linux/amd64 ..." publishes the image
   # for those platforms; unset, it is not there.
   " manifest inspect "*)
@@ -187,7 +202,13 @@ case $args in
   *" pause ") exit "${STUB_PAUSE_RC:-0}" ;;
   *" restart --no-deps bff ") exit "${STUB_RESTART_RC:-0}" ;;
   *" ps --status running --services "*)
-    # Every container in $STUB_ROOT/containers.txt counts as running.
+    # Every container in $STUB_ROOT/containers.txt counts as running, but those
+    # marked paused (a third word).
+    project=${args#* -p }
+    project=${project%% *}
+    awk -v p="$project" '$1 == p && $3 != "paused" { print $2 }' "$STUB_ROOT/containers.txt" 2>/dev/null
+    ;;
+  *" ps --status running --status paused --status restarting --services "*)
     project=${args#* -p }
     project=${project%% *}
     awk -v p="$project" '$1 == p { print $2 }' "$STUB_ROOT/containers.txt" 2>/dev/null

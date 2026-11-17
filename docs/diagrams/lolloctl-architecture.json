@@ -193,7 +193,7 @@
     },
     {
       "kind": "region",
-      "label": "LOLLO_DATA: /srv/lollo-rozzo, or a clone's data/",
+      "label": "LOLLO_DATA: ~/lollo-rozzo, or a clone's data/",
       "wraps": ["config-env", "stacks-conf", "upstream", "stack-env"]
     },
     {

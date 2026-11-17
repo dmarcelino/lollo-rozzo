@@ -63,6 +63,18 @@ jobs:
           persist-credentials: false
       - run: tests/run-sidecar.sh ${{ matrix.dir }}
 
+  # doc-tools is built on each host, an Apple silicon Mac included: this checks
+  # its arm64 pins (OfficeAgent's linux-arm64 tarball, the lock's aarch64
+  # wheels) on every change, Renovate's included.
+  doc-tools-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: tests/run-sidecar.sh doc-tools
+
   pipelock:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

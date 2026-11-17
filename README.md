@@ -4,7 +4,7 @@ Run personal AI agents with memory, that learn and improve over time. Lollo Rozz
 
 _Lollo Rozzo stands on the leaves of giants._ Built on [Lettuce](https://github.com/dmarchevsky/lettuce), it gives you [Letta Code](https://github.com/letta-ai/letta-code) agents that have memory, identity and a sense of experience over time. They learn and evolve over long horizons by rewriting their own memory, skills and prompts.
 
-You host it yourself, on one Linux machine with Docker, for yourself or for several people. Each person gets their own private stack: their agents, a web app that works on phone and desktop, and the extras you turn on. Everyone signs in with Google through Cloudflare Access, and nobody can reach anyone else's stack. One command line tool, `lolloctl`, sets it all up and runs it: who has a stack is one file, and `lolloctl apply` gives each person their own Cloudflare Tunnel, sign-in and DNS records, and starts their stack.
+You host it yourself, on one Linux machine or Mac with Docker, for yourself or for several people. Each person gets their own private stack: their agents, a web app that works on phone and desktop, and the extras you turn on. Everyone signs in with Google through Cloudflare Access, and nobody can reach anyone else's stack. One command line tool, `lolloctl`, sets it all up and runs it: who has a stack is one file, and `lolloctl apply` gives each person their own Cloudflare Tunnel, sign-in and DNS records, and starts their stack.
 
 ![Each person signs in through Cloudflare to their own stack: Lettuce and their lollo pages](docs/diagrams/lollo-rozzo-at-a-glance.svg)
 
@@ -30,7 +30,7 @@ Each extra is a Compose profile whose name starts with `lollo-`. Profiles are gl
 With any of the vault, Gmail triggers, News Radar or the code editor on, the lollo address has a landing page linking to the pages that are on. Lettuce's own profiles add more: web search (`search`) and Gmail, Calendar, Tasks and Contacts for the agents (`google`); `cloudflared` is required. They are described in Lettuce's `docs/CONFIGURATION.md`, and summarised in [operations.md](docs/operations.md#optional-features).
 
 ## Requirements
-- A Linux host (`amd64` or `arm64`) with Docker Engine 25 or later. That is all it needs: `lolloctl` runs from its own image, which brings Docker Compose and every other tool. The document tools (`lollo-doc-tools`) need an `amd64` host.
+- A Linux host (`amd64` or `arm64`) with Docker Engine 25 or later, or a Mac with Colima, Docker Desktop or OrbStack and bash 4 or later (`brew install bash`; [macOS notes](docs/operations.md#running-on-macos)). That is all it needs: `lolloctl` runs from its own image, which brings Docker Compose and every other tool. The document tools (`lollo-doc-tools`) need an `amd64` host, so not an Apple silicon Mac.
 - A domain whose DNS is on Cloudflare. The free plan is enough.
 - Cloudflare Zero Trust. The free plan covers up to 50 users; Cloudflare asks for payment details even for it, and charges nothing.
 - A Google Cloud OAuth client for the Google login method (free).
@@ -39,21 +39,21 @@ With any of the vault, Gmail triggers, News Radar or the code editor on, the lol
 
 ## Quickstart
 1. Do the one-time Cloudflare and Google setup: **[docs/cloudflare-setup.md](docs/cloudflare-setup.md)**. It takes about an hour of work. Moving your domain's DNS to Cloudflare then takes minutes to hours to become active, and up to 48 h; if DNSSEC is on, turning it off first adds 24-48 h. A domain you don't use for anything else avoids the risk of breaking its email.
-2. Install `lolloctl`: create its data directory, owned by you, put the latest release's `lolloctl` in its `bin/` and check it against the release's `SHA256SUMS`:
+2. Install `lolloctl`: create its data directory, put the latest release's `lolloctl` in its `bin/` and check it against the release's `SHA256SUMS`:
    ```bash
-   sudo install -d -o "$USER" -g "$(id -gn)" -m 700 /srv/lollo-rozzo /srv/lollo-rozzo/bin
-   curl -fsSL -o /srv/lollo-rozzo/bin/lolloctl https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/lolloctl
-   (cd /srv/lollo-rozzo/bin && curl -fsSL https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/SHA256SUMS | sha256sum -c --ignore-missing)
-   chmod 755 /srv/lollo-rozzo/bin/lolloctl
-   mkdir -p ~/.local/bin && ln -s /srv/lollo-rozzo/bin/lolloctl ~/.local/bin/lolloctl
+   install -d -m 700 ~/lollo-rozzo ~/lollo-rozzo/bin
+   curl -fsSL -o ~/lollo-rozzo/bin/lolloctl https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/lolloctl
+   (cd ~/lollo-rozzo/bin && curl -fsSL https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/SHA256SUMS | grep ' lolloctl$' | sha256sum -c)   # macOS: shasum -a 256 -c
+   chmod 755 ~/lollo-rozzo/bin/lolloctl
+   mkdir -p ~/.local/bin && ln -s ~/lollo-rozzo/bin/lolloctl ~/.local/bin/lolloctl   # or another directory on your PATH
    ```
-   To install a given release instead, replace `latest/download` with `download/vX.Y.Z`. To check where the file comes from, with the `gh` CLI: `gh attestation verify /srv/lollo-rozzo/bin/lolloctl --repo dmarcelino/lollo-rozzo`. [docs/operations.md](docs/operations.md#installing-and-upgrading) says more.
+   The data directory can be anywhere you own; `~/lollo-rozzo` works on Linux and macOS without sudo. On Linux with an encrypted home that unlocks only at login, put it elsewhere, such as `/srv/lollo-rozzo` ([why](docs/operations.md#files-on-the-host)). To install a given release instead, replace `latest/download` with `download/vX.Y.Z`. To check where the file comes from, with the `gh` CLI: `gh attestation verify ~/lollo-rozzo/bin/lolloctl --repo dmarcelino/lollo-rozzo`. [docs/operations.md](docs/operations.md#installing-and-upgrading) says more.
 3. Configure and start:
    ```bash
-   lolloctl init                   # creates /srv/lollo-rozzo/config.env from the example; edit it
-   $EDITOR /srv/lollo-rozzo/config.env   # set DOMAIN, PUSH_CONTACT_EMAIL (required), TZ and PROFILES
+   lolloctl init                   # creates ~/lollo-rozzo/config.env from the example; edit it
+   $EDITOR ~/lollo-rozzo/config.env   # set DOMAIN, PUSH_CONTACT_EMAIL (required), TZ and PROFILES
    lolloctl init                   # checks the Cloudflare setup step by step, downloads Lettuce, caches ids
-   $EDITOR /srv/lollo-rozzo/stacks.conf  # one line per person: alfred alfred@gmail.com
+   $EDITOR ~/lollo-rozzo/stacks.conf  # one line per person: alfred alfred@gmail.com
    lolloctl apply                  # shows the plan, then creates and starts every stack
    ```
    The example's `PROFILES=cloudflared,search` is a working start (web search for the agents); add the [extras](#batteries-included) you want, e.g. `cloudflared,search,lollo-vault`. You can change the list later with `lolloctl profiles`.

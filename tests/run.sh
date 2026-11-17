@@ -1825,6 +1825,14 @@ containers() {
     printf 'lollo-%s %s\n' "$n" "$s" >>"$T/containers.txt"
   done
 }
+# paused NAME SERVICE... -> like containers, but paused
+paused() {
+  local n=$1 s
+  shift
+  for s in "$@"; do
+    printf 'lollo-%s %s paused\n' "$n" "$s" >>"$T/containers.txt"
+  done
+}
 
 test_profiles_removes_services_of_dropped_profiles() {
   added
@@ -2461,6 +2469,55 @@ test_toolbox_refuses_missing_mounts() {
   log_lacks "docker run"
 }
 
+# With the data directory under the home, `mount ~` would give an agent every
+# stack's secrets.
+test_toolbox_refuses_mounts_holding_the_data_directory() {
+  toolbox_ready
+  local m
+  for m in "$D" "$D/stacks" "$(dirname "$D")" /; do
+    toolbox_file "mount $m /x"
+    tb lucius
+    bad_rc
+    out_has "a toolbox mount cannot hold the data directory $D"
+    log_lacks "docker run"
+  done
+}
+
+# The built-in mounts go through the same check: ~/.gitconfig may be a link
+# into the data directory.
+test_toolbox_refuses_a_builtin_mount_into_the_data_directory() {
+  toolbox_ready
+  ln -s "$D/config.env" "$T/u/.gitconfig"
+  tb lucius
+  bad_rc
+  out_has "a toolbox mount cannot hold the data directory $D: $T/u/.gitconfig"
+  log_lacks "docker run"
+}
+
+test_toolbox_refuses_a_personal_file_of_someone_else() {
+  toolbox_ready
+  mkdir -p "$T/u/.config/lolloctl"
+  ln -s /etc/passwd "$T/u/.config/lolloctl/toolbox"
+  tb lucius
+  bad_rc
+  out_has "is not owned by you"
+  log_lacks "docker run"
+}
+
+# In release mode the wrapper checked the owner on the host; in the container a
+# macOS share reports another (Colima: whoever looked first). The file is a link
+# to root's, so the next check, of its mode (a link reads 777), stops it.
+test_release_mode_toolbox_leaves_the_owner_to_the_wrapper() {
+  toolbox_ready
+  release_on
+  mkdir -p "$T/u/.config/lolloctl"
+  ln -s /etc/passwd "$T/u/.config/lolloctl/toolbox"
+  tb lucius
+  bad_rc
+  out_lacks "not owned by you"
+  out_has "writable by others"
+}
+
 test_toolbox_refuses_a_personal_file_others_can_write() {
   toolbox_ready
   toolbox_file "env A=b"
@@ -2989,7 +3046,11 @@ test_backup_copies_a_stopped_stack_without_asking() {
   log_has "docker build -q -t lollo-backup:local $H/backup"
   # --init: sh as PID 1 would ignore the signal docker forwards on Ctrl-C.
   log_has "docker run --rm --init --network none --read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --label lolloctl.backup=alfred"
-  log_has "-v $D/stacks/alfred/state:/src/state:ro -v $D/stacks/alfred/stack.env:/src/stack.env:ro -v $B/alfred:/dst lollo-backup:local"
+  log_has "-v $D/stacks/alfred/state:/src/state:ro -v $D/stacks/alfred/stack.env:/src/stack.env:ro -v $D/config.env:/src/config.env:ro -v $B/alfred/.partial-"
+  # The host's platform, so that restore can tell a backup from another architecture.
+  log_has "docker version --format {{.Server.Os}}/{{.Server.Arch}}"
+  log_has ".platform:/src/platform:ro -v $B/alfred:/dst lollo-backup:local"
+  eq "$(find "$B/alfred" -name '.partial-*')" ""
   log_has "sh rsync /src /dst $(id -u):$(id -g)  .partial-"
   log_has "state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups"
   log_lacks "state/tools"
@@ -3056,7 +3117,7 @@ test_backup_includes_the_receipts() {
   ctl backup alfred "$B"
   ok_rc
   log_has "docker volume inspect lollo-alfred_pipelock-data"
-  log_has "-v lollo-alfred_pipelock-data:/src/pipelock:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_pipelock-data:/src/pipelock:ro -v $B/alfred/.partial-"
   log_lacks "/src/vault"
 }
 
@@ -3065,7 +3126,7 @@ test_backup_skips_receipts_that_do_not_exist() {
   stub "STUB_VOLUMES_MISSING='lollo-alfred_pipelock-data lollo-alfred_news-radar-data'"
   ctl backup alfred "$B"
   ok_rc
-  log_has "-v lollo-alfred_vault-data:/src/vault:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_vault-data:/src/vault:ro -v $B/alfred/.partial-"
   log_lacks "/src/pipelock"
 }
 
@@ -3075,7 +3136,7 @@ test_backup_includes_the_news_radar() {
   ctl backup alfred "$B"
   ok_rc
   log_has "docker volume inspect lollo-alfred_news-radar-data"
-  log_has "-v lollo-alfred_news-radar-data:/src/news-radar:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_news-radar-data:/src/news-radar:ro -v $B/alfred/.partial-"
 }
 
 test_backup_skips_a_news_radar_that_does_not_exist() {
@@ -3249,6 +3310,411 @@ test_backup_script_copies_what_matters() {
   sh -c "$(cat "$T/run-script")" sh tar "$src" "" "" "" "" $args >"$T/a.tar.gz"
   got=$(tar -tzf "$T/a.tar.gz" | grep -v '/$' | LC_ALL=C sort | paste -sd' ')
   eq "$got" "./stack.env ./state/letta-home/claude/projects/t.jsonl ./state/letta-home/skills/from-settings/SKILL.md ./state/workspaces/agent-1/notes.md ./vault/vault.db"
+}
+
+test_backup_leaves_out_google_without_the_flag() {
+  backed
+  ctl backup alfred "$B"
+  ok_rc
+  log_lacks "google-"
+}
+
+test_backup_with_google_copies_lettuces_google_volumes() {
+  backed
+  ctl backup alfred "$B" --with-google
+  ok_rc
+  log_has "-v lollo-alfred_google-policy:/src/google-policy:ro -v lollo-alfred_google-creds:/src/google-creds:ro"
+}
+
+test_backup_with_google_skips_a_volume_that_does_not_exist() {
+  backed
+  stub STUB_VOLUMES_MISSING=lollo-alfred_google-creds
+  ctl backup alfred "$B" --with-google
+  ok_rc
+  log_has "-v lollo-alfred_google-policy:/src/google-policy:ro"
+  log_lacks "-v lollo-alfred_google-creds"
+}
+
+# ── restore ──────────────────────────────────────────────────────────────────
+# a_snapshot [ENTRY...] -> alfred's backup as a snapshot in $S, as backup writes
+# it, from a host whose data directory was elsewhere: stack.env, config.env,
+# state/ (with tools/) and each ENTRY (vault, google-creds...) as a directory
+a_snapshot() {
+  local e
+  backed
+  S=$B/alfred/20261018T033000Z
+  mkdir -p "$S/state/letta-home" "$S/state/tools/bin"
+  sed 's|^LETTA_STATE_DIR=.*|LETTA_STATE_DIR=/old/host/stacks/alfred/state|' "$D/stacks/alfred/stack.env" >"$S/stack.env"
+  sed 's|^DOMAIN=.*|DOMAIN=from-backup.example.org|' "$D/config.env" >"$S/config.env"
+  chmod 600 "$S/stack.env" "$S/config.env"
+  for e in "$@"; do mkdir -p "$S/$e"; done
+}
+# an_archive [ENTRY...] -> the same backup as an archive at $A
+an_archive() {
+  a_snapshot "$@"
+  A=$B/alfred/20261018T033000Z.tar.gz
+  tar -C "$S" -czf "$A" .
+  rm -rf "$S"
+}
+# a_new_host -> this data directory has no alfred, no stacks.conf and no config.env
+a_new_host() {
+  rm -rf "$D/stacks/alfred" "$D/stacks.conf" "$D/config.env"
+  : >"$T/calls.log"
+}
+RESTORE_RUN="docker run --rm --init --network none --read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --label lolloctl.restore=alfred"
+
+test_restore_rejects_bad_arguments() {
+  backed
+  ctl restore alfred
+  bad_rc
+  out_has "usage: lolloctl restore <name> <backup> [--yes]"
+  ctl restore alfred "$T/nope"
+  bad_rc
+  out_has "$T/nope does not exist"
+  mkdir -p "$T/empty"
+  ctl restore alfred "$T/empty"
+  bad_rc
+  out_has "is not a backup: no stack.env and state/ in it"
+  touch "$T/notes.txt"
+  ctl restore alfred "$T/notes.txt"
+  bad_rc
+  out_has "name a snapshot directory or a .tar.gz"
+  ctl restore Alfred "$T/empty"
+  bad_rc
+  out_has "invalid stack name"
+  ctl restore alfred "$T/empty" --force
+  bad_rc
+  out_has "usage:"
+  log_lacks "docker run"
+}
+
+test_restore_puts_a_snapshot_back_on_a_new_host() {
+  a_snapshot vault pipelock news-radar
+  a_new_host
+  ctl restore alfred "$S"
+  ok_rc
+  # One container copies the state and every volume.
+  log_has "$RESTORE_RUN -v $S:/b:ro -v $D/stacks/alfred/state:/r/state -v lollo-alfred_vault-data:/r/vault -v lollo-alfred_pipelock-data:/r/pipelock -v lollo-alfred_news-radar-data:/r/news-radar lollo-backup:local sh -c"
+  log_has " sh rsync /b /r  state 0:0 $(id -u):$(id -g) 700 vault 10001:10001 10001:10001 700 pipelock 65532:65532 65532:65532 700 news-radar 10002:10002 10002:10002 700"
+  eq "$(grep -c 'lolloctl.restore=alfred' "$T/calls.log")" 1
+  log_lacks "google-"
+  # stack.env names this host's state directory, and stays private.
+  eq "$(senv alfred LETTA_STATE_DIR)" "$D/stacks/alfred/state"
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+  eq "$(stat -c %a "$D/stacks/alfred")" 700
+  eq "$(senv alfred SESSION_SECRET)" "$(sed -n 's/^SESSION_SECRET=//p' "$S/stack.env")"
+  # config.env, which this host lacked, for init; stacks.conf in step.
+  grep -qx 'DOMAIN=from-backup.example.org' "$D/config.env" || fail "config.env not restored"
+  eq "$(stat -c %a "$D/config.env")" 600
+  out_has "run lolloctl init next"
+  grep -qE '^alfred +alfred@example.com$' "$D/stacks.conf" || fail "stacks.conf not in step: $(cat "$D/stacks.conf")"
+  out_has "alfred: admits alfred@example.com, as in the backup; if its Access policy changed since, run: lolloctl users alfred <email>[,<email>]"
+  out_has "start it with: lolloctl up alfred && lolloctl skills alfred"
+  log_lacks "curl "
+}
+
+# Colima's virtiofs share refuses to open the empty, mode-0 file GNU tar first
+# puts in place of a link to an absolute path or through '..' (even as root);
+# with -P tar makes the link at once. The tar stub here refuses like the share.
+test_restore_unpacks_links_where_a_share_refuses_tars_placeholders() {
+  local real_tar restore_script me
+  real_tar=$(command -v tar)
+  me="$(id -u):$(id -g)"
+  a_snapshot
+  mkdir -p "$S/state/letta-home/skills"
+  ln -s /root/.letta/mcp-home/skill/mcp-servers "$S/state/letta-home/skills/mcp-servers"
+  ln -s ../letta-home "$S/state/workspaces-link"
+  A=$B/alfred/20261018T033000Z.tar.gz
+  tar -C "$S" -czf "$A" .
+  ctl restore alfred "$A" --yes
+  ok_rc
+  restore_script=$(cat "$T/run-script")
+  mkdir -p "$T/share-bin" "$T/dst/state"
+  cat >"$T/share-bin/tar" <<SHARE
+#!/usr/bin/env bash
+x="" p=""
+for a in "\$@"; do
+  case \$a in
+    --absolute-names) p=1 ;;
+    --*) ;;
+    -*x*P* | -*P*x*) x=1 p=1 ;;
+    -*x*) x=1 ;;
+  esac
+done
+if [[ -n \$x && -z \$p ]]; then
+  echo "tar: ./state/letta-home/skills/mcp-servers: Cannot open: Permission denied" >&2
+  exit 2
+fi
+exec $real_tar "\$@"
+SHARE
+  chmod 755 "$T/share-bin/tar"
+  RC=0
+  PATH="$T/share-bin:$PATH" sh -c "$restore_script" sh tar "$A" "$T/dst" "" state "$me" "$me" 700 >"$OUT" 2>&1 || RC=$?
+  ok_rc
+  eq "$(readlink "$T/dst/state/letta-home/skills/mcp-servers")" /root/.letta/mcp-home/skill/mcp-servers
+  eq "$(readlink "$T/dst/state/workspaces-link")" ../letta-home
+}
+
+# -P also keeps a name that leaves the target as written, so restore refuses
+# such an archive before it unpacks anything.
+# restore_refuses_entry NAME -> an archive whose state/letta-home is NAME is refused
+restore_refuses_entry() {
+  a_snapshot
+  A=$B/alfred/20261018T033000Z.tar.gz
+  tar -C "$S" -czPf "$A" --transform "s|^\./state/letta-home|$1|" .
+  tar -tzPf "$A" | grep -qxF "$1/" || fail "the archive does not hold $1: $(tar -tzPf "$A")"
+  rm -rf "$S"
+  a_new_host
+  ctl restore alfred "$A"
+  bad_rc
+  out_has "an entry that is absolute or goes up with '..': $1/"
+  log_lacks "lolloctl.restore"
+}
+test_restore_refuses_an_absolute_archive_entry() { restore_refuses_entry /escape; }
+test_restore_refuses_an_archive_entry_going_up() { restore_refuses_entry ./state/../../escape; }
+
+# One pass over the archive extracts the state and every volume.
+test_restore_puts_an_archive_back() {
+  an_archive vault google-policy google-creds
+  a_new_host
+  ctl restore alfred "$A"
+  ok_rc
+  log_has "$RESTORE_RUN -v $A:/a.tar.gz:ro -v $D/stacks/alfred/state:/r/state -v lollo-alfred_vault-data:/r/vault -v lollo-alfred_google-policy:/r/google-policy -v lollo-alfred_google-creds:/r/google-creds lollo-backup:local sh -c"
+  log_has " sh tar /a.tar.gz /r  state 0:0 $(id -u):$(id -g) 700 vault 10001:10001 10001:10001 700 google-policy 0:0 0:0 755 google-creds 0:0 0:0 755"
+  eq "$(grep -c 'lolloctl.restore=alfred' "$T/calls.log")" 1
+  out_has "the Google tokens are back; nobody needs to reconnect Google"
+  eq "$(find "$D" -maxdepth 1 -name '.restore.*')" ""
+  eq "$(senv alfred LETTA_STATE_DIR)" "$D/stacks/alfred/state"
+  grep -qx 'DOMAIN=from-backup.example.org' "$D/config.env" || fail "config.env not restored from the archive"
+}
+
+test_restore_creates_a_missing_volume_with_composes_labels() {
+  a_snapshot vault
+  a_new_host
+  stub STUB_VOLUMES_MISSING=lollo-alfred_vault-data
+  ctl restore alfred "$S"
+  ok_rc
+  log_has "docker volume create --label com.docker.compose.project=lollo-alfred --label com.docker.compose.volume=vault-data lollo-alfred_vault-data"
+}
+
+test_restore_keeps_the_tools_of_a_backup_without_them() {
+  a_snapshot
+  rm -rf "$S/state/tools"
+  a_new_host
+  ctl restore alfred "$S"
+  ok_rc
+  out_has "the backup has no agent tools (taken with --no-tools); keeping the ones here"
+  log_has " sh rsync /b /r 1 state 0:0 $(id -u):$(id -g) 700"
+}
+
+# Agent tools (state/tools) are native programs and modules of the host they
+# were installed on: from another architecture (a Linux amd64 host's backup on
+# an Apple silicon Mac) they would fail with "exec format error". The ones here stay.
+test_restore_leaves_out_the_tools_of_another_architecture() {
+  a_snapshot
+  printf 'linux/amd64\n' >"$S/platform"
+  a_new_host
+  stub STUB_PLATFORM=linux/arm64
+  ctl restore alfred "$S"
+  ok_rc
+  out_has "alfred: the backup comes from a linux/amd64 host and this one is linux/arm64: its agent tools (state/tools) would not run here, so they are left out; agents install what they need again"
+  log_has " sh rsync /b /r 1 state "
+  # The same architecture: the tools come back.
+  rm -rf "$D/stacks/alfred"
+  : >"$T/calls.log"
+  stub STUB_PLATFORM=linux/amd64
+  ctl restore alfred "$S"
+  ok_rc
+  out_lacks "would not run here"
+  log_has " sh rsync /b /r  state "
+}
+
+# A backup carries its stack's tunnel and Cloudflare ids: under another name,
+# two stacks would share a tunnel, and removing one would delete the other's.
+test_restore_refuses_a_backup_of_another_stack() {
+  a_snapshot
+  ctl restore bob "$S" --yes
+  bad_rc
+  out_has "$S is a backup of alfred, not bob; it holds alfred's tunnel and Cloudflare ids"
+  log_lacks "lolloctl.restore"
+  [[ ! -e $D/stacks/bob ]] || fail "bob's directory was made: $(find "$D/stacks/bob")"
+  tar -C "$S" -czf "$B/other.tar.gz" .
+  ctl restore bob "$B/other.tar.gz" --yes
+  bad_rc
+  out_has "is a backup of alfred, not bob"
+  sed -i '1d' "$S/stack.env"
+  ctl restore alfred "$S" --yes
+  bad_rc
+  out_has "$S/stack.env does not say which stack it belongs to"
+  log_lacks "lolloctl.restore"
+  eq "$(find "$D" -maxdepth 1 -name '.restore.*')" ""
+}
+
+# The backup's ALLOWED_USERS may be older than the Access policy. stacks.conf,
+# which users and apply keep in step with the policy, says who is admitted.
+test_restore_keeps_the_users_stacks_conf_admits() {
+  a_snapshot
+  printf 'alfred  alfred@example.com,carol@example.com\n' >"$D/stacks.conf"
+  ctl restore alfred "$S" --yes
+  ok_rc
+  eq "$(senv alfred ALLOWED_USERS)" "alfred@example.com,carol@example.com"
+  out_has "alfred: admits alfred@example.com,carol@example.com, as stacks.conf and the Access policy do, not the backup's alfred@example.com"
+  grep -qx 'alfred  alfred@example.com,carol@example.com' "$D/stacks.conf" || fail "stacks.conf changed: $(cat "$D/stacks.conf")"
+  log_lacks "curl "
+}
+
+test_restore_leaves_an_existing_config_env_alone() {
+  a_snapshot
+  rm -rf "$D/stacks/alfred"
+  local before
+  before=$(cat "$D/config.env")
+  ctl restore alfred "$S"
+  ok_rc
+  eq "$(cat "$D/config.env")" "$before"
+  out_lacks "config.env: restored"
+}
+
+test_restore_refuses_a_running_stack() {
+  a_snapshot
+  containers alfred app-server
+  ctl restore alfred "$S" --yes
+  bad_rc
+  out_has "alfred is running; stop it first: lolloctl down alfred"
+  log_lacks "lolloctl.restore"
+}
+
+# A paused stack (backup --pause, or an unpause that failed) still has its
+# processes, which would wake up on top of the restored files.
+test_restore_refuses_a_paused_stack() {
+  a_snapshot
+  paused alfred app-server
+  ctl restore alfred "$S" --yes
+  bad_rc
+  out_has "alfred is running; stop it first: lolloctl down alfred"
+  log_lacks "lolloctl.restore"
+}
+
+test_restore_needs_yes_to_replace_a_stack_without_a_terminal() {
+  a_snapshot
+  ctl restore alfred "$S" </dev/null
+  bad_rc
+  out_has "alfred already has data here; run with --yes to replace it with the backup"
+  log_lacks "lolloctl.restore"
+  ctl restore alfred "$S" --yes </dev/null
+  ok_rc
+  log_has "lolloctl.restore=alfred"
+}
+
+test_release_mode_restore_asks_for_the_stack_name() {
+  a_snapshot vault
+  release_on
+  mounts "$D" "$S"
+  LOLLOCTL_STDIN_TTY=1 ctl restore alfred "$S" <<<"nope"
+  bad_rc
+  out_has "This replaces alfred's data here with $S:"
+  out_has "the volume lollo-alfred_vault-data"
+  out_has "aborted"
+  log_lacks "lolloctl.restore"
+  LOLLOCTL_STDIN_TTY=1 ctl restore alfred "$S" <<<"alfred"
+  ok_rc
+  log_has "lolloctl.restore=alfred"
+}
+
+test_release_mode_restore_needs_the_backup_mounted() {
+  a_snapshot
+  release_on
+  ctl restore alfred "$S" --yes
+  bad_rc
+  out_has "is not mounted into lolloctl's container"
+}
+
+test_restore_warns_when_the_profiles_differ() {
+  a_snapshot
+  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,search,lollo-vault/' "$S/stack.env"
+  rm -rf "$D/stacks/alfred"
+  ctl restore alfred "$S"
+  ok_rc
+  out_has "its profiles (cloudflared,search,lollo-vault) differ from config.env's PROFILES (cloudflared,search)"
+}
+
+test_restore_refuses_a_second_run_of_the_same_stack() {
+  a_snapshot
+  rm -rf "$D/stacks/alfred"
+  mkdir -p "$D/stacks/alfred"
+  exec {fd}>"$D/stacks/alfred/.restore.lock"
+  flock -n "$fd"
+  ctl restore alfred "$S"
+  bad_rc
+  out_has "another restore of alfred is running"
+  exec {fd}>&-
+}
+
+test_wrapper_mounts_the_restore_backup_read_only() {
+  wrapper_in "$T/srv"
+  mkdir -p "$T/nas/alfred/20261018T033000Z"
+  touch "$T/nas/alfred/20261018T033000Z.tar.gz"
+  wctl "$T/srv" restore alfred "$T/nas/alfred/20261018T033000Z" --yes
+  ok_rc
+  log_has "-v $T/nas/alfred/20261018T033000Z:$T/nas/alfred/20261018T033000Z:ro"
+  : >"$T/calls.log"
+  wctl "$T/srv" restore alfred "$T/nas/alfred/20261018T033000Z.tar.gz"
+  ok_rc
+  log_has "-v $T/nas/alfred:$T/nas/alfred:ro"
+}
+
+# Backup then restore with the scripts lolloctl runs in the container, here with
+# the host's rsync and tar: what comes back is what was there, and a backup
+# without tools keeps the tools already in place.
+test_restore_script_brings_back_what_backup_copied() {
+  command -v rsync >/dev/null || return 0
+  a_snapshot
+  ctl backup alfred "$B"
+  ok_rc
+  local backup_script restore_script src=$T/src bk=$T/bk-out dst want got me mode
+  backup_script=$(cat "$T/run-script")
+  me="$(id -u):$(id -g)"
+  mkdir -p "$src/state/letta-home/claude" "$src/state/workspaces/agent-1" "$src/state/tools/bin" "$src/vault" "$bk"
+  touch "$src/stack.env" "$src/config.env" "$src/state/letta-home/claude/t.jsonl" "$src/state/workspaces/agent-1/notes.md" \
+    "$src/state/tools/bin/uv" "$src/vault/vault.db"
+  sh -c "$backup_script" sh rsync "$src" "$bk" "$me" "" s1
+  sh -c "$backup_script" sh tar "$src" "" "" "" "" >"$T/a.tar.gz"
+  ctl restore alfred "$S" --yes
+  ok_rc
+  restore_script=$(cat "$T/run-script")
+  want=$(cd "$src/state" && find . | LC_ALL=C sort | paste -sd' ')
+  for mode in rsync tar; do
+    dst=$T/restored-$mode
+    mkdir -p "$dst/state/stale" "$dst/vault/stale"
+    touch "$dst/state/stale/old" "$dst/vault/stale/old"
+    if [[ $mode == rsync ]]; then
+      sh -c "$restore_script" sh rsync "$bk/s1" "$dst" "" state "$me" "$me" 700 vault "$me" "$me" 750
+    else
+      sh -c "$restore_script" sh tar "$T/a.tar.gz" "$dst" "" state "$me" "$me" 700 vault "$me" "$me" 750
+    fi
+    got=$(cd "$dst/state" && find . | LC_ALL=C sort | paste -sd' ')
+    eq "$got" "$want"
+    eq "$(stat -c %a "$dst/state")" 700
+    # The vault, alone in its volume.
+    eq "$(cd "$dst/vault" && find . | LC_ALL=C sort | paste -sd' ')" ". ./vault.db"
+    eq "$(stat -c %a "$dst/vault")" 750
+  done
+  # A backup without tools: the tools here stay, everything else matches.
+  rm -rf "$bk/s1/state/tools"
+  dst=$T/restored-keep
+  mkdir -p "$dst/state/tools/bin" "$dst/state/stale"
+  touch "$dst/state/tools/bin/node" "$dst/state/stale/old"
+  sh -c "$restore_script" sh rsync "$bk/s1" "$dst" 1 state "$me" "$me" 700
+  [[ -f $dst/state/tools/bin/node && ! -e $dst/state/stale ]] || fail "rsync: tools not kept, or stale files left: $(cd "$dst" && find .)"
+  rm -rf "$dst" && mkdir -p "$dst/state/tools/bin" "$dst/state/stale" && touch "$dst/state/tools/bin/node" "$dst/state/stale/old"
+  tar -C "$src" --exclude=./state/tools -czf "$T/no-tools.tar.gz" .
+  sh -c "$restore_script" sh tar "$T/no-tools.tar.gz" "$dst" 1 state "$me" "$me" 700
+  [[ -f $dst/state/tools/bin/node && ! -e $dst/state/stale && -f $dst/state/workspaces/agent-1/notes.md ]] ||
+    fail "tar: tools not kept, or stale files left: $(cd "$dst" && find .)"
+  # An archive with tools, from another architecture: its tools stay out.
+  rm -rf "$dst" && mkdir -p "$dst/state/tools/bin" && touch "$dst/state/tools/bin/node"
+  sh -c "$restore_script" sh tar "$T/a.tar.gz" "$dst" 1 state "$me" "$me" 700
+  [[ -f $dst/state/tools/bin/node && ! -e $dst/state/tools/bin/uv && -f $dst/state/workspaces/agent-1/notes.md ]] ||
+    fail "tar: the archive's tools came in: $(cd "$dst" && find .)"
 }
 
 # ── document tools ───────────────────────────────────────────────────────────
@@ -4633,14 +5099,15 @@ test_check_refuses_a_shell_built_on_another_app_server_image() {
   out_has "upstream's image naming changed"
 }
 
-test_check_refuses_doc_tools_on_an_arm64_host() {
+# OfficeAgent is pinned for both platforms (doc-tools/Dockerfile), so an arm64
+# host, such as an Apple silicon Mac, builds the document tools for itself.
+test_check_accepts_doc_tools_on_an_arm64_host() {
   added
+  with_docs
   stub STUB_PLATFORM=linux/arm64
-  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-doc-tools/' "$D/config.env"
-  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-doc-tools/' "$D/stacks/alfred/stack.env"
   ctl check alfred
-  bad_rc
-  out_has "lollo-doc-tools needs a linux/amd64 host"
+  ok_rc
+  out_lacks "needs a linux/amd64"
 }
 
 # ── release mode ────────────────────────────────────────────────────────────
@@ -4659,6 +5126,10 @@ release_on() {
   } >"$H/RELEASE"
   CTL_DATA=$D
   mounts "$D"
+  # The wrapper lives in the data directory's bin/, which is how lolloctl knows
+  # the real one is mounted.
+  mkdir -p "$D/bin"
+  : >"$D/bin/lolloctl"
 }
 
 # mounts PATH... -> lolloctl's container has PATHs bound at the same path
@@ -4734,6 +5205,32 @@ test_release_mode_needs_the_same_path_inside_and_outside() {
 test_release_mode_needs_the_data_directory_mounted() {
   release_on
   mounts /somewhere/else
+  ctl list
+  bad_rc
+  out_has "is not mounted"
+}
+
+# Colima's virtiofs share reports the owner of whoever looked first, root when
+# Docker started the container: the data directory is known by its wrapper.
+test_release_mode_trusts_the_mount_not_the_owner_the_share_reports() {
+  release_on
+  cat >"$T/bin/stat" <<'STAT'
+#!/usr/bin/env bash
+if [[ $1 == -c && $2 == %u ]]; then
+  echo 0
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+STAT
+  chmod 755 "$T/bin/stat"
+  ctl list
+  ok_rc
+}
+
+# An empty directory Docker made in place of a path it cannot see has no wrapper.
+test_release_mode_needs_the_wrapper_in_the_data_directory() {
+  release_on
+  rm "$D/bin/lolloctl"
   ctl list
   bad_rc
   out_has "is not mounted"
@@ -4825,7 +5322,7 @@ test_version_names_the_release() {
   ok_rc
   out_has "lollo-rozzo 1.2.3"
   CTL_DATA=""
-  rm "$H/RELEASE"
+  rm "$H/RELEASE" "$D/bin/lolloctl"
   ctl version
   ok_rc
   out_has "from a clone: $H"
@@ -5093,7 +5590,8 @@ test_wrapper_runs_the_pinned_image_with_the_data_directory_at_the_same_path() {
   [[ $run == *" -e HOME=/tmp "* ]] || fail "no writable HOME: $run"
   [[ $run == *" -v $T/srv:$T/srv "* ]] || fail "data not at the same path: $run"
   [[ $run == *" -e LOLLO_DATA=$T/srv "* ]] || fail "LOLLO_DATA not passed: $run"
-  [[ $run == *" -v $T/docker.sock:$T/docker.sock "* ]] || fail "socket not at the same path: $run"
+  [[ $run == *" -v $T/docker.sock:$T/docker.sock -e DOCKER_HOST=unix://$T/docker.sock "* ]] || fail "socket not at the same path: $run"
+  [[ $run == *" --group-add $(stat -c %g "$T/docker.sock") "* ]] || fail "not in the socket's group: $run"
   [[ $run == *" $WIMAGE list" ]] || fail "not the pinned image: $run"
 }
 
@@ -5122,7 +5620,8 @@ test_wrapper_refuses_to_run_outside_a_data_directory() {
   RC=0
   DOCKER_HOST=unix://$T/docker.sock PATH="$T/bin:$PATH" "$T/elsewhere/lolloctl" list >"$OUT" 2>&1 || RC=$?
   bad_rc
-  out_has "sudo install -d"
+  out_has "install -d -m 700 ~/lollo-rozzo ~/lollo-rozzo/bin"
+  out_lacks "sudo"
   log_lacks "docker run"
 }
 
@@ -5322,6 +5821,274 @@ test_wrapper_mounts_toolbox_config_outside_the_home() {
   log_lacks "-v $T/cfg:"
 }
 
+# ── the wrapper on macOS ────────────────────────────────────────────────────
+# on_mac NAME -> the wrapper sees macOS, with Docker's VM named NAME (colima,
+# colima-<profile>, docker-desktop, orbstack) and its socket's group 990
+on_mac() {
+  stub STUB_UNAME_S=Darwin
+  stub STUB_SOCKET_GID=990
+  stub "STUB_DOCKER_NAME=$1"
+}
+# agent_sock -> an ssh agent socket on the host, in $W_SOCK
+agent_sock() {
+  W_SOCK=$T/agent.sock
+  python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$W_SOCK"
+}
+# wtb DIR ARGS... -> the wrapper's toolbox, as the operator $T/home-op with the
+# ssh agent at $W_SOCK; like ctl
+wtb() {
+  local dir=$1
+  shift
+  mkdir -p "$T/home-op"
+  RC=0
+  HOME=$T/home-op XDG_CONFIG_HOME="" CLAUDE_CONFIG_DIR="" CLAUDE_CODE_OAUTH_TOKEN="" SSH_AUTH_SOCK=${W_SOCK:-} \
+    DOCKER_HOST=unix://$T/docker.sock PATH="$T/bin:$PATH" "$dir/bin/lolloctl" toolbox "$@" >"$OUT" 2>&1 </dev/null || RC=$?
+}
+# tunnel_closed -> the ssh tunnel the wrapper opened is gone (it may take a moment to be reaped)
+tunnel_closed() {
+  local pid i
+  pid=$(cat "$T/tunnel.pid")
+  for ((i = 0; i < 40; i++)); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.05
+  done
+  fail "the ssh tunnel ($pid) is still open"
+}
+
+# Docker's VM bind-mounts its own /var/run/docker.sock, whatever the client's
+# context points at, and that socket's group is the VM's.
+test_wrapper_on_macos_mounts_the_vms_socket_with_its_group() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  wctl "$T/srv" list
+  ok_rc
+  log_has "docker run --rm --entrypoint stat -v /var/run/docker.sock:/var/run/docker.sock $WIMAGE -c %g %a /var/run/docker.sock"
+  local run
+  run=$(grep '^docker run --rm -i ' "$T/calls.log")
+  [[ $run == *" --group-add 990 "* ]] || fail "not in the VM socket's group: $run"
+  [[ $run == *" -v /var/run/docker.sock:/var/run/docker.sock -e DOCKER_HOST=unix:///var/run/docker.sock "* ]] || fail "not the VM's socket: $run"
+  [[ $run != *"$T/docker.sock"* ]] || fail "the client's socket was mounted: $run"
+}
+
+# Reading the group costs a container: it is kept for as long as the daemon is
+# the same one (a new VM is a new daemon, whose socket may have another group).
+test_wrapper_on_macos_reads_the_sockets_group_once_per_daemon() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  wctl "$T/srv" list
+  ok_rc
+  eq "$(cat "$T/srv/.docker-gid")" "daemon-1 990"
+  : >"$T/calls.log"
+  wctl "$T/srv" list
+  ok_rc
+  log_lacks "--entrypoint stat"
+  log_has "--group-add 990 "
+  stub STUB_DOCKER_ID=daemon-2
+  stub STUB_SOCKET_GID=991
+  wctl "$T/srv" list
+  ok_rc
+  log_has "--entrypoint stat"
+  log_has "--group-add 991 "
+  eq "$(cat "$T/srv/.docker-gid")" "daemon-2 991"
+}
+
+test_wrapper_version_needs_no_docker() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub STUB_DOCKER_INFO_RC=1
+  stub STUB_SOCKET_GID_RC=1
+  wctl "$T/srv" wrapper-version
+  ok_rc
+  out_has "lollo-rozzo "
+  log_lacks "docker "
+}
+
+# lolloctl runs as you: the socket's group gets you in only when it may write.
+test_wrapper_on_macos_refuses_a_socket_its_group_cannot_write() {
+  wrapper_in "$T/srv"
+  on_mac docker-desktop
+  stub STUB_SOCKET_GID=0
+  stub STUB_SOCKET_MODE=755
+  wctl "$T/srv" list
+  bad_rc
+  out_has "Docker's socket in its VM (/var/run/docker.sock) is mode 755, group 0: that group cannot write it, so lolloctl, which runs as you, cannot use Docker"
+  log_lacks "docker run --rm -i "
+  [[ ! -e $T/srv/.docker-gid ]] || fail "a group was kept: $(cat "$T/srv/.docker-gid")"
+}
+
+test_wrapper_on_macos_needs_docker_running() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub STUB_SOCKET_GID_RC=1
+  wctl "$T/srv" list
+  bad_rc
+  out_has "is Docker (Colima, Docker Desktop, OrbStack) running?"
+  log_lacks "docker run --rm -i "
+  [[ ! -e $T/srv/.docker-gid ]] || fail "a group was kept: $(cat "$T/srv/.docker-gid")"
+  stub STUB_DOCKER_INFO_RC=1
+  wctl "$T/srv" list
+  bad_rc
+  out_has "is Docker (Colima, Docker Desktop, OrbStack) running?"
+  log_lacks "docker run --rm -i "
+}
+
+# macOS has BSD stat: no -c, -f with its own formats.
+test_wrapper_works_with_bsd_stat() {
+  wrapper_in "$T/srv"
+  cat >"$T/bin/stat" <<'STAT'
+#!/usr/bin/env bash
+[[ $1 == -f ]] || { echo "stat: illegal option -- ${1#-}" >&2; exit 1; }
+fmt=$2
+shift 2
+[[ $1 == -- ]] && shift
+case $fmt in
+  %g) exec /usr/bin/stat -c %g -- "$1" ;;
+  %Lp) exec /usr/bin/stat -c %a -- "$1" ;;
+esac
+exit 1
+STAT
+  chmod 755 "$T/bin/stat"
+  wctl "$T/srv" list
+  ok_rc
+  log_has "--group-add $(/usr/bin/stat -c %g "$T/docker.sock") "
+  mkdir -p "$T/home-op/.config/lolloctl"
+  printf 'env A=b\n' >"$T/home-op/.config/lolloctl/toolbox"
+  chmod 664 "$T/home-op/.config/lolloctl/toolbox"
+  wtb "$T/srv" alfred agent
+  bad_rc
+  out_has "writable by others"
+}
+
+# Colima has no fixed agent socket in its VM: an ssh tunnel serves one there for
+# the run, mounted at the same path, and closes when the toolbox ends.
+test_wrapper_on_colima_tunnels_the_ssh_agent_into_the_vm() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  agent_sock
+  wtb "$T/srv" alfred agent
+  ok_rc
+  log_has "colima ssh-config --profile default"
+  local tunnel vm run
+  tunnel=$(grep '^ssh .* -N ' "$T/calls.log")
+  [[ $tunnel == *" -o ExitOnForwardFailure=yes -o ControlMaster=no -o ControlPath=none -R /tmp/lolloctl-agent-"*".sock:$W_SOCK colima" ]] ||
+    fail "not a tunnel into Colima's VM: $tunnel"
+  vm=${tunnel#* -R }
+  vm=${vm%%:*}
+  grep -q "^ssh -F .* colima test -S $vm\$" "$T/calls.log" || fail "the socket in the VM was not waited for"
+  # sshd in the VM does not replace a socket left at that path, and a stale one
+  # would pass the wait: it is removed before the tunnel opens, and after it closes.
+  [[ $vm =~ ^/tmp/lolloctl-agent-[0-9]+-[0-9]+\.sock$ ]] || fail "not a name of its own: $vm"
+  eq "$(grep -E "^ssh -F .* colima rm -f $vm\$|^ssh .* -N " "$T/calls.log" | awk '{ print ($0 ~ / -N /) ? "tunnel" : "rm" }' | paste -sd' ')" "rm tunnel rm"
+  run=$(grep '^docker run --rm -i ' "$T/calls.log")
+  [[ $run == *" -v $vm:$vm -e SSH_AUTH_SOCK=$vm "* ]] || fail "the VM's agent socket not passed: $run"
+  [[ $run != *"$W_SOCK"* ]] || fail "the host's agent socket was mounted: $run"
+  tunnel_closed
+}
+
+test_wrapper_on_colima_uses_the_vms_profile() {
+  wrapper_in "$T/srv"
+  on_mac colima-work
+  agent_sock
+  wtb "$T/srv" alfred agent
+  ok_rc
+  log_has "colima ssh-config --profile work"
+  grep -q '^ssh .* -N .* colima-work$' "$T/calls.log" || fail "not the work profile's VM: $(grep '^ssh ' "$T/calls.log")"
+  tunnel_closed
+}
+
+test_wrapper_on_colima_closes_the_tunnel_when_the_toolbox_fails() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  agent_sock
+  stub STUB_RUN_RC=7
+  wtb "$T/srv" alfred agent
+  eq "$RC" 7
+  tunnel_closed
+}
+
+test_wrapper_on_colima_goes_on_without_an_agent_when_the_tunnel_fails() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  agent_sock
+  stub STUB_SSH_TUNNEL_RC=255
+  stub STUB_SSH_TEST_RC=1
+  wtb "$T/srv" alfred agent
+  ok_rc
+  out_has "could not open an ssh tunnel into Colima's VM (default); no ssh agent"
+  log_lacks "SSH_AUTH_SOCK"
+  # Closed once: before the tunnel, and once after it failed, not again at exit.
+  eq "$(grep -c '^ssh -F .* colima rm -f ' "$T/calls.log")" 2
+}
+
+# Colima shares only the home (and colima.yaml's mounts) with its VM. For any
+# other path Docker would bind an empty directory it makes in the VM: a backup
+# would land there, and a restore would read nothing.
+test_wrapper_on_colima_refuses_a_path_its_vm_does_not_share() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub "STUB_COLIMA_UNSHARED=$T/usb"
+  mkdir -p "$T/usb/backup/alfred/20261018T033000Z" "$T/nas"
+  wctl "$T/srv" backup all "$T/usb/backup"
+  bad_rc
+  out_has "$T/usb/backup is not shared with Colima's VM (default)"
+  log_lacks "docker run --rm -i "
+  wctl "$T/srv" restore alfred "$T/usb/backup/alfred/20261018T033000Z"
+  bad_rc
+  out_has "is not shared with Colima's VM"
+  log_has "colima ssh --profile default -- test -d $T/usb/backup"
+  : >"$T/calls.log"
+  wctl "$T/srv" backup all "$T/nas"
+  ok_rc
+  log_has "-v $T/nas:$T/nas "
+}
+
+test_wrapper_on_docker_desktop_and_orbstack_uses_their_agent_socket() {
+  local name
+  for name in docker-desktop orbstack; do
+    : >"$T/calls.log"
+    wrapper_in "$T/srv-$name"
+    on_mac "$name"
+    agent_sock 2>/dev/null || true
+    wtb "$T/srv-$name" alfred agent
+    ok_rc
+    log_has "-v /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock -e SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock"
+    log_lacks "colima "
+    log_lacks "ssh -F"
+    rm -f "$T/docker.sock"
+  done
+}
+
+test_wrapper_on_another_mac_runtime_goes_on_without_an_agent() {
+  wrapper_in "$T/srv"
+  on_mac rancher-desktop
+  agent_sock
+  wtb "$T/srv" alfred agent
+  ok_rc
+  out_has "no ssh agent, which needs Colima, Docker Desktop or OrbStack on macOS (Docker's VM is 'rancher-desktop')"
+  log_lacks "SSH_AUTH_SOCK"
+}
+
+# On macOS the Claude token comes from the login keychain.
+test_wrapper_takes_the_claude_token_from_the_macos_keychain() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub STUB_SECRET_TOOL=libsecret-tok-1
+  stub STUB_SECURITY=keychain-tok-1
+  wtb "$T/srv" alfred agent
+  ok_rc
+  log_lacks "keychain-tok-1"
+  log_has "-e LOLLOCTL_CLAUDE_TOKEN"
+  grep -q 'libsecret-tok-1' "$T/run-env.log" && fail "secret-tool was asked on macOS"
+  grep -qx 'LOLLOCTL_CLAUDE_TOKEN=keychain-tok-1' "$T/run-env.log" || fail "the keychain token did not reach the container"
+}
+
+# The new wrapper runs with this one's bash: on macOS, /bin/bash is 3.2.
+test_wrapper_self_upgrade_runs_the_new_wrapper_with_the_same_bash() {
+  wrapper_in "$T/srv"
+  # shellcheck disable=SC2016 # the literal line in the wrapper
+  grep -q '"$BASH" "$bin/.lolloctl.new" _pull' "$T/srv/bin/lolloctl" || fail "self-upgrade does not reuse its bash"
+}
+
 # ── scripts/renovate-post-upgrade.sh ────────────────────────────────────────
 # post_upgrade_fixture -> the script and the files it rewrites, in $H
 post_upgrade_fixture() {
@@ -5428,13 +6195,17 @@ test_post_upgrade_refuses_a_digest_that_is_not_sha256() {
   kept_as_they_were .github/workflows/ci.yml
 }
 
-# officeagent_release SUMS_HASH -> release 1.3.0's tarball, and its SHA256SUMS
-# listing SUMS_HASH for it (default: the tarball's own hash)
+# officeagent_release [X64_SUM [ARM64_SUM]] -> release 1.3.0's two Linux
+# tarballs, and its SHA256SUMS listing those sums for them (default: each
+# tarball's own); their hashes in OA_X64 and OA_ARM64
 officeagent_release() {
   mkdir -p "$T/github"
-  printf 'officeagent build\n' >"$T/github/officeagent-mcp-linux-x64.tar.gz"
-  OA_SUM=$(sha256sum "$T/github/officeagent-mcp-linux-x64.tar.gz" | cut -d' ' -f1)
-  printf '%s  officeagent-mcp-linux-arm64.tar.gz\n%s  officeagent-mcp-linux-x64.tar.gz\n' "$HEX_B" "${1:-$OA_SUM}" >"$T/github/SHA256SUMS"
+  printf 'officeagent x64 build\n' >"$T/github/officeagent-mcp-linux-x64.tar.gz"
+  printf 'officeagent arm64 build\n' >"$T/github/officeagent-mcp-linux-arm64.tar.gz"
+  OA_X64=$(sha256sum "$T/github/officeagent-mcp-linux-x64.tar.gz" | cut -d' ' -f1)
+  OA_ARM64=$(sha256sum "$T/github/officeagent-mcp-linux-arm64.tar.gz" | cut -d' ' -f1)
+  printf '%s  officeagent-mcp-linux-arm64.tar.gz\n%s  officeagent-mcp-linux-x64.tar.gz\n' \
+    "${2:-$OA_ARM64}" "${1:-$OA_X64}" >"$T/github/SHA256SUMS"
   bump doc-tools/Dockerfile OFFICEAGENT_VERSION 1.3.0
 }
 
@@ -5443,9 +6214,13 @@ test_post_upgrade_officeagent_checks_the_sums_and_the_attestation() {
   officeagent_release
   post_upgrade officeagent
   ok_rc
-  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256)" "$OA_SUM"
-  log_has "curl-get https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v1.3.0/officeagent-mcp-linux-x64.tar.gz"
-  log_has "gh attestation verify officeagent-mcp-linux-x64.tar.gz --repo ilia-sokolov/OfficeAgent.NET"
+  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256_AMD64)" "$OA_X64"
+  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256_ARM64)" "$OA_ARM64"
+  local a
+  for a in x64 arm64; do
+    log_has "curl-get https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v1.3.0/officeagent-mcp-linux-$a.tar.gz"
+    log_has "gh attestation verify officeagent-mcp-linux-$a.tar.gz --repo ilia-sokolov/OfficeAgent.NET"
+  done
 }
 
 test_post_upgrade_officeagent_refuses_a_tarball_its_sums_do_not_list() {
@@ -5454,8 +6229,19 @@ test_post_upgrade_officeagent_refuses_a_tarball_its_sums_do_not_list() {
   keep doc-tools/Dockerfile
   post_upgrade officeagent
   bad_rc
-  out_has "does not match its SHA256SUMS"
+  out_has "officeagent-mcp-linux-x64.tar.gz 1.3.0 does not match its SHA256SUMS"
   log_lacks "gh attestation"
+  kept_as_they_were doc-tools/Dockerfile
+}
+
+# Both builds are checked before either pin moves.
+test_post_upgrade_officeagent_refuses_when_only_the_arm64_tarball_is_wrong() {
+  post_upgrade_fixture
+  officeagent_release "" "$HEX_A"
+  keep doc-tools/Dockerfile
+  post_upgrade officeagent
+  bad_rc
+  out_has "officeagent-mcp-linux-arm64.tar.gz 1.3.0 does not match its SHA256SUMS"
   kept_as_they_were doc-tools/Dockerfile
 }
 
