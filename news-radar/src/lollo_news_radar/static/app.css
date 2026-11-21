@@ -50,7 +50,8 @@
   margin: 4px 0 0;
   font-size: 14px;
 }
-.item-form select {
+.item-form select,
+.item-form input {
   margin-left: 6px;
   font: inherit;
 }

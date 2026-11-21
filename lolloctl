@@ -2310,7 +2310,8 @@ cmd_skills() {
   local n targets k
   targets=$(expand_targets "$1")
   for n in $targets; do
-    k=$(sync_skills "$n")
+    # Explicit: apply and _after-upgrade call this behind `||`, where set -e is off.
+    k=$(sync_skills "$n") || return 1
     info "$n: $k skill(s) installed"
   done
 }
@@ -2358,7 +2359,8 @@ cmd__fetch_wrapper() {
 
 # cmd__after_upgrade -> run by the new wrapper once it is in place: moves Lettuce
 # forward to the tag this release was tested with (never back: an older
-# letta-code may not read what a newer one wrote), else updates every stack
+# letta-code may not read what a newer one wrote), else updates every stack;
+# then installs the release's agent skills in every stack, once they are up
 cmd__after_upgrade() {
   local tested
   [[ -f $(config_file) ]] || return 0
@@ -2370,6 +2372,8 @@ cmd__after_upgrade() {
     warn_untested_ref
     cmd_up all
   fi
+  (cmd_skills all) ||
+    die "lollo-rozzo $(release_get VERSION) is in place, but its agent skills are not installed in every stack; fix the cause, then run: lolloctl skills all"
 }
 
 cmd_version() {

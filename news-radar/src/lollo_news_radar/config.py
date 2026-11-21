@@ -33,6 +33,8 @@ MAX_TASK_DESCRIPTION = 200
 # -- fetching -------------------------------------------------------------------
 REQUEST_TIMEOUT = 20.0
 MAX_RESPONSE = 5 * 1024 * 1024
+# What an error response keeps of its body, for the sample a repair looks at.
+ERROR_BODY = 16 * 1024
 MAX_REDIRECTS = 5
 MAX_PAGES = 10
 MAX_FOLLOW = 20
@@ -80,6 +82,8 @@ FETCH_AHEAD_SECONDS = 20 * 60
 PAUSE_AFTER_FAILURES = 3
 # An unhealthy source rides along in reports, and is reason enough for one at most this often.
 ALERT_EVERY_SECONDS = 86400
+# Unhealthy this long, a source is one the agent proposes to stop using, once.
+STUCK_SECONDS = 3 * 86400
 
 # -- health ---------------------------------------------------------------------
 UNHEALTHY_FAILURES = 3

@@ -202,6 +202,28 @@ async def test_the_page_shows_where_a_monitor_looks(client, service, web):
     assert "only at: northtown, easttown" in client.get(f"{B}/").text
 
 
+def test_the_page_lists_adds_and_deletes_places(client, service, store):
+    store.set_agents([Agent(AGENT, "lucius")])
+    service.place_put(AGENT, [{"phrase": "Centre Culturel de Belvué", "locality": "Southtown"}])
+    page = client.get(f"{B}/").text
+    assert "Centre Culturel de Belvué" in page and "Southtown" in page and "lucius" in page
+    token = csrf_of(page)
+    form = {"csrf": token, "phrase": "Coliseum Northtown", "locality": "Northtown"}
+    r = client.post(f"{B}/p", data=form, headers={"origin": "https://evil.example.org"})
+    assert r.status_code == 403 and len(store.places()) == 1
+    r = client.post(f"{B}/p", data=form, headers={"origin": ORIGIN})
+    assert r.status_code == 303
+    assert {p.phrase: (p.locality, p.added_by) for p in store.places()}["Coliseum Northtown"] == ("Northtown", "page")
+    r = client.post(f"{B}/p", data={**form, "phrase": "CCB"}, headers={"origin": ORIGIN})
+    assert r.status_code == 400 and "4 to 80 letters or digits" in r.text
+    r = client.post(f"{B}/p/centrecultureldebelvue/delete", data={"csrf": "wrong"}, headers={"origin": ORIGIN})
+    assert r.status_code == 403 and len(store.places()) == 2
+    r = client.post(f"{B}/p/centrecultureldebelvue/delete", data={"csrf": token}, headers={"origin": ORIGIN})
+    assert r.status_code == 303 and [p.phrase for p in store.places()] == ["Coliseum Northtown"]
+    r = client.post(f"{B}/p/nowhere/delete", data={"csrf": token}, headers={"origin": ORIGIN})
+    assert r.status_code == 400
+
+
 @pytest.mark.anyio
 async def test_the_page_marks_unused_sources(client, service, web):
     web.add("https://agenda.example.org/api/events", EVENTS_JSON, "application/json")

@@ -142,6 +142,8 @@ async def run_source(
             if i == 0:
                 result.error = str(e)
                 result.retry_after = e.retry_after
+                if e.page is not None:
+                    result.sample = sample_of(e.page)
                 return result
             break  # a later page failing ends the paging, not the run
         result.pages += 1

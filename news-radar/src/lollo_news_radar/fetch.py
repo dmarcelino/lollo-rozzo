@@ -35,6 +35,7 @@ import httpcore
 import httpx
 
 from .config import (
+    ERROR_BODY,
     HOST_BACKOFF,
     HOST_SPACING,
     MAX_CRAWL_DELAY,
@@ -67,11 +68,14 @@ WAITING_ROOM_HOSTS = ("queue-it.net",)
 
 class FetchError(Exception):
     """A fetch that yields nothing; the message says why, in a few words.
-    retry_after: the seconds the site asked to be left alone, when it asked."""
+    retry_after: the seconds the site asked to be left alone, when it asked.
+    page: what the site answered with an error status, its body cut to
+    ERROR_BODY: website text for an agent repairing the source, never for logs."""
 
-    def __init__(self, message: str, retry_after: int = 0):
+    def __init__(self, message: str, retry_after: int = 0, page: Page | None = None):
         super().__init__(message)
         self.retry_after = retry_after
+        self.page = page
 
 
 class HostBusy(FetchError):
@@ -289,6 +293,8 @@ class Fetcher:
         self._locks: dict[str, anyio.Lock] = {}
         # Per host: when read, the parser (None when nothing may be fetched), the crawl delay, why not.
         self._robots: dict[str, tuple[float, robotparser.RobotFileParser | None, float, str]] = {}
+        # Per host: what robots.txt answered when it could not be read, for the repair's sample.
+        self._robots_answers: dict[str, Page] = {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -329,12 +335,13 @@ class Fetcher:
             pause = 0
             if status in (429, 503):
                 pause = self._back_off(url, response_headers.get("retry-after", ""))
+            header = response_headers.get("content-type", "")
+            content_type = header.split(";")[0].strip().lower()
             if status in (401, 402, 403, 407, 429, 503) and looks_challenged(body):
                 raise FetchError(f"HTTP {status}: a challenge or waiting room", retry_after=pause)
             if not 200 <= status < 300:
-                raise FetchError(f"HTTP {status}", retry_after=pause)
-            header = response_headers.get("content-type", "")
-            content_type = header.split(";")[0].strip().lower()
+                answer = Page(url, status, content_type, body[:ERROR_BODY], charset=charset_of(header))
+                raise FetchError(f"HTTP {status}", retry_after=pause, page=answer)
             if content_type in ("text/html", "application/xhtml+xml") and looks_challenged(body):
                 raise FetchError("a challenge or waiting room instead of the page")
             return Page(
@@ -420,7 +427,7 @@ class Fetcher:
             self._robots[host] = entry
         parser = entry[1]
         if parser is None:
-            raise FetchError(entry[3])
+            raise FetchError(entry[3], page=self._robots_answers.get(host))
         if not parser.can_fetch(USER_AGENT_NAME, url):
             raise FetchError("robots.txt disallows it")
 
@@ -429,6 +436,7 @@ class Fetcher:
     ) -> tuple[float, robotparser.RobotFileParser | None, float, str]:
         parser = robotparser.RobotFileParser()
         url = host + "/robots.txt"
+        self._robots_answers.pop(host, None)
         unreadable = "robots.txt could not be read, so nothing is fetched (RFC 9309)"
         for _ in range(MAX_REDIRECTS + 1):
             try:
@@ -454,6 +462,9 @@ class Fetcher:
             parser.allow_all = True
             parser.modified()
         else:
+            header = headers.get("content-type", "")
+            content_type = header.split(";")[0].strip().lower()
+            self._robots_answers[host] = Page(url, status, content_type, body[:ERROR_BODY], charset=charset_of(header))
             return self._clock(), None, 0.0, f"{unreadable}: HTTP {status}"
         delay = parser.crawl_delay(USER_AGENT_NAME)
         return self._clock(), parser, min(float(delay or 0), MAX_CRAWL_DELAY), ""
