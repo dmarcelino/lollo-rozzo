@@ -57,8 +57,8 @@ class RunResult:
     follow_errors: int = 0
     # The first page's most likely listing blocks (blocks.repeated_blocks), when asked for.
     largest_block: dict[str, Any] = field(default_factory=dict)
-    # An rss source's feed read although robots.txt refuses automated readers there.
-    robots_exempt: bool = False
+    # An rss source's feed read past robots.txt: Page.robots_exempt's "disallowed" or "unreadable".
+    robots_exempt: str = ""
 
     @property
     def ok(self) -> bool:

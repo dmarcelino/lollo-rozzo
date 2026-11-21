@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import httpcore
+import httpx
 import pytest
 
 from lollo_news_radar.fetch import (
     BlockedAddress,
+    Fetcher,
     FetchError,
+    HostBusy,
     PublicOnlyBackend,
     check_url,
     is_public,
@@ -356,7 +359,46 @@ async def test_a_feed_robots_refuses_still_keeps_its_crawl_delay(fetcher, web, s
         (b'<?xml-stylesheet href="a.xsl?x=>"?><rss>', True),
         (b"<!-- never closed <rss>", False),
         (b"<!DOCTYPE html><html>", False),
+        (b'\n{"version": "https://jsonfeed.org/version/1.1", "title": "t", "items": []}', True),
+        (b"<!--" + b"licence " * 1500 + b"--><rss>", True),
     ],
 )
 def test_looks_like_feed(body, feed):
     assert looks_like_feed(body) is feed
+
+
+async def test_a_refused_url_with_an_error_status_is_not_asked_again_but_a_passing_one_is(fetcher, web):
+    web.add("https://shut.example.org/robots.txt", "User-agent: *\nDisallow: /\n", "text/plain")
+    web.add("https://shut.example.org/gone", "<html>gone</html>", status=404)
+    web.add("https://shut.example.org/busy", "<html>busy</html>", status=500)
+    for _ in range(2):
+        for path in ("/gone", "/busy"):
+            with pytest.raises(FetchError, match="robots.txt disallows"):
+                await fetcher.get("https://shut.example.org" + path, feed=True)
+    assert web.fetched() == [
+        "https://shut.example.org/gone",
+        "https://shut.example.org/busy",
+        "https://shut.example.org/busy",
+    ]
+
+
+async def test_a_pause_robots_txt_asks_for_holds_the_feed(fetcher, web):
+    web.add("https://over.example.org/robots.txt", "busy", "text/plain", status=503, **{"retry-after": "600"})
+    web.add("https://over.example.org/feed", FEED, "application/rss+xml")
+    with pytest.raises(HostBusy):
+        await fetcher.get("https://over.example.org/feed", feed=True)
+    assert web.fetched() == []
+
+
+async def test_a_host_out_of_reach_is_not_asked_for_the_feed(clock, sleeps):
+    asked: list[str] = []
+
+    def down(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        raise httpx.ConnectError("refused", request=request)
+
+    fetcher = Fetcher(transport=httpx.MockTransport(down), clock=clock, sleep=sleeps)
+    with pytest.raises(FetchError, match="cannot connect"):
+        await fetcher.get("https://down.example.org/feed", feed=True)
+    assert asked == ["https://down.example.org/robots.txt"]
+    await fetcher.aclose()

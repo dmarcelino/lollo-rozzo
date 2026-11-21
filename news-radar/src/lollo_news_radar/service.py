@@ -260,9 +260,13 @@ class Service:
         if warnings:
             out["warnings"] = warnings
         if result.robots_exempt:
+            why = (
+                "robots.txt could not be read"
+                if result.robots_exempt == "unreadable"
+                else "robots.txt refuses automated readers here"
+            )
             out["robots"] = (
-                "robots.txt refuses automated readers here; this feed is read anyway, as feed readers do. "
-                "Pages it links to still follow robots.txt"
+                f"{why}; this feed is read anyway, as feed readers do. Pages it links to still follow robots.txt"
             )
         if problems:
             out["problems"] = problems

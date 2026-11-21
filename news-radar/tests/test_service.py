@@ -1676,6 +1676,11 @@ async def test_an_rss_source_is_read_where_robots_refuses_it_but_a_page_is_not(s
     # An rss source pointed at a page robots.txt refuses reads nothing from it.
     wrong = await service.source_test(rss_spec("w", "https://shut.example.org/list"))
     assert not wrong["passed"] and "robots.txt disallows" in wrong["error"] and not wrong.get("sample")
+    # A robots.txt that answers without rules: the note says so, not that the site refuses.
+    web.add("https://flaky.example.org/robots.txt", "oops", "text/plain", status=500)
+    web.add("https://flaky.example.org/rss", feed, "application/rss+xml")
+    flaky = await service.source_test(rss_spec("f", "https://flaky.example.org/rss"))
+    assert flaky["passed"] and flaky["robots"].startswith("robots.txt could not be read")
 
 
 THING_URL = "https://tracker.example.org/api/items/42"

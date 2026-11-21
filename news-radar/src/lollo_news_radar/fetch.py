@@ -83,6 +83,16 @@ class FetchError(Exception):
         self.page = page
 
 
+class RobotsRefusal(FetchError):
+    """robots.txt refuses the URL, or answered without rules (unreadable: RFC
+    9309 then refuses everything). A feed's own URL is read past it (Fetcher.get's
+    feed=True); a host that could not be reached at all is a plain FetchError."""
+
+    def __init__(self, message: str, unreadable: bool = False, page: Page | None = None):
+        super().__init__(message, page=page)
+        self.unreadable = unreadable
+
+
 class HostBusy(FetchError):
     """The host asked for a longer pause than this call may wait: try again later.
     Never cached as the host's robots.txt answer."""
@@ -214,8 +224,9 @@ class Page:
     last_modified: str = ""
     # The encoding the Content-Type header names, when it names one Python knows.
     charset: str = ""
-    # A feed read although robots.txt refuses it (Fetcher.get's feed=True).
-    robots_exempt: bool = False
+    # A feed read past robots.txt (Fetcher.get's feed=True): "disallowed" when its
+    # rules refuse it, "unreadable" when it answered without rules; "" otherwise.
+    robots_exempt: str = ""
 
     @property
     def not_modified(self) -> bool:
@@ -275,20 +286,25 @@ def looks_challenged(body: bytes) -> bool:
 
 # The root element of an RSS, Atom or RSS 1.0 document, with or without a prefix.
 FEED_ROOT = re.compile(r"<(?:[A-Za-z_][\w.-]{0,40}:)?(?:rss|feed|rdf)[\s/>]", re.I)
-FEED_HEAD = 8192
+# How much of an answer is scanned for the root: long licence comments and
+# stylesheet lines come before it in some feeds.
+FEED_HEAD = 65536
 
 
 def looks_like_feed(body: bytes) -> bool:
-    """Whether the body starts as an RSS, Atom or RSS 1.0 document: its root
-    element, after a BOM (UTF-8 or UTF-16), whitespace, processing instructions
-    (the XML declaration, a stylesheet), comments and a doctype. What robots.txt
-    refuses is read only when it is a feed. A scan, not a pattern: nothing here
-    can backtrack on a hostile answer."""
+    """Whether the body starts as an RSS, Atom or RSS 1.0 document (its root
+    element, after a BOM, UTF-8 or UTF-16, whitespace, processing instructions
+    such as the XML declaration or a stylesheet, comments and a doctype), or is a
+    JSON Feed, which feedparser reads too. What robots.txt refuses is read only
+    when it is a feed. A scan, not a pattern: nothing here can backtrack on a
+    hostile answer."""
     head = body[:FEED_HEAD]
     if head.startswith((b"\xff\xfe", b"\xfe\xff")):
         text = head.decode("utf-16", errors="replace")
     else:
         text = head.decode("utf-8", errors="replace").removeprefix("\ufeff")
+    if text.lstrip().startswith("{"):
+        return "jsonfeed.org/version/" in text
     i = 0
     while True:
         while i < len(text) and text[i].isspace():
@@ -344,6 +360,8 @@ class Fetcher:
         # robots.txt reading it was refused under. Until that host's robots.txt is
         # read again, they fail without a request.
         self._not_feeds: dict[str, float] = {}
+        # Hosts whose robots.txt could not be asked for at all (no connection, a timeout).
+        self._robots_unreachable: set[str] = set()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -364,9 +382,13 @@ class Fetcher:
         refuses it (or can't be read), as feed readers do, and its redirects with
         it. Only a feed is kept from such a URL: any other answer, an error status
         included, fails with the refusal and keeps no sample, and the URL then
-        fails without a request until robots.txt is read again."""
+        fails without a request until robots.txt is read again (a 429 or 5xx is
+        asked again). A host whose robots.txt could not be asked for at all is
+        not asked for the feed either, and a pause robots.txt's 429 or 503 asks
+        for holds the feed too."""
         check_url(url)
         refused: FetchError | None = None
+        exempt = ""
         refused_hops: list[str] = []
         for _ in range(MAX_REDIRECTS + 1):
             if any(h in (urlsplit(url).hostname or "") for h in WAITING_ROOM_HOSTS):
@@ -374,8 +396,9 @@ class Fetcher:
             wait_limit = self._max_wait if max_wait is None else min(max_wait, self._max_wait)
             refusal = await self._refusal(url, wait_limit)
             if refusal is not None:
-                if not feed:
+                if not feed or not isinstance(refusal, RobotsRefusal):
                     raise refusal
+                exempt = exempt or ("unreadable" if refusal.unreadable else "disallowed")
                 refused = refused or FetchError(f"not a feed, and robots.txt refuses anything else here: {refusal}")
                 if self._not_feeds.get(url) == self._robots_read(url):
                     raise refused
@@ -394,14 +417,15 @@ class Fetcher:
                 etag = last_modified = ""
                 continue
             if status == 304:
-                return Page(url, 304, "", b"", etag, last_modified, robots_exempt=refused is not None)
+                return Page(url, 304, "", b"", etag, last_modified, robots_exempt=exempt)
             pause = 0
             if status in (429, 503):
                 pause = self._back_off(url, response_headers.get("retry-after", ""))
             header = response_headers.get("content-type", "")
             content_type = header.split(";")[0].strip().lower()
             if refused is not None and not (200 <= status < 300 and looks_like_feed(body)):
-                if 200 <= status < 300:
+                # A passing failure (a 429, a 5xx) is asked again; any other answer is not.
+                if status < 500 and status != 429:
                     self._remember_not_feeds(refused_hops)
                 raise FetchError(str(refused), retry_after=pause)
             if status in (401, 402, 403, 407, 429, 503) and looks_challenged(body):
@@ -419,7 +443,7 @@ class Fetcher:
                 response_headers.get("etag", ""),
                 response_headers.get("last-modified", ""),
                 charset_of(header),
-                robots_exempt=refused is not None,
+                robots_exempt=exempt,
             )
         raise FetchError(f"more than {MAX_REDIRECTS} redirects")
 
@@ -508,9 +532,11 @@ class Fetcher:
             self._robots[host] = entry
         parser = entry[1]
         if parser is None:
-            return FetchError(entry[3], page=self._robots_answers.get(host))
+            if host in self._robots_unreachable:
+                return FetchError(entry[3])
+            return RobotsRefusal(entry[3], unreadable=True, page=self._robots_answers.get(host))
         if not parser.can_fetch(USER_AGENT_NAME, url):
-            return FetchError("robots.txt disallows it")
+            return RobotsRefusal("robots.txt disallows it")
         return None
 
     async def _load_robots(
@@ -519,6 +545,7 @@ class Fetcher:
         parser = robotparser.RobotFileParser()
         url = host + "/robots.txt"
         self._robots_answers.pop(host, None)
+        self._robots_unreachable.discard(host)
         unreadable = "robots.txt could not be read, which refuses everything (RFC 9309)"
         for _ in range(MAX_REDIRECTS + 1):
             try:
@@ -527,6 +554,8 @@ class Fetcher:
                 raise
             except FetchError as e:
                 # The site itself is out of reach: say why, not that robots.txt is missing.
+                # Nothing is asked of it, a feed included: it would only time out again.
+                self._robots_unreachable.add(host)
                 return self._clock(), None, 0.0, str(e)
             if status in (301, 302, 303, 307, 308) and headers.get("location"):
                 try:
@@ -544,6 +573,9 @@ class Fetcher:
             parser.allow_all = True
             parser.modified()
         else:
+            if status in (429, 503):
+                # The pause it asks for holds every request to the host, a feed's too.
+                self._back_off(url, headers.get("retry-after", ""))
             header = headers.get("content-type", "")
             content_type = header.split(";")[0].strip().lower()
             self._robots_answers[host] = Page(url, status, content_type, body[:ERROR_BODY], charset=charset_of(header))
