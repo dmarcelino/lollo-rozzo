@@ -1,7 +1,7 @@
 # The Lettuce vault (see docs/vault.md). Built by lolloctl via
 # compose/vault.yml. `tests/run-sidecar.sh vault` builds the `test` stage and
 # runs it. Both need the `lollo-common` build context (the repo's lollo-common/).
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 COPY --from=lollo-common . /tmp/lollo-common
 RUN pip install --root-user-action=ignore /tmp/lollo-common && rm -rf /tmp/lollo-common

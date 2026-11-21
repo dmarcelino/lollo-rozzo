@@ -1647,3 +1647,32 @@ def test_rows_left_out_are_not_called_older():
     digest = MonitorDigest(Monitor(AGENT, "m", ["s"], "0 9 * * *", id="m1"), [{"source": "s", "status": "new"}], 3)
     prompt, _, _ = render([digest], "at 09:00", "d1")
     assert "3 row(s) left out" in prompt and "older" not in prompt
+
+
+def rss_spec(name, url):
+    return {"name": name, "url": url, "kind": "rss", "every": "1h"}
+
+
+async def test_an_rss_source_is_read_where_robots_refuses_it_but_a_page_is_not(service, web):
+    web.add("https://shut.example.org/robots.txt", "User-agent: *\nDisallow: /\n", "text/plain")
+    feed = (
+        '<?xml version="1.0"?><rss version="2.0"><channel>'
+        "<item><title>A</title><link>https://shut.example.org/a</link></item></channel></rss>"
+    )
+    web.add("https://shut.example.org/rss", feed, "application/rss+xml")
+    web.add("https://shut.example.org/list", '<html><body><p class="e"><a href="/a">A</a></p></body></html>')
+    result = await service.source_test(rss_spec("s", "https://shut.example.org/rss"))
+    assert result["passed"] and "feed readers" in result["robots"]
+    page = await service.source_test(
+        {
+            "name": "p",
+            "url": "https://shut.example.org/list",
+            "kind": "html",
+            "every": "1h",
+            "extract": {"items": "p.e", "fields": {"title": "a", "url": "a@href"}},
+        }
+    )
+    assert not page["passed"] and "robots.txt disallows" in page["error"]
+    # An rss source pointed at a page robots.txt refuses reads nothing from it.
+    wrong = await service.source_test(rss_spec("w", "https://shut.example.org/list"))
+    assert not wrong["passed"] and "robots.txt disallows" in wrong["error"] and not wrong.get("sample")

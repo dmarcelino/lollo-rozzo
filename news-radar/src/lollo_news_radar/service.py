@@ -259,6 +259,11 @@ class Service:
         warnings = [w for w in (window, _block_warning(spec, result)) if w]
         if warnings:
             out["warnings"] = warnings
+        if result.robots_exempt:
+            out["robots"] = (
+                "robots.txt refuses automated readers here; this feed is read anyway, as feed readers do. "
+                "Pages it links to still follow robots.txt"
+            )
         if problems:
             out["problems"] = problems
             out["sample"] = result.sample

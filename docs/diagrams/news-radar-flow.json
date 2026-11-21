@@ -149,7 +149,7 @@
       "to": "web",
       "y": 390,
       "label": "fetch each source",
-      "note": "public addresses, robots.txt honoured"
+      "note": "public addresses, robots.txt honoured but for feeds"
     },
     {
       "id": "items",

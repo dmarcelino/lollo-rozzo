@@ -10,7 +10,7 @@ An interactive version, [code-server-architecture.html](../docs/diagrams/code-se
 
 | Path | What it does |
 |---|---|
-| `Dockerfile`, `pyproject.toml` | The gate's image: Python 3.12 slim, `lollo-common` from its build context, pinned dependencies, a `test` stage; runs as uid 65534 on port 8000. |
+| `Dockerfile`, `pyproject.toml` | The gate's image: Python 3.14 slim, `lollo-common` from its build context, pinned dependencies, a `test` stage; runs as uid 65534 on port 8000. |
 | `src/code_server_gate/config.py` | Settings from the environment; `PREFIX` (`/code-server`) and `EDITOR_SOCKET` (`/run/code-server/editor.sock`). |
 | `src/code_server_gate/app.py` | The gate: the Access JWT on every request and WebSocket, Fetch Metadata, the prefix, request and response header allow-lists, which responses may load as pages, and the HTTP and WebSocket proxy over the editor's socket. |
 | `src/code_server_gate/__main__.py` | Starts uvicorn; keeps httpx and access logs off, since the editor's URLs carry file paths. |

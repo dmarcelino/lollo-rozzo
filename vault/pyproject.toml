@@ -2,7 +2,7 @@
 name = "lollo-vault"
 version = "0.1.0"
 description = "Lettuce vault: personal data agents may use only when the user agrees"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 # Pinned: this is an application image, rebuilt on every `lolloctl up`.
 dependencies = [
   "mcp==2.3.0",

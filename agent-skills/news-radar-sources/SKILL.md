@@ -72,7 +72,10 @@ skips the turn when there is nothing to report.
 
    **Never** use a source behind a login, a CAPTCHA, a "checking your browser" or waiting-room
    page, or a paywall, and never try to get around one: tell the person it can't be monitored.
-   The service honours robots.txt; a refusal is final.
+   The service honours robots.txt, and a refusal is final, with one exception: a feed's own
+   URL (`kind: "rss"`) is read whatever robots.txt says, as feed readers do, and `source_test`
+   says so under `robots`. Never set `kind: "rss"` to get past a refusal: a refused URL that
+   doesn't answer with a feed stays refused.
 3. **Write the spec and test it** with `source_test` until the items and `fill_rates` look
    right (titles everywhere, dates for events). A test fails on `problems`: no items, events
    without dates, or every event in the past (a date fixed in the URL, such as
@@ -229,7 +232,10 @@ stories, and each story says how many outlets carry it.
   It allows one request every 5 seconds per address and often answers 429 to shared ones: if
   `source_test` comes back with `retry_after` twice, leave it out and say so. Keep `every` at
   hours.
-- Google News search feeds can't be used: its robots.txt refuses automated readers.
+- Google News search feeds are feeds, so they can be used as `kind: "rss"` although its
+  robots.txt refuses automated readers:
+  `https://news.google.com/rss/search?q=<words>&hl=<language>&gl=<country>&ceid=<country>:<language>`.
+  Keep `every` at hours.
 
 The number of outlets is a hint, not a verdict: you decide what is significant for this person.
 
