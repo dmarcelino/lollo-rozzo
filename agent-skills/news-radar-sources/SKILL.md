@@ -1,6 +1,6 @@
 ---
 name: news-radar-sources
-description: Load this BEFORE setting up, changing or repairing a monitor, when the person asks you to keep an eye on something and report on a schedule (films at a cinema, concerts, events, news on a topic), or when a scheduled "monitor report" arrives with sources that need repair. It applies when Settings -> MCP lists the News Radar server.
+description: Load this BEFORE setting up, changing or repairing a monitor, when the person asks you to keep an eye on something and report on a schedule (films at a cinema, concerts, events, news on a topic), when the person asks whether News Radar can follow something, including a change in one thing's state (a status, a version, a price), or when a scheduled "monitor report" arrives with sources that need repair. It applies when Settings -> MCP lists the News Radar server.
 ---
 
 # Monitoring sources
@@ -9,6 +9,11 @@ The **`news-radar`** MCP server, if this stack has it, checks websites, feeds an
 timer **without you**, and starts a turn for you at the person's chosen times **only when
 something is new**. You do the parts that need judgement: find the sources, describe how to
 read them, check your work, and write the reports.
+
+It follows listings (an agenda, a feed) and also **one thing's state** (a status, a version, a
+price: [One thing changing](#one-thing-changing)). **Never tell the person it can't follow
+something before trying**: `source_inspect` the page, then `source_test` a spec, and say what
+failed.
 
 It is an HTTP server: call it through the **`mcp-servers` skill's wrapper** (load that skill if
 you haven't; today the wrapper is `sh /root/.letta/skills/mcp-servers/scripts/mcp.sh`). If
@@ -238,6 +243,30 @@ stories, and each story says how many outlets carry it.
   Keep `every` at hours.
 
 The number of outlets is a hint, not a verdict: you decide what is significant for this person.
+
+## One thing changing
+
+"Tell me when this order ships", "when this version is out", "when this ticket closes": a
+source can follow a single thing, and a monitor reports when its state changes.
+- Point the source at the URL that describes that one thing, most often a JSON API (pages often
+  load one: `source_inspect` lists the API URLs it finds). An API that needs a key or a login
+  can't be used: the service sends no credentials.
+- `"items": "[@]"` makes the single object a one-item list. Map `title` and `url`, put the
+  fields that change under `extra`, and set `item_kind` to `article`: an `event` needs a date.
+- **`watch`** names the fields whose change makes the item `changed` in a report. The default is
+  `title`, `start` and `venue`, so name the state fields yourself.
+- Keep the item there before the change: filtering it out until then leaves no items, and
+  `source_test` fails.
+- Save the monitor with `from_now: true`: its first report is then the change, not the current
+  state.
+
+```json
+{"name": "item-42", "url": "https://tracker.example.org/api/items/42", "kind": "json",
+ "item_kind": "article", "every": "1h",
+ "extract": {"items": "[@]", "fields": {"title": "title", "url": "html_url"},
+             "extra": {"state": "state", "done_at": "done_at"}},
+ "watch": ["state", "done_at"]}
+```
 
 ## When a report arrives
 

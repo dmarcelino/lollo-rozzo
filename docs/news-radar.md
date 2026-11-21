@@ -19,6 +19,8 @@ How News Radar is built and wired, for developers: [news-radar/README.md](../new
 
 **News on a topic** ("any significant news about <topic>") is followed through news searches; articles about the same story are grouped, and the agent decides what is significant for you.
 
+**One thing changing** ("tell me when this order ships", "when this version is out") is followed through the page or data that describes it; you hear about it when its status changes.
+
 **When a source breaks** (a site changed its layout, or stopped answering), the next report says so and the agent tries to repair it in the same turn. A broken source is mentioned at most once a day on its own. If it is still broken after 3 days (a site that closed or went offline), the agent asks you once whether to stop using it in that monitor; the source is kept, not fetched, so it can be added back later. A site that starts asking for a login, a CAPTCHA or a "checking your browser" page can't be monitored any more; the agent tells you.
 
 **Not everything can be monitored.** Sites behind a login, a waiting room, a CAPTCHA or a paywall are out of reach, as are sites whose robots.txt refuses automated readers, except for their RSS or Atom feeds, which are read as any feed reader reads them. Pages that only work with a browser's scripts can often still be read through the data they load, or through the site's sitemap; when they can't, the agent says so. A site that keeps asking automated readers to slow down can't be followed reliably either.

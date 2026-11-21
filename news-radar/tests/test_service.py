@@ -1676,3 +1676,47 @@ async def test_an_rss_source_is_read_where_robots_refuses_it_but_a_page_is_not(s
     # An rss source pointed at a page robots.txt refuses reads nothing from it.
     wrong = await service.source_test(rss_spec("w", "https://shut.example.org/list"))
     assert not wrong["passed"] and "robots.txt disallows" in wrong["error"] and not wrong.get("sample")
+
+
+THING_URL = "https://tracker.example.org/api/items/42"
+
+
+def thing_body(state, done_at=None):
+    return json.dumps(
+        {"id": 42, "title": "Add a dark theme", "html_url": "https://tracker.example.org/items/42", "state": state,
+         "done_at": done_at}
+    )
+
+
+async def test_one_things_state_is_followed_with_watch(service, web, store, clock):
+    """The skill's "One thing changing": a single object as a one-item list,
+    its state in extra and watched, a monitor from now on."""
+    web.add(THING_URL, thing_body("open"), "application/json")
+    spec = {
+        "name": "item-42",
+        "url": THING_URL,
+        "kind": "json",
+        "item_kind": "article",
+        "every": "1h",
+        "extract": {
+            "items": "[@]",
+            "fields": {"title": "title", "url": "html_url"},
+            "extra": {"state": "state", "done_at": "done_at"},
+        },
+        "watch": ["state", "done_at"],
+    }
+    tested = await service.source_test(spec)
+    assert tested["passed"] and tested["items_found"] == 1
+    service.source_put(spec)
+    await service.fetch_source("item-42")
+    service.monitor_put(AGENT, "item-42", ["item-42"], schedule="0 9 * * *", from_now=True)
+    clock.t += 60
+    assert fire_at(service, "2027-01-15T09:00") == []  # nothing changed yet: no report
+    clock.t += 3600
+    web.add(THING_URL, thing_body("closed", "2027-01-15T10:00:00Z"), "application/json")
+    await service.fetch_source("item-42")
+    [row] = service.monitor_preview(AGENT, "item-42")["rows"]
+    assert row["status"] == "changed" and row["extra"]["state"] == "closed"
+    clock.t += 86400
+    [rid] = fire_at(service, "2027-01-16T09:00")
+    assert store.report(rid).items == 1
