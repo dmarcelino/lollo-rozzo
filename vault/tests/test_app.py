@@ -78,6 +78,8 @@ CARD_FORM = {
     "f_notes": SECRET,
 }
 AS_TEXT = {"delivery": "text", "reason": "compare it with the receipt"}
+# A Hidden custom field's value. Not hex, so a page's random tokens never contain it.
+PIN = "pin-zq-4321"
 
 
 def add(client, form) -> str:
@@ -491,25 +493,25 @@ def test_editing_keeps_masked_values_left_blank(env):
 def test_custom_fields_are_kept_renamed_and_removed(env):
     client, vault = env[0], env[1]
     setup_vault(client)
-    form = {**CARD_FORM, "c_name_0": "PIN", "c_value_0": "4321", "c_hidden_0": "on", "c_name_1": "Bank"}
+    form = {**CARD_FORM, "c_name_0": "PIN", "c_value_0": PIN, "c_hidden_0": "on", "c_name_1": "Bank"}
     form.update({"c_value_1": "Banco Falso", "c_name_2": "", "c_value_2": ""})  # Bank: a Text field
     secret = add(client, form)
     custom = [(f.key, f.value, f.masked) for f in vault.secret(secret).custom_fields]
-    assert custom == [("pin", "4321", True), ("bank", "Banco Falso", False)]
+    assert custom == [("pin", PIN, True), ("bank", "Banco Falso", False)]
     new = client.get(f"{B}/secrets/new?kind=card").text
     assert re.search(r'<input type="checkbox" name="c_hidden_0" checked>', new)  # new rows start Hidden
     edit = client.get(f"{B}/secrets/{secret}/edit").text
-    assert 'value="PIN"' in edit and "4321" not in edit and 'value="Banco Falso"' in edit
+    assert 'value="PIN"' in edit and PIN not in edit and 'value="Banco Falso"' in edit
     assert re.search(r'<input name="c_value_0" type="password"', edit)
     assert re.search(r'<input name="c_value_1"(?! type="password")', edit)
     page = client.get(f"{B}/secrets/{secret}").text
-    assert "Banco Falso" in page and "4321" not in page
+    assert "Banco Falso" in page and PIN not in page
     update = {**CARD_FORM, "f_number": "", "c_name_0": "Card PIN", "c_value_0": "", "c_old_0": "pin", "c_hidden_0": "on"}
     update.update({"c_name_1": "Bank", "c_value_1": "", "c_old_1": "bank"})  # a Text field emptied: removed
     update.update({"c_name_2": "Branch", "c_value_2": "Lisboa"})
     assert post(client, f"{B}/secrets/{secret}", update).status_code == 303
     custom = [(f.key, f.label, f.value, f.masked) for f in vault.secret(secret).custom_fields]
-    assert custom == [("card_pin", "Card PIN", "4321", True), ("branch", "Branch", "Lisboa", False)]
+    assert custom == [("card_pin", "Card PIN", PIN, True), ("branch", "Branch", "Lisboa", False)]
     # Emptying an existing field's name removes it.
     emptied = {**CARD_FORM, "f_number": "", "c_name_0": " ", "c_value_0": "", "c_old_0": "card_pin", "c_hidden_0": "on"}
     emptied.update({"c_name_1": "Branch", "c_value_1": "Lisboa", "c_old_1": "branch"})
@@ -546,23 +548,23 @@ def test_the_form_groups_fields_like_bitwarden(env):
     assert 'data-group="form:identity:Address"' in form
     personal = group_body(form, "Personal details")
     assert 'name="f_first_name"' in personal and 'name="f_passport_number"' not in personal
-    secret = add(client, {**CARD_FORM, "c_name_0": "PIN", "c_value_0": "4321", "c_hidden_0": "on"})
+    secret = add(client, {**CARD_FORM, "c_name_0": "PIN", "c_value_0": PIN, "c_hidden_0": "on"})
     edit = client.get(f"{B}/secrets/{secret}/edit").text
     assert groups(edit)[1:3] == ["Card details", "Additional options"]
     custom = group_body(edit, "Custom fields")
-    assert 'value="PIN"' in custom and "4321" not in edit
+    assert 'value="PIN"' in custom and PIN not in edit
 
 
 def test_the_secret_page_groups_fields_like_the_form(env):
     client = env[0]
     setup_vault(client)
-    secret = add(client, {**CARD_FORM, "c_name_0": "PIN", "c_value_0": "4321", "c_hidden_0": "on"})
+    secret = add(client, {**CARD_FORM, "c_name_0": "PIN", "c_value_0": PIN, "c_hidden_0": "on"})
     page = client.get(f"{B}/secrets/{secret}").text
     assert groups(page) == ["Card details", "Additional options", "Custom fields", "Agent access"]
     assert 'data-group="page:card:Custom fields"' in page
-    assert CARD not in page and "4321" not in page and SECRET in group_body(page, "Additional options")
+    assert CARD not in page and PIN not in page and SECRET in group_body(page, "Additional options")
     shown = post(client, f"{B}/secrets/{secret}/show", {}).text
-    assert CARD in shown and "4321" in shown and 'data-copy="v-pin"' in shown
+    assert CARD in shown and PIN in shown and 'data-copy="v-pin"' in shown
 
 
 def test_the_secret_page_names_what_agents_may_use_without_asking(env):

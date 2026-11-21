@@ -295,7 +295,7 @@ manifest-tracked like skills), outside the spool. The cron file is
 lollo-common/                 shared Python package (lollo_common)
   src/lollo_common/auth.py    moved from broker/src/secret_broker/auth.py
   src/lollo_common/static/lollo.css
-gmail-triggers/                the sidecar (Python 3.12, Starlette, Jinja2, httpx)
+gmail-triggers/                the sidecar (Python 3.14, Starlette, Jinja2, httpx)
   Dockerfile                   base / test / runtime stages, like broker/Dockerfile
   pyproject.toml               pinned dependencies
   src/gmail_triggers/

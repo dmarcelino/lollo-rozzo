@@ -214,7 +214,7 @@ tools today:
   release reuses the existing image, and so its digest.
 - An unchanged image therefore keeps the exact same name from release to release, and Compose leaves
   its container alone.
-- Base images (`debian:12-slim`, `python:3.12-slim`, `alpine`, `golang`) get security fixes only on
+- Base images (`debian:12-slim`, `python:3.14-slim`, `alpine`, `golang`) get security fixes only on
   a rebuild. A rebuild is asked for by changing `REBUILD` (a date), in a release of its own: it
   renames every image, so it restarts every sidecar and locks every vault, and its release notes
   say so.
