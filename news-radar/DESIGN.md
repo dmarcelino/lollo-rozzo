@@ -9,6 +9,7 @@ Status: implemented (2026-11-08), except the spikes against a running stack (Pla
 - The developer reference is [README.md](README.md); the guide for users and admins is [docs/news-radar.md](../docs/news-radar.md).
 - Renamed News Radar (2026-11-13): the folder `news-radar/`, the `lollo-news-radar` profile and service, the `/news-radar/` page, the `news-radar` MCP server (its tools unchanged), the `news-radar-data` volume, the `NEWS_RADAR_*` settings, the `news-radar-sources` skill and the executor's `--news-radar`. The record below keeps the names it was reviewed with.
 - After the first live monitor (2026-11-13): a monitor reports by default into the conversation the agent set it up in (`set_up_in`, from `$LETTA_CONVERSATION_ID`; the executor takes a conversation id as well as `new` and `default`), and the person changes where on the page. `monitor_preview` previews a draft before it is saved. A source's `group_by` makes one row of an item listed several times. Filters ignore accents as well as case; extras keep true and false as text. `source_inspect` reads up to 6 same-site scripts, leaving out library and tracking ones.
+- Robots.txt (2026-11-21): rules are matched as RFC 9309 says (`*`, `$`, the longest rule wins). Python 3.12's `robotparser` did neither, so the sidecars moved to Python 3.14. A feed's own URL (`kind: "rss"`) is read whatever robots.txt says, as feed readers do; only a feed is kept from such a URL, and what it links to still follows robots.txt. See the fetcher's rule in [README.md](README.md#the-fetcher-reaches-public-addresses-only-and-stays-polite).
 - Places (2026-11-16): the service, not the agent's judgement, decides what reaches a report, so `where` no longer only reads the venue. An item gets a `locality` field (schema.org's `addressLocality`, or mapped by a json or html spec), a source a `place`, the stack a place map, and a monitor `where_unknown`; see [Places](#places). The person found that leaving the rest to the agent costs a turn's tokens and puts false positives in the chat.
 
 ## Goal
@@ -152,7 +153,7 @@ The fetcher is the most exposed code: it reads hostile content from URLs an agen
 - **Only `http` and `https`, only public addresses.** The host is resolved first, and the request goes to that address; loopback, private, link-local, unique-local and metadata ranges are refused. Each redirect is checked the same way, and there are at most 5. Agents can already reach the stack network themselves, so this is not their boundary. It keeps a scheduled job from walking the stack's services or the host.
 - **Polite by default:**
   - a fixed user agent naming the project (`lollo-rozzo-watchlist/<version>`, with the repo URL; never a person's address);
-  - robots.txt honoured for that user agent;
+  - robots.txt honoured for that user agent (since 2026-11-21, a feed's own URL excepted: see the status notes above);
   - `ETag` and `If-Modified-Since` reused;
   - at most one request at a time per host, at least 5 seconds apart;
   - no source fetched more often than the admin's minimum interval.
@@ -338,7 +339,7 @@ Host-wide in `config.env`, written into each `stack.env` by `up` (the way `TZ` r
 - **Monitors start turns.** They do so only on their schedule, only when there is something to report, and at most `WATCHLIST_MAX_REPORTS_PER_DAY` times per agent per day.
   - The path is the one Gmail triggers use: a request, the executor, `letta cron add`, Lettuce's scheduler. No second connection.
   - Agents can read the executor's token and use its API: read, claim or drop pending reports, or report false results. That gives them nothing beyond `letta cron add`.
-- **The fetcher stays polite and public-only.** It fetches only public addresses, runs no script, keeps no cookies and logs in nowhere. It honours robots.txt and refuses challenge pages. Admins and people accept each monitored site's terms; the guide says so.
+- **The fetcher stays polite and public-only.** It fetches only public addresses, runs no script, keeps no cookies and logs in nowhere. It honours robots.txt (a feed's own URL excepted) and refuses challenge pages. Admins and people accept each monitored site's terms; the guide says so.
 - **Everything fetched is untrusted.** It reaches the agent quoted, shortened and marked as data. A hostile page can still try to steer the agent that reads it, as with any page an agent reads.
 - **A source keeps feeding its agent until someone deletes it.** A source an agent registered feeds that agent on every report. That is why the page exists.
 - **`agent_id` in tool calls is not verified:** any agent of the stack can manage any agent's monitors.

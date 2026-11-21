@@ -71,7 +71,7 @@ Named volumes of a stack are deleted with it by `lolloctl remove` (`compose down
 | Agents | Gotenberg | the PDF MCP, started per call from the doc-tools volume |
 | The lollo executor (cron in the app-server) | `landing`, `lollo-gmail-triggers`, `lollo-news-radar` | `/executor/v1/` with `LOLLO_EXECUTOR_TOKEN`: the agent list, and the requests of Gmail triggers and News Radar, which it runs as `letta cron add --once` ([landing/executor/README.md](landing/executor/README.md)) |
 | `lollo-gmail-triggers` | Gmail | read-only, with the token Settings -> Google stores |
-| `lollo-news-radar` | public websites | the sources agents set up: public addresses only, robots.txt honoured, not through pipelock |
+| `lollo-news-radar` | public websites | the sources agents set up: public addresses only, robots.txt honoured (a feed's own URL excepted), not through pipelock |
 | The gate | the editor | the editor's Unix socket |
 | The editor | the shell | SSH, for terminals and every git call |
 

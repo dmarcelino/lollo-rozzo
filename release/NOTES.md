@@ -1,4 +1,5 @@
 ## Highlights
+- **Upgrade note: every vault locks, and News Radar reads robots.txt as written.** The sidecars move to Python 3.14, so on upgrade every sidecar restarts and every vault locks until it is unlocked again. With it, News Radar honours robots.txt rules with `*` or `$` (GitHub's, for one) that it used to miss; RSS and Atom feeds are still read where robots.txt refuses automated readers, as any feed reader reads them, Google News search feeds included.
 - **New: News Radar places.** Ask for events "only in my city": News Radar keeps a list of venues and other places with their town, which your agent proposes and you confirm on the News Radar page, and a monitor can leave out events it can't place.
 - **Behaviour change: fewer repeat News Radar items.** An event you were already told about that shows up again on another agenda is marked as known and never starts a report on its own; anything no report ever showed you still counts as new.
 - **News Radar asks before narrowing a monitor.** When a report has nothing worth telling you, the agent proposes a change to the monitor's filters and makes it only if you agree.

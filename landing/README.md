@@ -10,7 +10,7 @@ An interactive version, [lollo-architecture.html](../docs/diagrams/lollo-archite
 
 | Path | What it does |
 |---|---|
-| `Dockerfile`, `pyproject.toml` | The service's image: Python 3.12 slim, `lollo-common` from its build context, pinned dependencies, a `test` stage; runs as uid 65534 on port 8000. |
+| `Dockerfile`, `pyproject.toml` | The service's image: Python 3.14 slim, `lollo-common` from its build context, pinned dependencies, a `test` stage; runs as uid 65534 on port 8000. |
 | `src/lollo_landing/config.py` | Settings from the environment: the two origins, `LOLLO_PROFILES`, the executor token (64 hex characters or the service refuses to start); `page_path` (profile `lollo-<page>` serves `/<page>/`). |
 | `src/lollo_landing/app.py` | The routes, `LABELS` (what the page calls each lollo page), the agent rows and their links. |
 | `src/lollo_landing/agents.py` | `AgentList`: the last agent list, in memory only, and when to ask for a new one (`AgentAsks`). |
