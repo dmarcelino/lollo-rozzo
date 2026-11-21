@@ -16,7 +16,7 @@ from typing import Any
 
 import anyio
 from lollo_common.auth import COOP, FORM, PAGE, Authenticator, AuthError, admit
-from lollo_common.executor import AGENT_ID
+from lollo_common.executor import AGENT_ID, CONVERSATION_ID
 from lollo_common.lollo import stylesheet
 from lollo_common.text import encodable
 from jinja2 import Environment, PackageLoader, select_autoescape
@@ -93,11 +93,27 @@ EXAMPLES = [
 
 NOTICES = {
     "saved": "Trigger saved.",
+    "saved-specific": (
+        "Trigger saved. Send a test from its History and check that the reply shows in that conversation: "
+        "a wrong conversation id is accepted all the same."
+    ),
     "deleted": "Trigger deleted.",
     "test": "Test request sent. It shows below once Lettuce picks it up (within a minute or two).",
 }
 
-CONVERSATIONS = {"new": "A new conversation each time", "default": "The agent's main conversation"}
+# Where a trigger's runs go. SPECIFIC is the form's word for a conversation id the
+# person typed (asked of the agent, which has it as $LETTA_CONVERSATION_ID); the
+# rule stores the id itself. Only its shape is checked, here and in the executor:
+# nothing checks that it is a conversation of the rule's agent (letta-code 0.34.67
+# doesn't when the task fires), so a changed agent must not keep the old id.
+SPECIFIC = "specific"
+CONVERSATIONS = {
+    "new": "A new conversation each time",
+    "default": "The agent's main conversation",
+    SPECIFIC: "A specific conversation",
+}
+# What a typed conversation id may be when it is shown again, wrong.
+MAX_TYPED_CONVERSATION = 200
 
 GOOGLE_BANNERS = {
     Status.NOT_CONNECTED: (
@@ -140,6 +156,13 @@ def _fmt_time(ts: float | None) -> str:
 
 def _status_text(status: str) -> tuple[str, str]:
     return STATUS_TEXT.get(status, ("", status))
+
+
+def chosen_conversation(rule: Rule) -> tuple[str, str]:
+    """The form's choice for where the rule runs, and the id in its box."""
+    if rule.conversation in CONVERSATIONS and rule.conversation != SPECIFIC:
+        return rule.conversation, ""
+    return SPECIFIC, rule.conversation
 
 
 class FormError(Exception):
@@ -239,7 +262,28 @@ def parse_rule(
         agent_name = snapshot[agent_id]
 
     conversation = str(form.get("conversation", ""))
-    if conversation not in CONVERSATIONS:
+    if conversation == SPECIFIC:
+        # Agents often quote what they print: `conv-...` or "conv-...".
+        typed = _CONTROL.sub("", encodable(str(form.get("conversation_id", "")))).strip().strip("`'\"").strip()
+        # Kept as typed (clipped) so a wrong one is shown again; saved only when valid.
+        conversation = typed[:MAX_TYPED_CONVERSATION]
+        if not typed:
+            problems.append("Paste the conversation id the agent gave you.")
+        elif typed in CONVERSATIONS:
+            problems.append(f'"{typed}" is a choice above, not a conversation id: choose it there instead.')
+        elif not CONVERSATION_ID.fullmatch(typed):
+            problems.append("That isn't a conversation id: ask the agent again and paste exactly what it shows.")
+        elif (
+            current is not None
+            and agent_name
+            and agent_id != current.agent_id
+            and typed == chosen_conversation(current)[1]
+        ):
+            problems.append(
+                f"That conversation is with {current.agent_name or current.agent_id}: ask {agent_name} for one of "
+                "its conversations, or choose another option."
+            )
+    elif conversation not in CONVERSATIONS:
         problems.append("Choose where the agent answers.")
         conversation = "new"
 
@@ -284,7 +328,13 @@ def create_app(
 ) -> Starlette:
     env = Environment(loader=PackageLoader("gmail_triggers", "templates"), autoescape=select_autoescape(default=True))
     env.filters["time"] = _fmt_time
-    env.globals.update(base=PREFIX, status_text=_status_text, conversations=CONVERSATIONS)
+    env.globals.update(
+        base=PREFIX,
+        status_text=_status_text,
+        conversations=CONVERSATIONS,
+        chosen_conversation=chosen_conversation,
+        max_typed_conversation=MAX_TYPED_CONVERSATION,
+    )
     lollo_css = stylesheet()
     app_css = (resources.files("gmail_triggers") / "static" / "app.css").read_bytes()
 
@@ -297,6 +347,10 @@ def create_app(
 
     def back(path: str) -> RedirectResponse:
         return RedirectResponse(PREFIX + path, status_code=303, headers=SECURITY_HEADERS)
+
+    def saved(rule: Rule) -> str:
+        # A typed conversation id can't be checked here: say how to check it.
+        return "/?done=saved" if chosen_conversation(rule)[0] != SPECIFIC else "/?done=saved-specific"
 
     def page(handler: Handler, post: bool = False, asset: bool = False) -> Callable[[Request], Awaitable[Response]]:
         """`asset`: a stylesheet or icon, loaded by pages as a subresource; it holds nothing to protect."""
@@ -458,7 +512,7 @@ def create_app(
         if problems:
             return await form_page(email, rule, True, problems, str(form.get("senders", "")))
         store.save_rule(rule)
-        return back("/?done=saved")
+        return back(saved(rule))
 
     async def edit_form(request: Request, email: str) -> Response:
         rule = get_rule(request)
@@ -473,7 +527,7 @@ def create_app(
         if problems:
             return await form_page(email, rule, False, problems, str(form.get("senders", "")))
         store.save_rule(rule)
-        return back("/?done=saved")
+        return back(saved(rule))
 
     async def toggle(request: Request, email: str) -> Response:
         rule = get_rule(request)

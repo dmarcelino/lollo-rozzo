@@ -10,7 +10,7 @@
     <button type="submit" class="button ghost">Send a test</button>
   </form>
 </div>
-<p class="muted">"Send a test" checks that this trigger reaches {{ rule.agent_name or rule.agent_id }}: it gets the trigger's instructions with "(test run, no email)" in place of the emails, and is told to reply with one line and touch no mail.</p>
+<p class="muted">"Send a test" checks that this trigger reaches {{ rule.agent_name or rule.agent_id }}: it gets the trigger's instructions with "(test run, no email)" in place of the emails, and is told to reply with one line and touch no mail.{% set chosen, conversation_id = chosen_conversation(rule) %}{% if conversation_id %} It runs in conversation {{ conversation_id }}: check that its reply shows there, since a wrong conversation id is accepted all the same.{% endif %}</p>
 {% if notice %}<div class="banner ok" role="status"><p>{{ notice }}</p></div>{% endif %}
 {% if held %}<div class="banner warn" role="status"><p>{{ held }} matched email{{ "s" if held != 1 }} wait{{ "s" if held == 1 }}. Up to {{ max_per_run }} go in each run, within the hourly limit ({{ rule.max_per_hour }} per hour), oldest first.</p></div>{% endif %}
 {% if runs %}
@@ -18,7 +18,7 @@
   {% for run in runs %}
   <li class="run">
     <div class="run-head">
-      {{ run_status(run) }}
+      {{ run_status(run, rule) }}
       <span class="muted">{{ run.at | time }}</span>
       {% if not run.test %}<span class="muted">{{ run.total }} email{{ "s" if run.total != 1 }}</span>{% endif %}
     </div>
