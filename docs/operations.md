@@ -155,6 +155,8 @@ lolloctl self-upgrade vX.Y.Z        # fetch that release's wrapper, pull its ima
 ```
 `self-upgrade` checks the new wrapper against its release's `SHA256SUMS` and pulls its image before it replaces anything, so a typo or a failed download leaves the install as it was. It then moves Lettuce forward to the tag the new release was tested with, never back, and once every stack is up installs the release's agent skills in each (`skills all`). To go back, run `bin/lolloctl.previous`, or move it to `bin/lolloctl`. To check where a wrapper comes from: `gh attestation verify ~/lollo-rozzo/bin/lolloctl --repo dmarcelino/lollo-rozzo`.
 
+To try a fix or a feature before it is released, a pull request's dev build installs the same way: `lolloctl self-upgrade vX.Y.Z-dev.<slug>.<N>`, the tag the pull request's "Publish" run names in its summary. It has no release page: lolloctl pulls the build's image and makes its wrapper from it. Your lolloctl must already be a release that can install dev builds ([release/README.md](../release/README.md#dev-builds)). A dev build moves Lettuce forward like a release, so going back with `self-upgrade vX.Y.Z` keeps the newer Lettuce tag.
+
 In release mode, `toolbox` sees your home read-only, plus your toolbox file and Claude Code config (`CLAUDE_CONFIG_DIR`) wherever they are; a `mount` line in the toolbox file must name something under your home. The toolbox file's `secret` commands run on the host, in the wrapper, which first checks that the file is yours and that nobody else can write it.
 
 ## Running on macOS

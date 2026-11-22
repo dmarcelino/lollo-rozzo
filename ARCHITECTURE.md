@@ -90,7 +90,7 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 |---|---|
 | `lolloctl`, [`lib/`](lib/README.md) | the CLI; [lib/DESIGN.md](lib/DESIGN.md) is how it is installed without a clone |
 | [`release/`](release/README.md), `VERSION`, `REBUILD` | releases: the published images' list (`release/images`), their content tags, the lolloctl image and its wrapper; the version, and the date that rebuilds every image |
-| `.github/workflows/` | `ci.yml`, every check, on each branch push; `publish.yml`, a release on each `v*` tag, after `ci.yml` passes; `renovate.yml`, Renovate on its schedule ([CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates)) |
+| `.github/workflows/` | `ci.yml`, every check, on each branch push; `publish.yml`, after `ci.yml` passes, a release on each `v*` tag on `main` or a `hotfix/*` branch, and a dev build (a `lolloctl` image tag) for each pull request; `renovate.yml`, Renovate on its schedule ([CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates)) |
 | `.github/renovate.json5` | what Renovate updates and what merges on its own |
 | `compose/hardening.yml` | `no-new-privileges`, memory caps for every service, a pid cap on the app-server, no `NET_RAW` where agents run, letta-code self-update off |
 | `compose/multi.yml` | drops all published ports, so stacks never collide |

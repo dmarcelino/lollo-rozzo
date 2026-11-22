@@ -2,7 +2,7 @@
   "schema_version": 2,
   "diagram_type": "workflow",
   "meta": {
-    "title": "A release: from a tag to an admin's self-upgrade",
+    "title": "Release and dev builds: from a tag or a pull request to self-upgrade",
     "output": "docs/diagrams/release-workflow.html",
     "locale": "en",
     "quality_profile": "showcase",
@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "1293abf1f033b35bf7f97afbd1544a5f97cd8596"
+      "revision": "af93117008aedfcad3abe7ae9f21088dc62c2bdc"
     },
     "legend": {
       "entries": {
@@ -27,7 +27,7 @@
           "label": "GitHub release"
         },
         "external": {
-          "label": "Maintainer or admin"
+          "label": "Maintainer, contributor or admin"
         }
       }
     }
@@ -46,6 +46,10 @@
       "label": "publish.yml (GitHub Actions)"
     },
     {
+      "id": "contributor",
+      "label": "Contributor"
+    },
+    {
       "id": "stopped",
       "label": "Stopped",
       "variant": "exception"
@@ -53,6 +57,10 @@
     {
       "id": "release",
       "label": "GitHub release"
+    },
+    {
+      "id": "dev",
+      "label": "publish.yml, dev build"
     },
     {
       "id": "admin",
@@ -86,12 +94,12 @@
       "col": 0,
       "type": "external",
       "label": "push a tag",
-      "sublabel": "on the notes commit",
+      "sublabel": "on main or hotfix/*",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 29,
-          "end_line": 31,
+          "line": 39,
+          "end_line": 41,
           "label": "on: push tags"
         },
         {
@@ -100,9 +108,25 @@
         },
         {
           "path": ".agents/skills/release/SKILL.md",
-          "line": 94,
-          "end_line": 107,
+          "line": 102,
+          "end_line": 116,
           "label": "release skill: notes commit, then the tag"
+        }
+      ]
+    },
+    {
+      "id": "pr",
+      "lane": "contributor",
+      "col": 0,
+      "type": "external",
+      "label": "push to a PR",
+      "sublabel": "or run by hand",
+      "sources": [
+        {
+          "path": ".github/workflows/publish.yml",
+          "line": 39,
+          "end_line": 44,
+          "label": "on: pull_request, workflow_dispatch"
         }
       ]
     },
@@ -116,9 +140,15 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 41,
-          "end_line": 42,
-          "label": "uses ci.yml"
+          "line": 64,
+          "end_line": 76,
+          "label": "ci.yml on the commit; no forks, no renovate/"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "line": 14,
+          "end_line": 20,
+          "label": "workflow_call ref"
         }
       ]
     },
@@ -128,19 +158,25 @@
       "col": 1,
       "type": "backend",
       "label": "plan",
-      "sublabel": "tag matches VERSION",
+      "sublabel": "release or dev tag",
       "tag": "release/images",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 44,
-          "end_line": 67,
-          "label": "tag check, image list"
+          "line": 101,
+          "end_line": 138,
+          "label": "kind, tag, main or hotfix/* check"
+        },
+        {
+          "path": "release/dev-tag",
+          "line": 1,
+          "end_line": 31,
+          "label": "a branch’s dev tag"
         },
         {
           "path": "release/images",
           "line": 1,
-          "end_line": 13
+          "end_line": 14
         }
       ]
     },
@@ -154,15 +190,15 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 58,
-          "end_line": 62,
-          "label": "tag and VERSION disagree"
+          "line": 107,
+          "end_line": 121,
+          "label": "tag, VERSION and branch checks"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 235,
-          "end_line": 239,
-          "label": "not on both platforms"
+          "line": 313,
+          "end_line": 317,
+          "label": "every image on both platforms"
         }
       ]
     },
@@ -177,21 +213,18 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 69,
-          "end_line": 87,
-          "label": "one job per image and platform"
+          "line": 144,
+          "end_line": 163
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 98,
-          "end_line": 114,
-          "label": "reuse, or build and push by digest"
+          "line": 174,
+          "end_line": 190
         },
         {
           "path": "release/content-tag",
           "line": 1,
-          "end_line": 12,
-          "label": "what the tag hashes"
+          "end_line": 12
         }
       ]
     },
@@ -205,15 +238,13 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 158,
-          "end_line": 185,
-          "label": "reuse, or tag both digests"
+          "line": 235,
+          "end_line": 262
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 186,
-          "end_line": 191,
-          "label": "attestation"
+          "line": 263,
+          "end_line": 268
         }
       ]
     },
@@ -228,15 +259,13 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 109,
-          "end_line": 111,
-          "label": "per platform, SBOM, provenance"
+          "line": 185,
+          "end_line": 187
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 174,
-          "end_line": 185,
-          "label": "tagged, full name with digest"
+          "line": 246,
+          "end_line": 262
         }
       ]
     },
@@ -250,20 +279,18 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 222,
-          "end_line": 239,
-          "label": "write RELEASE"
+          "line": 300,
+          "end_line": 317
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 247,
-          "end_line": 289,
-          "label": "lolloctl, one job per platform"
+          "line": 325,
+          "end_line": 370
         },
         {
           "path": "release/lolloctl.Dockerfile",
           "line": 1,
-          "end_line": 31
+          "end_line": 33
         }
       ]
     },
@@ -273,13 +300,19 @@
       "col": 4,
       "type": "database",
       "label": "lolloctl",
-      "sublabel": ":vX.Y.Z, carries RELEASE",
+      "sublabel": ":vX.Y.Z or a dev tag",
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 323,
-          "end_line": 337,
-          "label": "tagged on both digests"
+          "line": 404,
+          "end_line": 418,
+          "label": "release: tag on both digests"
+        },
+        {
+          "path": ".github/workflows/publish.yml",
+          "line": 507,
+          "end_line": 528,
+          "label": "dev build: tag on both digests"
         }
       ]
     },
@@ -293,21 +326,21 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 343,
-          "end_line": 353,
-          "label": "wrapper and SHA256SUMS"
+          "line": 424,
+          "end_line": 434,
+          "label": "wrapper, SHA256SUMS"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 360,
-          "end_line": 367,
-          "label": "release/NOTES.md's highlights first"
+          "line": 441,
+          "end_line": 448,
+          "label": "NOTES.md highlights first"
         },
         {
           "path": ".github/workflows/publish.yml",
-          "line": 354,
-          "end_line": 388,
-          "label": "notes: what restarts"
+          "line": 435,
+          "end_line": 468,
+          "label": "images changed since the last release"
         }
       ]
     },
@@ -321,9 +354,8 @@
       "sources": [
         {
           "path": ".github/workflows/publish.yml",
-          "line": 392,
-          "end_line": 398,
-          "label": "gh release create"
+          "line": 473,
+          "end_line": 481
         }
       ]
     },
@@ -337,15 +369,15 @@
       "sources": [
         {
           "path": "release/lolloctl-wrapper.sh",
-          "line": 146,
-          "end_line": 161,
-          "label": "fetch, pull, then swap"
+          "line": 320,
+          "end_line": 335,
+          "label": "self-upgrade"
         },
         {
-          "path": "release/lolloctl-wrapper.sh",
-          "line": 30,
-          "end_line": 34,
-          "label": "the new wrapper pulls"
+          "path": "lolloctl",
+          "line": 2343,
+          "end_line": 2397,
+          "label": "new wrapper: release, or from a dev image"
         }
       ]
     },
@@ -359,9 +391,24 @@
       "sources": [
         {
           "path": ".agents/skills/release/SKILL.md",
-          "line": 109,
-          "end_line": 131,
-          "label": "after a final release"
+          "line": 117,
+          "end_line": 131
+        }
+      ]
+    },
+    {
+      "id": "dev-job",
+      "lane": "dev",
+      "col": 4,
+      "type": "backend",
+      "label": "dev",
+      "sublabel": "lolloctl tag only, no release",
+      "sources": [
+        {
+          "path": ".github/workflows/publish.yml",
+          "line": 483,
+          "end_line": 551,
+          "label": "the dev job"
         }
       ]
     }
@@ -372,6 +419,13 @@
       "from": "tag",
       "to": "checks",
       "variant": "emphasis"
+    },
+    {
+      "id": "pr-checks",
+      "from": "pr",
+      "to": "checks",
+      "label": "same repo, not renovate/*",
+      "role": "branch"
     },
     {
       "id": "checks-plan",
@@ -398,7 +452,7 @@
       "id": "plan-stop",
       "from": "plan",
       "to": "stop",
-      "label": "tag is not VERSION",
+      "label": "wrong tag or branch",
       "variant": "security",
       "role": "error"
     },
@@ -465,6 +519,20 @@
       "to": "next-version",
       "label": "final release",
       "role": "branch"
+    },
+    {
+      "id": "ctl-dev",
+      "from": "ctl-job",
+      "to": "dev-job",
+      "label": "dev build: digest",
+      "role": "branch"
+    },
+    {
+      "id": "dev-upgrade",
+      "from": "dev-job",
+      "to": "upgrade",
+      "label": "image, wrapper",
+      "role": "branch"
     }
   ],
   "cards": [
@@ -489,9 +557,18 @@
       "dot": "rose",
       "title": "Nothing moves after a release",
       "items": [
-        "no latest and nothing from main: the wrapper names the lolloctl image by digest",
+        "no latest and nothing from main without a tag: the wrapper names the lolloctl image by digest",
         "the notes start with release/NOTES.md's highlights, then list the images that changed, so which containers restart and whether vaults lock",
         "after a final release, the release skill sets VERSION to the next minor and deletes release/NOTES.md"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Dev builds",
+      "items": [
+        "a pull request from this repository, Renovate's excepted, or a run by hand on any branch but main",
+        "the same images, plus one lolloctl tag vX.Y.Z-dev.<slug>.<N>: no git tag, no GitHub release",
+        "self-upgrade pulls that image, pins its digest and fills in the wrapper template it carries"
       ]
     }
   ]

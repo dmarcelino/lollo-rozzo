@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# release/dev-tag BRANCH -> v<VERSION>-dev.<slug>, the name of BRANCH's dev
+# builds without their number: publish.yml appends .<N>, the first number not
+# yet published, and tags the lolloctl image with it (release/README.md, "Dev
+# builds"). No git tag and no GitHub release: only that image tag.
+#
+# The slug is BRANCH in lower case, each run of other characters than a-z and
+# 0-9 made one '-', trimmed, and cut to 40 characters, so the image tag stays
+# well under Docker's 128. A slug of digits only gets a 'b' in front: SemVer
+# forbids a numeric identifier with a leading zero.
+set -euo pipefail
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+branch=${1:-}
+[[ -n $branch ]] || {
+  echo "usage: release/dev-tag BRANCH" >&2
+  exit 2
+}
+version=$(<"$ROOT/VERSION")
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "dev-tag: VERSION is not X.Y.Z: $version" >&2
+  exit 1
+}
+slug=$(printf '%s' "$branch" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed -E 's/[^a-z0-9]+/-/g; s/^-+//')
+slug=${slug:0:40}
+slug=$(sed -E 's/-+$//' <<<"$slug")
+[[ -n $slug ]] || {
+  echo "dev-tag: '$branch' has no letter or digit to name its builds" >&2
+  exit 1
+}
+[[ ! $slug =~ ^[0-9]+$ ]] || slug=b$slug
+printf 'v%s-dev.%s\n' "$version" "$slug"

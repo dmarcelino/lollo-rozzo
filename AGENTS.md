@@ -72,7 +72,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 - **Doc-tools** ([rules](doc-tools/README.md#rules)): lolloctl owns the image, volume and networks; Compose only uses them. Only the app-server mounts the tools.
 - **Skills** ([rules](agent-skills/README.md#rules)): only `skills` installs them, replacing only its own; names never match upstream's; text stays generic.
 - **Backup and restore** ([rules](backup/README.md#rules)): they touch the state only through their own container, never into this repo; Lettuce's Google volumes only with `--with-google`, the Cloudflare API token never; `restore` refuses a running stack.
-- **Releases** ([rules](release/README.md#rules)): images are named by content, never by release; `doc-tools` and `code-server/exec` are never published; no `latest`; a file lolloctl reads at run time goes into the `lolloctl` image. Cut a release with the `release` skill (`.agents/skills/release/`): its highlights go in `release/NOTES.md`, never `[ci skip]` on a commit that gets tagged.
+- **Releases** ([rules](release/README.md#rules)): images are named by content, never by release; `doc-tools` and `code-server/exec` are never published; no `latest`; a file lolloctl reads at run time goes into the `lolloctl` image. Release tags go only on `main` or a `hotfix/*` branch; a pull request's dev build is only a `lolloctl:vX.Y.Z-dev.<slug>.<N>` tag (no git tag, no GitHub release), and its job never writes to the repository. Cut a release with the `release` skill (`.agents/skills/release/`): its highlights go in `release/NOTES.md`, never `[ci skip]` on a commit that gets tagged.
 
 ### Docs ([CONTRIBUTING.md](CONTRIBUTING.md#writing-docs))
 - README introduces and indexes, `docs/` is for users and admins, and CONTRIBUTING, ARCHITECTURE and the folder READMEs are for developers. This file holds directives only.
@@ -92,7 +92,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 ```bash
 tests/run.sh                 # all offline tests (docker, curl, dig, gh, secret-tool are stubbed)
 tests/run.sh <pattern>       # only tests whose function name contains <pattern>, e.g. tests/run.sh test_add_
-shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/run-browser-acceptance.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/lolloctl-wrapper.sh
+shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/run-browser-acceptance.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/dev-tag release/lolloctl-wrapper.sh
 tests/run-sidecar.sh vault            # vault tests (pytest in its image's `test` stage; needs Docker)
 tests/run-sidecar.sh vault -k vault   # extra args go to pytest
 tests/run-sidecar.sh gmail-triggers    # Gmail triggers' tests (pytest; the executor's run with landing)

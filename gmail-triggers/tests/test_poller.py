@@ -74,6 +74,15 @@ async def test_a_match_becomes_one_request(env, caplog):
     assert run.status == "queued" and run.total == 1 and run.messages[0]["id"] == mid
 
 
+async def test_a_rule_with_a_conversation_id_sends_it(env):
+    add_rule(env, conversation="conv-abc_1")
+    await started(env)
+    env.fake.add()
+    await env.poller.run_once()
+    [req] = env.requests()
+    assert req["conversation"] == "conv-abc_1"
+
+
 async def test_one_request_per_rule_per_poll(env):
     add_rule(env)
     add_rule(env, name="Travel", label_ids=["Label_2"])
