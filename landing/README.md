@@ -1,6 +1,6 @@
 # landing
 
-The `landing` service serves the landing page at the root of a stack's lollo host, `https://<name>-lollo.<domain>/`, with a link to each lollo page that is on and, with the code editor, a link to each agent's workspace. This folder also holds the lollo executor, `executor/run.mjs`, which runs in Lettuce's app-server, not in this image. The service has no profile of its own: it is on whenever any lollo page profile is (`lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server`). The person's view of the page is in [docs/user-guide.md](../docs/user-guide.md) ("What you get"), and its agent links in [docs/code-server.md](../docs/code-server.md) ("Using it"); the design record is [DESIGN.md](DESIGN.md); the executor's install and protocol are in [executor/README.md](executor/README.md).
+The `landing` service serves the landing page at the root of a stack's lollo host, `https://<name>-lollo.<domain>/`, with a link to each lollo page that is on and, with the code editor, a link to each agent's workspace. This folder also holds the lollo executor, `executor/run.mjs`, which runs in Lettuce's app-server, not in this image. The service has no profile of its own: it is on whenever any lollo page profile is (`lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server`, `lollo-browser`). The person's view of the page is in [docs/user-guide.md](../docs/user-guide.md) ("What you get"), and its agent links in [docs/code-server.md](../docs/code-server.md) ("Using it"); the design record is [DESIGN.md](DESIGN.md); the executor's install and protocol are in [executor/README.md](executor/README.md).
 
 ![The landing page, the lollo executor and what they talk to](../docs/diagrams/lollo-architecture.svg)
 
@@ -34,7 +34,7 @@ An interactive version, [lollo-architecture.html](../docs/diagrams/lollo-archite
 
 ## How it plugs in
 
-- **Overlay:** `compose/landing.yml` defines the `landing` service behind all three lollo page profiles: image `lollo-landing:local`, the `default` network only, no volumes and no host paths, read-only root, no capabilities, `no-new-privileges`, 128 MB.
+- **Overlay:** `compose/landing.yml` defines the `landing` service behind every lollo page profile (those of `PROFILE_ROUTES`): image `lollo-landing:local`, the `default` network only, no volumes and no host paths, read-only root, no capabilities, `no-new-privileges`, 128 MB.
 - **Environment:** `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` (set from `CF_LOLLO_AUD`), `CF_ACCESS_ISSUER`, `ALLOWED_USERS`, `PUBLIC_ORIGIN` (set from `LOLLO_ORIGIN`), `LETTUCE_ORIGIN` (set from Lettuce's `PUBLIC_ORIGIN`, for "Back to Lettuce"), `LOLLO_PROFILES` and `LOLLO_EXECUTOR_TOKEN`.
 - **Tunnel:** `cf_tunnel_configure` puts the lollo host's rules first: each `PROFILE_ROUTES` row whose profile is on, then, when any is, `LOLLO_LANDING_PATH` (`^/(assets/[^/]+)?$`) to `http://landing:8000`, then a 404 for the rest of the lollo host. So `/executor/v1/` and `/healthz` are never routed. `landing` serves every asset under `/assets/`, and `test_every_page_route_is_the_root_or_under_assets` checks that its routes stay within what the tunnel sends it.
 - **API for the executor:** `GET /executor/v1/status` and `PUT /executor/v1/agents`, behind `guard` from `lollo-common` (the token, no `Origin`, no tunnel headers).
@@ -47,7 +47,7 @@ An interactive version, [lollo-architecture.html](../docs/diagrams/lollo-archite
 Whatever the profiles, `check_lollo_audience` refuses a lollo service (`lollo_services`: each `PROFILE_ROUTES` service and `landing`) whose `CF_ACCESS_AUD` is not `CF_LOLLO_AUD`, or is Lettuce's `CF_ACCESS_AUD`, or whose `PUBLIC_ORIGIN` is not `LOLLO_ORIGIN`. cloudflared hands Lettuce's token to the BFF in plain HTTP, inside the namespace agents share, so a lollo page that took it could be driven by an agent that caught it.
 
 ### What `check_landing` refuses
-With any lollo page profile (`lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server`): `LOLLO_ORIGIN` or `CF_LOLLO_AUD` empty (the lollo host is missing, and `up` creates it), a missing or malformed `LOLLO_EXECUTOR_TOKEN`, and a `landing` service that is missing, not a hardened sidecar (`check_sidecar`), on a network other than `default`, or mounting anything.
+With any lollo page profile (`lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server`, `lollo-browser`): `LOLLO_ORIGIN` or `CF_LOLLO_AUD` empty (the lollo host is missing, and `up` creates it), a missing or malformed `LOLLO_EXECUTOR_TOKEN`, and a `landing` service that is missing, not a hardened sidecar (`check_sidecar`), on a network other than `default`, or mounting anything.
 
 ### The landing page stays passive
 It has no script (its CSP allows none), touches no other sidecar and opens no connection to Lettuce: it reads only the agent list the executor sends. Lollo sidecars go under `/<sidecar>/` on the lollo host, never on Lettuce's. The Fetch Metadata rules every lollo page follows are in [lollo-common](../lollo-common/README.md#rules).

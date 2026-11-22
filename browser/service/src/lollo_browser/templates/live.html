@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Live view{% endblock %}
+{% block shell_class %} wide{% endblock %}
+{% block head %}<script type="module" src="{{ base }}/live.js"></script>{% endblock %}
+{% block content %}
+<div class="row-between">
+  <h1>Live view</h1>
+  {% if task and tab %}
+  {% if tab.controlled %}
+  <form method="post" action="{{ base }}/tasks/{{ task.id }}/tabs/{{ tab.id }}/give">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button class="button">Give back</button>
+  </form>
+  {% else %}
+  <form method="post" action="{{ base }}/tasks/{{ task.id }}/tabs/{{ tab.id }}/take">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button class="button">Take over</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</div>
+{% if task and tab %}
+<p class="small">Task: {{ task.purpose }} ({{ tab.id }})<br>
+{% if tab.controlled %}<span class="pill warn">You have control</span> Agents can't act on this tab until you give it back.
+{% else %}<span class="pill">Watching</span> Your clicks and keys reach the browser only after you take over.{% endif %}</p>
+{% else %}
+<p class="small"><span class="pill">Watching</span> The whole browser display, read-only. Pick a tab on
+  <a href="{{ base }}/">Tasks</a> to take it over.</p>
+{% endif %}
+{% if held %}
+<div class="banner warn" role="status"><p>You have control of another tab ({{ held[1].id }} of
+  "{{ held[0].purpose }}"), so the display stays on it and this tab can't be shown.
+  <a href="{{ base }}/live?task={{ held[0].id }}&amp;tab={{ held[1].id }}">Go to it</a> and give it back to watch
+  this one.</p></div>
+{% endif %}
+{% if not connected %}<div class="banner warn" role="status"><p>The browser engine is not connected right now.</p></div>{% endif %}
+<p class="muted small">Check the address bar before you type anything or pay: it shows the site you are really on.</p>
+<div id="screen" class="screen" data-task="{{ task.id if task else '' }}" data-tab="{{ tab.id if tab else '' }}"
+  data-controlled="{{ 'true' if tab and tab.controlled else 'false' }}"></div>
+<p id="live-status" class="muted small">Connecting...</p>
+{% endblock %}

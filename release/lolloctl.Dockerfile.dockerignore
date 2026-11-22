@@ -11,6 +11,7 @@
 !landing/executor/run.mjs
 !doc-tools
 !code-server/exec
+!browser/engine/seccomp.json
 **/__pycache__
 **/*.pyc
 **/.pytest_cache

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{% if h.kind == "checkout" %}Checkout{% else %}Hand-off{% endif %}{% endblock %}
+{% block content %}
+<p class="crumb"><a href="{{ base }}/">Tasks</a></p>
+<h1>{% if h.kind == "checkout" %}A checkout for you{% else %}An agent needs you{% endif %}</h1>
+<section class="panel pending">
+  <blockquote>{{ h.summary }}</blockquote>
+  <p class="small">Task: {{ purpose or h.task_id }}<br>Site: {{ h.site or "none" }}<br>
+    <span class="url">Page when asked: {{ h.url }}</span><br>Asked at {{ h.created|time }}</p>
+  <p class="muted small">The summary was written by an agent, which may have been misled by a page: check the
+    address bar in the live view before you type anything or pay.</p>
+  <div class="form-actions">
+    <a class="button" href="{{ base }}/live?task={{ h.task_id }}&amp;tab={{ h.tab_id }}">Open the live view</a>
+  </div>
+  {% if h.status == "pending" %}
+  <form method="post" action="{{ base }}/h/{{ h.id }}/answer" class="form-actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button" name="action" value="done">Done</button>
+    <button class="button ghost" name="action" value="declined">Decline</button>
+  </form>
+  {% else %}
+  <p><span class="pill">Answered: {{ h.status }}</span>{% if h.answered_by %} by {{ h.answered_by }}{% endif %}</p>
+  {% endif %}
+</section>
+{% if h.kind == "checkout" %}{% include "_checkout_note.html" %}{% endif %}
+{% endblock %}

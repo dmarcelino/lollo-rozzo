@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Browser: your agent acts on a site, you keep the last word",
+    "output": "docs/diagrams/browser-flow.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    {
+      "id": "you",
+      "type": "external",
+      "icon": "person",
+      "label": "You",
+      "sublabel": "chat, <lollo>/browser/"
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "Your agent",
+      "sublabel": "in your stack"
+    },
+    {
+      "id": "vault",
+      "type": "security",
+      "label": "Your vault",
+      "sublabel": "<lollo>/vault/"
+    },
+    {
+      "id": "browser",
+      "type": "security",
+      "label": "Browser",
+      "sublabel": "tasks, hand-offs, sites"
+    },
+    {
+      "id": "shop",
+      "type": "external",
+      "label": "The shop's site",
+      "sublabel": "through pipelock"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 300,
+      "label": "Start, signed out"
+    },
+    {
+      "from": 315,
+      "to": 520,
+      "label": "Sign in with a vault login"
+    },
+    {
+      "from": 535,
+      "to": 830,
+      "label": "Checkout, handed to you"
+    }
+  ],
+  "messages": [
+    {
+      "id": "ask",
+      "from": "you",
+      "to": "agent",
+      "y": 170,
+      "label": "order the ink at shop.example.com"
+    },
+    {
+      "id": "task",
+      "from": "agent",
+      "to": "browser",
+      "y": 215,
+      "label": "start a task, open the shop",
+      "note": "signed out, unless you keep the site"
+    },
+    {
+      "id": "pages",
+      "from": "browser",
+      "to": "shop",
+      "y": 265,
+      "label": "pages",
+      "note": "public sites only; page text is data"
+    },
+    {
+      "id": "request",
+      "from": "agent",
+      "to": "vault",
+      "y": 340,
+      "label": "the password, for shop.example.com"
+    },
+    {
+      "id": "approve",
+      "from": "vault",
+      "to": "you",
+      "y": 385,
+      "label": "approve?",
+      "variant": "security"
+    },
+    {
+      "id": "share",
+      "from": "you",
+      "to": "vault",
+      "y": 425,
+      "label": "Share once",
+      "variant": "return"
+    },
+    {
+      "id": "type",
+      "from": "agent",
+      "to": "browser",
+      "y": 480,
+      "label": "type it on shop.example.com",
+      "variant": "security",
+      "note": "masked; nothing typed on another site"
+    },
+    {
+      "id": "click",
+      "from": "agent",
+      "to": "browser",
+      "y": 560,
+      "label": "click \"Place order\"",
+      "note": "checkouts not allowed on this site"
+    },
+    {
+      "id": "handoff",
+      "from": "browser",
+      "to": "you",
+      "y": 635,
+      "label": "notification: a checkout for you",
+      "variant": "emphasis",
+      "note": "the click is not performed"
+    },
+    {
+      "id": "takeover",
+      "from": "you",
+      "to": "browser",
+      "y": 700,
+      "label": "live view: take over, pay, Done",
+      "note": "check the address bar first"
+    },
+    {
+      "id": "done",
+      "from": "browser",
+      "to": "agent",
+      "y": 755,
+      "label": "done",
+      "variant": "return"
+    },
+    {
+      "id": "tell",
+      "from": "agent",
+      "to": "you",
+      "y": 805,
+      "label": "the order, in the chat",
+      "variant": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What you control",
+      "items": [
+        "Every task live on <lollo>/browser/, with Take over and End task",
+        "Per site: Keep me signed in, Agents may finish checkouts",
+        "History of every task, never a secret value"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "What it does not stop",
+      "items": [
+        "A page can still try to mislead the agent",
+        "Recognising a checkout is a guess that can miss",
+        "Every agent of the stack can use a kept sign-in"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Limits that hold",
+      "items": [
+        "The vault's approval for a card or password from it",
+        "Your bank's confirmation and the card's own limits",
+        "Pages reach only public sites, through pipelock"
+      ]
+    }
+  ]
+}

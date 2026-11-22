@@ -1,0 +1,112 @@
+# Merged by lolloctl on top of upstream/docker/compose.yml for every stack.
+# The browser (browser/, docs/browser.md): a Chromium agents drive to act on
+# sites for the person, which the person watches, takes over and limits from
+# /browser/ on the lollo host. Opt-in behind the `lollo-browser` profile, which
+# needs `lollo-pipelock` (profile_unmet); without it this file adds nothing
+# but `browser` to lollo-pipelock's networks, where pipelock is then alone.
+#
+# Two containers. lollo-browser-engine runs Chromium (sandbox on) and its
+# display, where hostile pages run: it holds no data at rest, mounts nothing,
+# and its only network is `browser`, internal, shared with lollo-browser and
+# lollo-pipelock, so its only way out is pipelock, which refuses private
+# addresses. lollo-browser drives it (the agents' MCP server at
+# http://lollo-browser:8000/mcp, the person's page at /browser/, which the
+# tunnel forwards and which needs a Cloudflare Access JWT of the lollo's own
+# Access application) and keeps the settings, audit log and kept sign-ins on
+# its own volume. The app-server is not on `browser`.
+#
+# Chromium's sandbox needs our seccomp profile (Docker's default plus the
+# namespace calls and chroot), so every capability stays dropped. Compose
+# reads the file itself and sends its JSON to Docker, so the path is under the
+# code, like the build contexts; in release mode the lolloctl image carries it.
+# `lolloctl check` refuses a stack where either service loses its hardening,
+# the engine another network, its seccomp profile or its sandbox, the
+# `browser` network a member or `internal`, or another service mounts
+# browser-data (check_browser, check_stack).
+# Relative paths resolve against --project-directory (upstream/docker).
+services:
+  lollo-browser-engine:
+    profiles: ["lollo-browser"]
+    build:
+      context: ${LOLLO_HOME:?LOLLO_HOME is not set}/browser/engine
+    image: ${LOLLO_IMAGE_BROWSER_ENGINE:-lollo-browser-engine:local}
+    environment:
+      # The path of the control WebSocket and the display's password: only
+      # lollo-browser and the engine get it.
+      BROWSER_ENGINE_SECRET: ${BROWSER_ENGINE_SECRET:-}
+      BROWSER_PROXY: http://lollo-pipelock:8888
+      TZ: ${TZ:-UTC}
+    networks:
+      - browser
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Chromium's renderers share memory through /dev/shm; Docker's 64 MiB is
+    # too small for a few tabs. It counts against mem_limit.
+    shm_size: 512m
+    cap_drop: [ALL]
+    security_opt:
+      - "no-new-privileges:true"
+      - "seccomp=${LOLLO_HOME:?LOLLO_HOME is not set}/browser/engine/seccomp.json"
+    mem_limit: 2g
+    pids_limit: 512
+    # Its image's health check passes once the control WebSocket accepts a
+    # connection at the secret path; `up` starts the engine first and waits for it.
+    restart: unless-stopped
+
+  lollo-browser:
+    profiles: ["lollo-browser"]
+    build:
+      context: ${LOLLO_HOME:?LOLLO_HOME is not set}/browser/service
+      additional_contexts:
+        lollo-common: ${LOLLO_HOME:?LOLLO_HOME is not set}/lollo-common
+    image: ${LOLLO_IMAGE_BROWSER:-lollo-browser:local}
+    environment:
+      BROWSER_ENGINE_URL: ws://lollo-browser-engine:3000
+      BROWSER_ENGINE_SECRET: ${BROWSER_ENGINE_SECRET:-}
+      BROWSER_VNC: lollo-browser-engine:5900
+      BROWSER_VAPID_PUBLIC_KEY: ${BROWSER_VAPID_PUBLIC_KEY:-}
+      BROWSER_VAPID_PRIVATE_KEY: ${BROWSER_VAPID_PRIVATE_KEY:-}
+      PUSH_VAPID_CONTACT_EMAIL: ${PUSH_VAPID_CONTACT_EMAIL:-}
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      # The lollo's own Access application and host, never Lettuce's.
+      CF_ACCESS_AUD: ${CF_LOLLO_AUD:-}
+      CF_ACCESS_ISSUER: ${CF_ACCESS_ISSUER:-}
+      ALLOWED_USERS: ${ALLOWED_USERS:-}
+      PUBLIC_ORIGIN: ${LOLLO_ORIGIN:-}
+      TZ: ${TZ:-UTC}
+    # default: the app-server (/mcp) and cloudflared (/browser/); browser: the engine.
+    networks:
+      - default
+      - browser
+    volumes:
+      - browser-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 128
+    depends_on:
+      lollo-browser-engine:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The engine's only way out. Naming a network drops the implicit default, so
+  # it is listed too.
+  lollo-pipelock:
+    networks:
+      - default
+      - browser
+
+networks:
+  # The engine's own network: no route out of the host, so Chromium's every
+  # request goes through lollo-pipelock.
+  browser:
+    internal: true
+
+volumes:
+  # Deleted by `lolloctl remove` (compose down -v). Never backed up: it holds
+  # live sign-ins (BACKUP_VOLUMES in lolloctl).
+  browser-data:

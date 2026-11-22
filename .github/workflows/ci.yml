@@ -41,7 +41,7 @@ jobs:
           tar -xJf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION" >>"$GITHUB_PATH"
       - run: shellcheck --version
-      - run: shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/lolloctl-wrapper.sh
+      - run: shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/run-browser-acceptance.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/lolloctl-wrapper.sh
 
   cli:
     runs-on: ubuntu-24.04
@@ -59,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dir: [landing, vault, gmail-triggers, news-radar, code-server, doc-tools]
+        dir: [landing, vault, gmail-triggers, news-radar, code-server, doc-tools, browser]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,6 +86,18 @@ jobs:
         with:
           persist-credentials: false
       - run: tests/run-pipelock.sh
+
+  # Both browser images, pipelock and hostile fixture pages on internal
+  # networks (browser/acceptance/). A cold run builds the engine (Chromium)
+  # and the service from scratch.
+  browser-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: tests/run-browser-acceptance.sh
 
   docs:
     runs-on: ubuntu-24.04

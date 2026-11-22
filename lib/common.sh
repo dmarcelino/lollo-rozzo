@@ -391,6 +391,8 @@ normalise_profiles() {
 profile_unmet() {
   if has_profile "$1" lollo-gmail-triggers && ! has_profile "$1" google; then
     printf 'the lollo-gmail-triggers profile needs google (it uses the connection made in Settings -> Google)'
+  elif has_profile "$1" lollo-browser && ! has_profile "$1" lollo-pipelock; then
+    printf "the lollo-browser profile needs lollo-pipelock (the browser's engine reaches the internet only through it)"
   fi
 }
 
@@ -514,6 +516,7 @@ compose_env() {
     -f "$LOLLO_HOME/compose/news-radar.yml" \
     -f "$LOLLO_HOME/compose/pipelock.yml" \
     -f "$LOLLO_HOME/compose/code-server.yml" \
+    -f "$LOLLO_HOME/compose/browser.yml" \
     -f "$LOLLO_HOME/compose/landing.yml" \
     "${extra[@]}" \
     --env-file "$env_file" \
@@ -681,6 +684,32 @@ ensure_executor_token() {
     env_set "$f" LOLLO_EXECUTOR_TOKEN "$(openssl rand -hex 32)"
 }
 
+# BROWSER_SECRET_RE: the engine's secret, base64url. It is the path of the
+# engine's control WebSocket, and its first 8 characters the display's password.
+BROWSER_SECRET_RE='^[A-Za-z0-9_-]{43,}$'
+
+# ensure_browser_secrets NAME -> gives the stack, once, the browser's VAPID
+# keypair (BROWSER_VAPID_*, its own, like the vault's) and the secret only the
+# engine and lollo-browser know (BROWSER_ENGINE_SECRET), whatever the profiles,
+# so a stack that turns the browser on later has them. Each is made only when
+# missing and never rotated: a new keypair invalidates every device's push
+# subscription. To replace one, delete its line(s) from stack.env and run
+# `lolloctl up`.
+ensure_browser_secrets() {
+  local f pair secret
+  f=$(stack_env "$1")
+  if [[ -z $(env_get "$f" BROWSER_VAPID_PUBLIC_KEY) || -z $(env_get "$f" BROWSER_VAPID_PRIVATE_KEY) ]]; then
+    pair=$(vapid_keypair) || exit 1
+    env_set "$f" BROWSER_VAPID_PUBLIC_KEY "${pair% *}"
+    env_set "$f" BROWSER_VAPID_PRIVATE_KEY "${pair#* }"
+  fi
+  if [[ -z $(env_get "$f" BROWSER_ENGINE_SECRET) ]]; then
+    secret=$(openssl rand 32 | base64url) || die "openssl could not generate the browser's engine secret"
+    [[ $secret =~ $BROWSER_SECRET_RE ]] || die "openssl produced a malformed browser engine secret"
+    env_set "$f" BROWSER_ENGINE_SECRET "$secret"
+  fi
+}
+
 # env_without_profile FILE PROFILE -> the path of a private temp copy of the env
 # FILE whose COMPOSE_PROFILES lacks PROFILE; the caller removes it
 env_without_profile() {
@@ -795,12 +824,12 @@ check_stack() {
   k=$(jq -r '([.services | to_entries[]
       | select([(.value.volumes // [])[] | select(.source == "google-creds" or .source == "vault-data"
         or .source == "pipelock-data" or .source == "code-server-data" or .source == "code-exec-keys"
-        or .source == "code-server-sock" or .source == "news-radar-data")] | length > 0)
-      | .key] + ["lollo-gmail-triggers", "lollo-vault", "lollo-pipelock", "lollo-news-radar", "lollo-code-server", "lollo-code-server-editor", "lollo-code-server-exec"]) as $held
+        or .source == "code-server-sock" or .source == "news-radar-data" or .source == "browser-data")] | length > 0)
+      | .key] + ["lollo-gmail-triggers", "lollo-vault", "lollo-pipelock", "lollo-news-radar", "lollo-code-server", "lollo-code-server-editor", "lollo-code-server-exec", "lollo-browser"]) as $held
     | [.services | to_entries[] | .key as $k | (.value.volumes_from // [])[]
       | sub("^service:"; "") | sub(":(ro|rw)$"; "") | select(. as $t | $held | index($t)) | "\($k) from \(.)"]
     | join(", ")' <<<"$rendered")
-  [[ -z $k ]] || die "$name: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar or the code editor ($k)"
+  [[ -z $k ]] || die "$name: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data or the code editor ($k)"
   # Both volumes outlive their profile, so these hold whatever the profiles.
   k=$(volume_users "$rendered" vault-data lollo-vault)
   [[ -z $k ]] || die "$name: $k mount(s) the vault's volume; only the vault service may"
@@ -808,6 +837,8 @@ check_stack() {
   [[ -z $k ]] || die "$name: $k mount(s) pipelock's volume (its signing key and receipts); only lollo-pipelock may"
   k=$(volume_users "$rendered" news-radar-data lollo-news-radar)
   [[ -z $k ]] || die "$name: $k mount(s) News Radar's volume; only lollo-news-radar may"
+  k=$(volume_users "$rendered" browser-data lollo-browser)
+  [[ -z $k ]] || die "$name: $k mount(s) the browser's volume (its kept sign-ins, settings and audit log); only lollo-browser may"
   k=$(volume_users "$rendered" code-server-data lollo-code-server-editor)
   [[ -z $k ]] || die "$name: $k mount(s) the code editor's volume (its state and SSH key); only lollo-code-server-editor may"
   k=$(volume_users "$rendered" code-exec-keys lollo-code-server-editor lollo-code-server-exec)
@@ -819,6 +850,19 @@ check_stack() {
       | select($m | test("^service:lollo-code-server(-editor|-exec)?$") or (startswith("container:") and contains("code-server")))
       | "\(.key) shares the network namespace of the code editor (\($m))"] | join("; ")' <<<"$rendered")
   [[ -z $k ]] || die "$name: $k"
+  # The browser's engine loads hostile pages; its network leads only to
+  # pipelock. Whatever the profiles, since lollo-pipelock joins it either way;
+  # so sharing pipelock's namespace would put a service on that network too.
+  k=$(jq -r '[.services | to_entries[] | (.value.network_mode // "") as $m
+      | select($m | test("^service:lollo-browser(-engine)?$") or (startswith("container:") and contains("lollo-browser")))
+      | "\(.key) shares the network namespace of the browser (\($m))"] | join("; ")' <<<"$rendered")
+  [[ -z $k ]] || die "$name: $k"
+  k=$(jq -r '[.services | to_entries[] | (.value.network_mode // "") as $m
+      | select($m == "service:lollo-pipelock" or ($m | startswith("container:") and contains("lollo-pipelock")))
+      | "\(.key) shares the network namespace of lollo-pipelock (\($m)), which is on the browser'"'"'s network"] | join("; ")' <<<"$rendered")
+  [[ -z $k ]] || die "$name: $k"
+  k=$(browser_network_members "$name" "$rendered" | awk '!/^lollo-(browser(-engine)?|pipelock)$/' | paste -sd, - | sed 's/,/, /g')
+  [[ -z $k ]] || die "$name: $k join(s) the browser's network; only lollo-browser-engine, lollo-browser and lollo-pipelock may (compose/browser.yml)"
   check_images "$name" "$rendered"
   if has_profile "$profiles" lollo-vault; then
     check_sidecar "$name" "$rendered" lollo-vault lollo-vault compose/vault.yml
@@ -834,6 +878,14 @@ check_stack() {
   fi
   if has_profile "$profiles" lollo-news-radar; then
     check_news_radar "$name" "$rendered"
+  fi
+  if has_profile "$profiles" lollo-browser; then
+    for p in BROWSER_VAPID_PUBLIC_KEY BROWSER_VAPID_PRIVATE_KEY; do
+      [[ -n $(env_get "$f" "$p") ]] || die "$name: $p is empty"
+    done
+    [[ $(env_get "$f" BROWSER_ENGINE_SECRET) =~ $BROWSER_SECRET_RE ]] ||
+      die "$name: BROWSER_ENGINE_SECRET must be at least 43 base64url characters (delete the line and run: lolloctl up $name)"
+    check_browser "$name" "$rendered"
   fi
   k=$(lollo_profiles "$profiles")
   if [[ -n $k ]]; then
@@ -994,7 +1046,8 @@ check_sidecar() {
 # compose/pipelock.yml gives it (check_sidecar), and the app-server uses it
 # (compose/pipelock-proxy.yml) for everything but stack-internal traffic:
 # pipelock must never see the vault's values or the executor's token (which
-# goes to gmail-triggers, news-radar and landing).
+# goes to gmail-triggers, news-radar and landing), nor the vault values agents
+# type through the browser (lollo-browser).
 check_pipelock() {
   local name=$1 rendered=$2 k v
   check_sidecar "$name" "$rendered" lollo-pipelock lollo-pipelock compose/pipelock.yml
@@ -1004,7 +1057,7 @@ check_pipelock() {
       die "$name: the app-server's $k must be http://lollo-pipelock:8888 with the lollo-pipelock profile (compose/pipelock-proxy.yml)"
   done
   for k in NO_PROXY no_proxy; do
-    for v in lollo-vault lollo-gmail-triggers lollo-news-radar landing; do
+    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-browser landing; do
       jq -e --arg k "$k" --arg v "$v" '.services["app-server"].environment[$k] // "" | split(",") | index($v)' <<<"$rendered" >/dev/null ||
         die "$name: the app-server's $k must list $v; pipelock must not see its traffic (compose/pipelock-proxy.yml)"
     done
@@ -1056,6 +1109,69 @@ check_news_radar() {
   jq -e '[(.volumes // [])[] | select(.type != "tmpfs") | {type, source, target}]
     == [{"type": "volume", "source": "news-radar-data", "target": "/data"}]' <<<"$svc" >/dev/null ||
     die "$name: lollo-news-radar may mount only its volume news-radar-data, at /data (compose/news-radar.yml)"
+}
+
+# browser_network_members NAME RENDERED -> the services on the browser's
+# network, one per line, sorted: those naming `browser`, or any network Compose
+# names lollo-NAME_browser, the network's own name
+browser_network_members() {
+  jq -r --arg n "lollo-$1_browser" '[.networks // {} | to_entries[] | select(.key == "browser" or .value.name == $n) | .key] as $nets
+    | .services | to_entries[] | select(.value.networks // {} | keys | any(. as $k | $nets | index($k))) | .key' <<<"$2" | sort
+}
+
+# BROWSER_SECCOMP: the engine's seccomp profile, under the code (in release
+# mode the lolloctl image carries it). Compose reads it and sends its JSON.
+BROWSER_SECCOMP=browser/engine/seccomp.json
+
+# check_browser NAME RENDERED -> the browser's two services keep what
+# compose/browser.yml gives them (browser/README.md, Rules):
+# - both: a hardened sidecar (check_sidecar) with no-new-privileges and memory
+#   and process limits;
+# - the engine (lollo-browser-engine): no volume at all, the `browser` network
+#   only, our seccomp profile and no other, nothing unconfined, not root, and
+#   no switch that turns Chromium's sandbox off in its command, entrypoint or
+#   environment;
+# - lollo-browser: the default and `browser` networks, and only its volume,
+#   browser-data, at /data;
+# and the `browser` network internal, with exactly the engine, lollo-browser
+# and lollo-pipelock on it.
+check_browser() {
+  local name=$1 rendered=$2 engine svc s k members
+  for s in lollo-browser-engine lollo-browser; do
+    check_sidecar "$name" "$rendered" lollo-browser "$s" compose/browser.yml
+    svc=$(jq -c --arg s "$s" '.services[$s]' <<<"$rendered")
+    jq -e '(.security_opt // []) | any(. == "no-new-privileges:true" or . == "no-new-privileges" or . == "no-new-privileges=true")' <<<"$svc" >/dev/null ||
+      die "$name: $s must have no-new-privileges (compose/browser.yml)"
+    jq -e '((.mem_limit // "0") | tostring | . != "0" and . != "") and ((.pids_limit // 0) | tonumber > 0)' <<<"$svc" >/dev/null ||
+      die "$name: $s must have a mem_limit and a pids_limit (compose/browser.yml)"
+  done
+  engine=$(jq -c '.services["lollo-browser-engine"]' <<<"$rendered")
+  jq -e '[(.volumes // [])[] | select(.type != "tmpfs")] | length == 0' <<<"$engine" >/dev/null ||
+    die "$name: lollo-browser-engine must not mount anything; pages run there, so it holds no data (compose/browser.yml)"
+  jq -e '(.networks // {"default": null} | keys) == ["browser"]' <<<"$engine" >/dev/null ||
+    die "$name: lollo-browser-engine must be on the browser network only; its only way out is lollo-pipelock (compose/browser.yml)"
+  jq -e --arg p "seccomp=$LOLLO_HOME/$BROWSER_SECCOMP" '[(.security_opt // [])[] | select(test("^seccomp[=:]"))] == [$p]' <<<"$engine" >/dev/null ||
+    die "$name: lollo-browser-engine must run with seccomp=$LOLLO_HOME/$BROWSER_SECCOMP and no other seccomp profile; Chromium's sandbox needs it (compose/browser.yml)"
+  [[ -f $LOLLO_HOME/$BROWSER_SECCOMP ]] || die "$name: the engine's seccomp profile $LOLLO_HOME/$BROWSER_SECCOMP is missing"
+  k=$(jq -r '[(.security_opt // [])[] | select(test("unconfined|disable"; "i"))] | join(", ")' <<<"$engine")
+  [[ -z $k ]] || die "$name: lollo-browser-engine must not set $k; on Ubuntu an unconfined AppArmor profile breaks Chromium's sandbox, and the rest weaken its container (compose/browser.yml)"
+  jq -e '(.user // "") | test("^(0|root)(:|$)") | not' <<<"$engine" >/dev/null ||
+    die "$name: lollo-browser-engine must not run as root; Chromium's sandbox runs as its image's user (compose/browser.yml)"
+  k=$(jq -r '[((.command // []), (.entrypoint // []) | if type == "array" then .[] else . end),
+      ((.environment // {}) | to_entries[] | select(.key != "BROWSER_ENGINE_SECRET") | "\(.key)=\(.value // "")")
+    | select(test("no[-_]?sandbox|disable[-_][a-z_-]*sandbox|no-zygote|chromium_?sandbox"; "i"))] | join(", ")' <<<"$engine")
+  [[ -z $k ]] || die "$name: lollo-browser-engine must not turn Chromium's sandbox off ($k); see browser/README.md"
+  svc=$(jq -c '.services["lollo-browser"]' <<<"$rendered")
+  jq -e '(.networks // {} | keys) == ["browser", "default"]' <<<"$svc" >/dev/null ||
+    die "$name: lollo-browser must be on the default and browser networks only (compose/browser.yml)"
+  jq -e '[(.volumes // [])[] | select(.type != "tmpfs") | {type, source, target}]
+    == [{"type": "volume", "source": "browser-data", "target": "/data"}]' <<<"$svc" >/dev/null ||
+    die "$name: lollo-browser may mount only its volume browser-data, at /data (compose/browser.yml)"
+  members=$(browser_network_members "$name" "$rendered" | paste -sd, -)
+  [[ $members == lollo-browser,lollo-browser-engine,lollo-pipelock ]] ||
+    die "$name: only lollo-browser-engine, lollo-browser and lollo-pipelock may join the browser network, and all three must (found: ${members:-none})"
+  jq -e '.networks.browser.internal == true' <<<"$rendered" >/dev/null ||
+    die "$name: the browser network must be internal; the engine's only way out is lollo-pipelock (compose/browser.yml)"
 }
 
 # check_gmail_triggers NAME RENDERED STATE_DIR -> the gmail-triggers service keeps

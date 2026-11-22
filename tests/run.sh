@@ -921,7 +921,7 @@ test_check_refuses_the_vault_profile_without_the_vault() {
 # proxy settings from compose/pipelock-proxy.yml
 pipelock_config() {
   local svc=${1:-'{"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],"volumes":[{"type":"volume","source":"pipelock-data","target":"/data"}]}'}
-  local np=localhost,127.0.0.1,::1,lollo-pipelock,lollo-vault,lollo-gmail-triggers,lollo-news-radar,landing,searxng,ddg-mcp,google-mcp,host.docker.internal
+  local np=localhost,127.0.0.1,::1,lollo-pipelock,lollo-vault,lollo-gmail-triggers,lollo-news-radar,lollo-browser,landing,searxng,ddg-mcp,google-mcp,host.docker.internal
   config_edit '.services["lollo-pipelock"] = '"$svc"'
     | .services["app-server"].environment += {"HTTPS_PROXY":"http://lollo-pipelock:8888","HTTP_PROXY":"http://lollo-pipelock:8888",
       "https_proxy":"http://lollo-pipelock:8888","http_proxy":"http://lollo-pipelock:8888","NO_PROXY":"'"$np"'","no_proxy":"'"$np"'",
@@ -1016,7 +1016,7 @@ test_check_refuses_a_proxy_that_would_see_the_vault_or_the_executor() {
   added
   local k v
   for k in NO_PROXY no_proxy; do
-    for v in lollo-vault lollo-gmail-triggers lollo-news-radar landing; do
+    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-browser landing; do
       with_pipelock
       config_edit '.services["app-server"].environment["'"$k"'"] |= (split(",") - ["'"$v"'"] | join(","))'
       ctl check alfred
@@ -1155,7 +1155,7 @@ test_check_refuses_another_service_on_a_symlink_to_the_rules() {
 }
 
 test_check_refuses_volumes_from_gmail_triggers() {
-  triggers_refused ".services.bff.volumes_from = [\"lollo-gmail-triggers:ro\"]" "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar or the code editor (bff from lollo-gmail-triggers)"
+  triggers_refused ".services.bff.volumes_from = [\"lollo-gmail-triggers:ro\"]" "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data or the code editor (bff from lollo-gmail-triggers)"
 }
 
 test_check_refuses_a_volume_bound_to_the_rules() {
@@ -1216,7 +1216,7 @@ test_check_refuses_volumes_from_a_google_creds_holder_whatever_the_profiles() {
     | .services.searxng = {"volumes_from":["service:bff"]}'
   ctl check alfred
   bad_rc
-  out_has "alfred: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar or the code editor (searxng from bff)"
+  out_has "alfred: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data or the code editor (searxng from bff)"
 }
 
 test_check_refuses_volumes_from_the_vault() {
@@ -1388,6 +1388,557 @@ test_check_refuses_another_service_on_the_news_radar_volume_whatever_the_profile
   out_has "searxng from lollo-news-radar"
 }
 
+# ── browser ─────────────────────────────────────────────────────────────────
+# browser_config -> the rendered config also holds the browser's two services,
+# lollo-pipelock on its network and the network itself, as Compose renders
+# compose/browser.yml for alfred (taken from a real render), and the landing
+# service; the test's copy of the code has the engine's seccomp profile
+browser_config() {
+  mkdir -p "$H/browser/engine"
+  printf '{"defaultAction":"SCMP_ACT_ERRNO"}\n' >"$H/browser/engine/seccomp.json"
+  # shellcheck disable=SC2016 # ${KEY} is for the stub, not for bash
+  config_edit '.services["lollo-browser-engine"] = {"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],"shm_size":"536870912",
+      "command":null,"entrypoint":null,
+      "environment":{"BROWSER_ENGINE_SECRET":"${BROWSER_ENGINE_SECRET}","BROWSER_PROXY":"http://lollo-pipelock:8888","TZ":"UTC"},
+      "networks":{"browser":null},"mem_limit":"2147483648","pids_limit":512,
+      "security_opt":["no-new-privileges:true","seccomp='"$H"'/browser/engine/seccomp.json"]}
+    | .services["lollo-browser"] = {"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],
+      "environment":('"$LOLLO_ENV"' + {"BROWSER_ENGINE_SECRET":"${BROWSER_ENGINE_SECRET}","BROWSER_ENGINE_URL":"ws://lollo-browser-engine:3000"}),
+      "networks":{"browser":null,"default":null},"mem_limit":"536870912","pids_limit":128,
+      "security_opt":["no-new-privileges:true"],
+      "volumes":[{"type":"volume","source":"browser-data","target":"/data","volume":{}}],
+      "depends_on":{"lollo-browser-engine":{"condition":"service_healthy","required":true}}}
+    | .services["lollo-pipelock"].networks = {"browser":null,"default":null}
+    | .networks.browser = {"name":"lollo-alfred_browser","ipam":{},"internal":true}'
+  landing_config
+}
+
+# with_browser -> alfred runs the lollo-browser profile (with lollo-pipelock), with
+# the services both render
+with_browser() {
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-pipelock,lollo-browser/' "$D/config.env"
+  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-pipelock,lollo-browser/' "$D/stacks/alfred/stack.env"
+  pipelock_config
+  browser_config
+}
+
+# browser_refused JQ EXPECTED -> with alfred's browser edited by the jq filter
+# JQ, `check` fails and says EXPECTED
+browser_refused() {
+  added
+  with_browser
+  config_edit "$1"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: $2"
+}
+BE='.services["lollo-browser-engine"]'
+BS='.services["lollo-browser"]'
+
+test_check_accepts_the_browser_as_rendered() {
+  added
+  with_browser
+  ctl check alfred
+  ok_rc
+}
+
+test_check_browser_refuses_a_missing_service() {
+  browser_refused "del($BE)" "the lollo-browser profile is on but lollo-browser-engine is not in the rendered config"
+  teardown
+  setup
+  browser_refused "del($BS)" "the lollo-browser profile is on but lollo-browser is not in the rendered config"
+}
+
+test_check_browser_refuses_a_writable_root() {
+  browser_refused "del($BE.read_only)" "lollo-browser-engine must have read_only: true"
+  teardown
+  setup
+  browser_refused "del($BS.read_only)" "lollo-browser must have read_only: true"
+}
+
+test_check_browser_refuses_capabilities() {
+  browser_refused "$BE.cap_drop = [\"NET_RAW\"]" "lollo-browser-engine must drop all capabilities"
+  teardown
+  setup
+  browser_refused "$BE.cap_add = [\"SYS_ADMIN\"]" "lollo-browser-engine must not set cap_add"
+  teardown
+  setup
+  browser_refused "$BS.cap_add = [\"SYS_ADMIN\"]" "lollo-browser must not set cap_add"
+}
+
+test_check_browser_refuses_privileges_and_shared_namespaces() {
+  local e
+  for e in "privileged = true|privileged" "pid = \"host\"|pid" "ipc = \"host\"|ipc" "devices = [\"/dev/kvm\"]|devices" \
+    "network_mode = \"host\"|network_mode" "volumes_from = [\"app-server\"]|volumes_from"; do
+    teardown
+    setup
+    browser_refused "$BE.${e%|*}" "lollo-browser-engine must not set ${e#*|}"
+  done
+}
+
+test_check_browser_refuses_no_new_privileges_off() {
+  browser_refused "$BE.security_opt -= [\"no-new-privileges:true\"]" "lollo-browser-engine must have no-new-privileges"
+  teardown
+  setup
+  browser_refused "$BS.security_opt = []" "lollo-browser must have no-new-privileges"
+}
+
+test_check_browser_refuses_no_limits() {
+  browser_refused "del($BE.pids_limit)" "lollo-browser-engine must have a mem_limit and a pids_limit"
+  teardown
+  setup
+  browser_refused "del($BS.mem_limit)" "lollo-browser must have a mem_limit and a pids_limit"
+}
+
+test_check_browser_refuses_a_host_path() {
+  browser_refused "$BE.volumes = [{\"type\":\"bind\",\"source\":\"/srv\",\"target\":\"/srv\"}]" "lollo-browser-engine must not mount host paths"
+  teardown
+  setup
+  browser_refused "$BS.volumes += [{\"type\":\"bind\",\"source\":\"/srv\",\"target\":\"/srv\"}]" "lollo-browser must not mount host paths"
+}
+
+test_check_browser_refuses_a_volume_on_the_engine() {
+  browser_refused "$BE.volumes = [{\"type\":\"volume\",\"source\":\"scratch\",\"target\":\"/home\"}]" "lollo-browser-engine must not mount anything"
+}
+
+test_check_browser_refuses_the_engine_on_another_network() {
+  browser_refused "$BE.networks.default = null" "lollo-browser-engine must be on the browser network only"
+  teardown
+  setup
+  browser_refused "$BE.networks = {\"default\":null}" "lollo-browser-engine must be on the browser network only"
+}
+
+test_check_browser_refuses_another_seccomp_profile() {
+  local s
+  for s in '"seccomp=unconfined"' '"seccomp:unconfined"' '"seccomp=/tmp/other.json"'; do
+    teardown
+    setup
+    browser_refused "$BE.security_opt = [\"no-new-privileges:true\", $s]" "lollo-browser-engine must run with seccomp=$H/browser/engine/seccomp.json and no other"
+  done
+  teardown
+  setup
+  browser_refused "$BE.security_opt += [\"seccomp=unconfined\"]" "lollo-browser-engine must run with seccomp=$H/browser/engine/seccomp.json and no other"
+  teardown
+  setup
+  browser_refused "$BE.security_opt = [\"no-new-privileges:true\"]" "lollo-browser-engine must run with seccomp=$H/browser/engine/seccomp.json and no other"
+}
+
+test_check_browser_refuses_a_missing_seccomp_file() {
+  added
+  with_browser
+  rm "$H/browser/engine/seccomp.json"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: the engine's seccomp profile $H/browser/engine/seccomp.json is missing"
+}
+
+test_check_browser_refuses_unconfined_apparmor() {
+  local s
+  for s in apparmor=unconfined apparmor:unconfined systempaths=unconfined label=disable; do
+    teardown
+    setup
+    browser_refused "$BE.security_opt += [\"$s\"]" "lollo-browser-engine must not set $s"
+  done
+}
+
+test_check_browser_refuses_a_root_engine() {
+  browser_refused "$BE.user = \"0\"" "lollo-browser-engine must not run as root"
+  teardown
+  setup
+  browser_refused "$BE.user = \"root:root\"" "lollo-browser-engine must not run as root"
+}
+
+test_check_browser_refuses_no_sandbox() {
+  local e
+  for e in "command = [\"--no-sandbox\"]" "entrypoint = [\"node\", \"launch.mjs\", \"--no-sandbox\"]" \
+    "entrypoint = \"node launch.mjs --no-zygote\"" "environment.CHROMIUM_FLAGS = \"--disable-namespace-sandbox\"" \
+    "environment.BROWSER_ARGS = \"--no-sandbox\"" "environment.NO_SANDBOX = \"1\"" "command = [\"--disable-setuid-sandbox\"]"; do
+    teardown
+    setup
+    browser_refused "$BE.$e" "lollo-browser-engine must not turn Chromium's sandbox off"
+  done
+}
+
+test_check_browser_refuses_lollo_browser_off_its_networks() {
+  browser_refused "$BS.networks = {\"default\":null}" "lollo-browser must be on the default and browser networks only"
+  teardown
+  setup
+  browser_refused "$BS.networks += {\"code-egress\":null}" "lollo-browser must be on the default and browser networks only"
+}
+
+test_check_browser_refuses_lollo_browser_on_another_volume() {
+  browser_refused "$BS.volumes += [{\"type\":\"volume\",\"source\":\"scratch\",\"target\":\"/scratch\"}]" "lollo-browser may mount only its volume browser-data, at /data"
+  teardown
+  setup
+  browser_refused "$BS.volumes = [{\"type\":\"volume\",\"source\":\"browser-data\",\"target\":\"/srv\"}]" "lollo-browser may mount only its volume browser-data, at /data"
+}
+
+test_check_browser_refuses_the_network_without_pipelock() {
+  browser_refused "del(.services[\"lollo-pipelock\"].networks.browser)" "only lollo-browser-engine, lollo-browser and lollo-pipelock may join the browser network, and all three must (found: lollo-browser,lollo-browser-engine)"
+}
+
+test_check_browser_refuses_another_service_on_its_network() {
+  browser_refused ".services[\"app-server\"].networks = {\"default\":null,\"browser\":null}" "app-server join(s) the browser's network"
+  teardown
+  setup
+  # Under another key, by the network's own name.
+  browser_refused ".networks.b2 = {\"name\":\"lollo-alfred_browser\",\"external\":true} | .services.searxng = {\"networks\":{\"b2\":null}}" "searxng join(s) the browser's network"
+}
+
+test_check_browser_refuses_a_network_that_is_not_internal() {
+  browser_refused "del(.networks.browser.internal)" "the browser network must be internal"
+}
+
+test_check_browser_refuses_another_access_audience() {
+  browser_refused "$BS.environment.CF_ACCESS_AUD = \"\${CF_ACCESS_AUD}\"" "lollo-browser must accept only the lollo's Access application"
+}
+
+test_check_browser_refuses_missing_keys_or_secret() {
+  local k
+  for k in BROWSER_VAPID_PUBLIC_KEY BROWSER_VAPID_PRIVATE_KEY; do
+    teardown
+    setup
+    added
+    with_browser
+    sed -i "/^$k=/d" "$D/stacks/alfred/stack.env"
+    ctl check alfred
+    bad_rc
+    out_has "alfred: $k is empty"
+  done
+  for k in "" short "$(printf 'a%.0s' {1..42})" "$(printf 'a%.0s' {1..42})+"; do
+    teardown
+    setup
+    added
+    with_browser
+    sed -i "s/^BROWSER_ENGINE_SECRET=.*/BROWSER_ENGINE_SECRET=$k/" "$D/stacks/alfred/stack.env"
+    ctl check alfred
+    bad_rc
+    out_has "alfred: BROWSER_ENGINE_SECRET must be at least 43 base64url characters"
+  done
+}
+
+# Whatever the profiles: browser-data outlives the profile, and the engine's
+# network leads to pipelock.
+test_check_refuses_another_service_on_the_browser_volume_whatever_the_profiles() {
+  added
+  config_edit '.services.bff.volumes = [{"type":"volume","source":"browser-data","target":"/x"}]'
+  ctl check alfred
+  bad_rc
+  out_has "alfred: bff mount(s) the browser's volume (its kept sign-ins, settings and audit log); only lollo-browser may"
+  teardown
+  setup
+  added
+  with_browser
+  config_edit "$BE.volumes = [{\"type\":\"volume\",\"source\":\"browser-data\",\"target\":\"/data\"}]"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: lollo-browser-engine mount(s) the browser's volume"
+}
+
+test_check_refuses_volumes_from_the_browser_whatever_the_profiles() {
+  added
+  config_edit '.services.searxng.volumes_from = ["lollo-browser"]'
+  ctl check alfred
+  bad_rc
+  out_has "searxng from lollo-browser"
+  teardown
+  setup
+  added
+  with_browser
+  config_edit '.services.searxng.volumes_from = ["service:lollo-browser:ro"]'
+  ctl check alfred
+  bad_rc
+  out_has "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data or the code editor (searxng from lollo-browser)"
+}
+
+test_check_refuses_sharing_the_browsers_network_namespace_whatever_the_profiles() {
+  local m
+  for m in service:lollo-browser-engine service:lollo-browser container:lollo-alfred-lollo-browser-engine-1; do
+    teardown
+    setup
+    added
+    config_edit ".services.searxng.network_mode = \"$m\""
+    ctl check alfred
+    bad_rc
+    out_has "alfred: searxng shares the network namespace of the browser ($m)"
+  done
+}
+
+# pipelock is on the browser's network whatever the profiles, so its namespace
+# leads to the engine's ports as well.
+test_check_refuses_sharing_pipelocks_network_namespace_whatever_the_profiles() {
+  local m
+  for m in service:lollo-pipelock container:lollo-alfred-lollo-pipelock-1; do
+    teardown
+    setup
+    added
+    config_edit ".services.searxng.network_mode = \"$m\""
+    ctl check alfred
+    bad_rc
+    out_has "alfred: searxng shares the network namespace of lollo-pipelock ($m), which is on the browser's network"
+  done
+}
+
+test_check_refuses_sharing_pipelocks_network_namespace_with_the_browser_on() {
+  added
+  with_browser
+  config_edit '.services.searxng.network_mode = "service:lollo-pipelock"'
+  ctl check alfred
+  bad_rc
+  out_has "alfred: searxng shares the network namespace of lollo-pipelock (service:lollo-pipelock), which is on the browser's network"
+}
+
+test_check_refuses_another_service_on_the_browser_network_whatever_the_profiles() {
+  added
+  config_edit '.services.searxng.networks = {"default":null,"browser":null} | .networks.browser = {"internal":true}'
+  ctl check alfred
+  bad_rc
+  out_has "alfred: searxng join(s) the browser's network; only lollo-browser-engine, lollo-browser and lollo-pipelock may"
+}
+
+test_check_accepts_pipelock_alone_on_the_browser_network() {
+  # compose/browser.yml puts pipelock on the network whatever the profiles.
+  added
+  with_pipelock
+  config_edit '.services["lollo-pipelock"].networks = {"browser":null,"default":null} | .networks.browser = {"internal":true}'
+  ctl check alfred
+  ok_rc
+}
+
+test_check_pipelock_requires_the_browser_in_no_proxy() {
+  # Agents pipe vault values into lollo-browser's tools; pipelock must not see them.
+  local k
+  for k in NO_PROXY no_proxy; do
+    teardown
+    setup
+    added
+    with_pipelock
+    config_edit '.services["app-server"].environment["'"$k"'"] |= (split(",") - ["lollo-browser"] | join(","))'
+    ctl check alfred
+    bad_rc
+    out_has "the app-server's $k must list lollo-browser"
+  done
+  grep -q '^  NO_PROXY: [^ ]*,lollo-browser,' "$ROOT/compose/pipelock-proxy.yml" || fail "compose/pipelock-proxy.yml's NO_PROXY lacks lollo-browser"
+  grep -q '^  no_proxy: [^ ]*,lollo-browser,' "$ROOT/compose/pipelock-proxy.yml" || fail "compose/pipelock-proxy.yml's no_proxy lacks lollo-browser"
+}
+
+test_profiles_refuses_the_browser_without_pipelock() {
+  added
+  ctl profiles cloudflared,lollo-browser
+  bad_rc
+  out_has "the lollo-browser profile needs lollo-pipelock"
+  eq "$(grep ^PROFILES= "$D/config.env")" PROFILES=cloudflared,search
+  eq "$(senv alfred COMPOSE_PROFILES)" cloudflared,search
+  log_lacks "curl PUT"
+  log_lacks "up -d"
+}
+
+test_check_refuses_the_browser_without_pipelock() {
+  added
+  with_browser
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-browser/' "$D/config.env"
+  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-browser/' "$D/stacks/alfred/stack.env"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: the lollo-browser profile needs lollo-pipelock"
+}
+
+test_profiles_turns_the_browser_on_with_pipelock() {
+  added
+  pipelock_config
+  browser_config
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  ok_rc
+  eq "$(senv alfred COMPOSE_PROFILES)" cloudflared,lollo-pipelock,lollo-browser
+  eq "$(senv alfred LOLLO_PROFILES)" lollo-browser
+  [[ $(ingress) == '[{"hostname":"alfred-lollo.example.org","path":"^/browser(/|$)","service":"http://lollo-browser:8000"},'"$LANDING,"* ]] ||
+    fail "no /browser/ route: $(ingress)"
+}
+
+test_add_gives_the_browser_its_own_keys_and_secret() {
+  ctl add alfred alfred@example.com
+  ok_rc
+  local s
+  s=$(senv alfred BROWSER_VAPID_PUBLIC_KEY)
+  ((${#s} == 87)) || fail "BROWSER_VAPID_PUBLIC_KEY length ${#s}"
+  s=$(senv alfred BROWSER_VAPID_PRIVATE_KEY)
+  ((${#s} == 43)) || fail "BROWSER_VAPID_PRIVATE_KEY length ${#s}"
+  [[ $s != "$(senv alfred VAULT_VAPID_PRIVATE_KEY)" && $s != "$(senv alfred PUSH_VAPID_PRIVATE_KEY)" ]] || fail "the browser shares a VAPID key"
+  [[ $(senv alfred BROWSER_ENGINE_SECRET) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "BROWSER_ENGINE_SECRET: $(senv alfred BROWSER_ENGINE_SECRET)"
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+  ctl add hal hal@example.com
+  ok_rc
+  [[ $(senv alfred BROWSER_ENGINE_SECRET) != "$(senv hal BROWSER_ENGINE_SECRET)" ]] || fail "same engine secret"
+  [[ $(senv alfred BROWSER_VAPID_PRIVATE_KEY) != "$(senv hal BROWSER_VAPID_PRIVATE_KEY)" ]] || fail "same browser VAPID key"
+}
+
+test_up_keeps_the_browser_keys_and_secret() {
+  added
+  local pub priv secret
+  pub=$(senv alfred BROWSER_VAPID_PUBLIC_KEY) priv=$(senv alfred BROWSER_VAPID_PRIVATE_KEY) secret=$(senv alfred BROWSER_ENGINE_SECRET)
+  [[ -n $pub && -n $priv && -n $secret ]] || fail "add made no browser keys"
+  with_browser
+  ctl up alfred
+  ok_rc
+  eq "$(senv alfred BROWSER_VAPID_PUBLIC_KEY)" "$pub"
+  eq "$(senv alfred BROWSER_VAPID_PRIVATE_KEY)" "$priv"
+  eq "$(senv alfred BROWSER_ENGINE_SECRET)" "$secret"
+}
+
+test_up_gives_an_older_stack_the_browser_keys_and_secret() {
+  added
+  sed -i '/^BROWSER_/d' "$D/stacks/alfred/stack.env"
+  ctl up alfred
+  ok_rc
+  [[ $(senv alfred BROWSER_VAPID_PUBLIC_KEY) =~ ^[A-Za-z0-9_-]{87}$ ]] || fail "no public key"
+  [[ $(senv alfred BROWSER_VAPID_PRIVATE_KEY) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "no private key"
+  [[ $(senv alfred BROWSER_ENGINE_SECRET) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "no engine secret"
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+}
+
+test_profiles_gives_an_older_stack_the_browser_keys_before_checking() {
+  added
+  sed -i '/^BROWSER_/d' "$D/stacks/alfred/stack.env"
+  pipelock_config
+  browser_config
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  ok_rc
+  [[ $(senv alfred BROWSER_ENGINE_SECRET) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "no engine secret"
+}
+
+test_up_starts_the_browser_engine_first() {
+  added
+  with_browser
+  ctl up alfred
+  ok_rc
+  local engine main
+  engine=$(line_of "up -d --no-build --pull missing --wait --wait-timeout 180 lollo-browser-engine")
+  main=$(line_of "up -d --no-build --pull missing --remove-orphans")
+  ((engine < main)) || fail "the engine started after the rest ($engine, $main)"
+  log_lacks "stop lollo-browser-engine"
+}
+
+test_up_starts_no_engine_alone_without_the_browser() {
+  added
+  ctl up alfred
+  ok_rc
+  log_lacks "lollo-browser-engine"
+}
+
+test_up_refuses_the_browser_when_its_sandbox_fails() {
+  added
+  with_browser
+  stub STUB_ENGINE_UP_RC=1
+  printf '%s\n' "lollo-browser-engine-1  | Zygote could not fork" "lollo-browser-engine-1  | lollo-browser-engine: Chromium's sandbox failed" >"$T/engine-logs"
+  ctl up alfred
+  bad_rc
+  out_has "alfred: Chromium's sandbox cannot start on this host, so the browser does not run"
+  out_has "user.max_user_namespaces"
+  out_has 'docs/browser.md, "Running it"'
+  # One try, with the sandbox; the engine is stopped and the rest never starts.
+  eq "$(grep -c -- '--wait --wait-timeout 180 lollo-browser-engine' "$T/calls.log")" 1
+  log_has "stop lollo-browser-engine"
+  log_lacks "--remove-orphans"
+  log_lacks "no-sandbox"
+}
+
+# profiles has written every list before it starts the stacks, so a stack whose
+# engine fails must not keep the others from starting, and the way out is `up`.
+test_profiles_starts_the_other_stacks_when_one_browser_sandbox_fails() {
+  ctl add alfred alfred@example.com
+  ctl add hal hal@example.com
+  ok_rc
+  pipelock_config
+  browser_config
+  printf '%s\n' "lollo-browser-engine-1  | lollo-browser-engine: Chromium's sandbox failed" >"$T/engine-logs"
+  containers hal app-server
+  : >"$T/calls.log"
+  stub STUB_ENGINE_UP_FAIL=lollo-alfred
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  bad_rc
+  out_has "alfred: Chromium's sandbox cannot start on this host"
+  grep -q '^docker compose -p lollo-alfred .* stop lollo-browser-engine' "$T/calls.log" || fail "alfred's engine not stopped"
+  grep -q '^docker compose -p lollo-alfred .* --remove-orphans' "$T/calls.log" && fail "alfred started without its engine"
+  grep -q '^docker compose -p lollo-hal .* up -d --no-build --pull missing --remove-orphans' "$T/calls.log" || fail "hal not started"
+  out_has "the profiles are set, but these stacks did not start: alfred"
+  out_has "fix the cause, then run: lolloctl up alfred"
+  out_lacks "run the same command again"
+  eq "$(senv alfred COMPOSE_PROFILES)" cloudflared,lollo-pipelock,lollo-browser
+  eq "$(senv hal COMPOSE_PROFILES)" cloudflared,lollo-pipelock,lollo-browser
+}
+
+test_profiles_names_up_all_when_every_browser_sandbox_fails() {
+  ctl add alfred alfred@example.com
+  ctl add hal hal@example.com
+  ok_rc
+  pipelock_config
+  browser_config
+  printf '%s\n' "lollo-browser-engine-1  | lollo-browser-engine: Chromium's sandbox failed" >"$T/engine-logs"
+  : >"$T/calls.log"
+  stub STUB_ENGINE_UP_RC=1
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  bad_rc
+  out_has "alfred: Chromium's sandbox cannot start on this host"
+  out_has "hal: Chromium's sandbox cannot start on this host"
+  log_lacks "--remove-orphans"
+  out_has "the profiles are set, but these stacks did not start: alfred hal"
+  out_has "fix the cause, then run: lolloctl up all"
+}
+
+test_up_fails_clearly_when_the_browser_engine_is_not_healthy() {
+  added
+  with_browser
+  stub STUB_ENGINE_UP_RC=1
+  printf '%s\n' "lollo-browser-engine-1  | Error: something else" >"$T/engine-logs"
+  ctl up alfred
+  bad_rc
+  out_has "alfred: the browser's engine did not become healthy; see: lolloctl compose alfred logs lollo-browser-engine"
+  out_lacks "sandbox cannot start"
+  log_has "stop lollo-browser-engine"
+  log_lacks "--remove-orphans"
+}
+
+test_up_routes_nothing_for_the_browser() {
+  # up makes no Cloudflare call, with the browser too.
+  added
+  with_browser
+  ctl up alfred
+  ok_rc
+  log_lacks "curl "
+}
+
+test_remove_says_the_browser_data_goes_too() {
+  added
+  ctl remove alfred <<<"alfred"
+  ok_rc
+  out_has "Its browser's kept sign-ins, settings and audit log are deleted too"
+  log_has "volume inspect lollo-alfred_browser-data"
+}
+
+test_remove_says_nothing_of_browser_data_that_does_not_exist() {
+  added
+  stub STUB_VOLUMES_MISSING=lollo-alfred_browser-data
+  ctl remove alfred <<<"alfred"
+  ok_rc
+  out_lacks "Its browser's"
+}
+
+test_backup_never_copies_the_browser_data() {
+  backed
+  with_browser
+  ctl backup alfred "$B"
+  ok_rc
+  log_lacks "browser-data"
+  log_lacks "/src/browser"
+}
+
+test_the_browser_volume_is_not_in_backup_volumes() {
+  local vols
+  vols=$(sed -n '/^BACKUP_VOLUMES=(/,/^)/p' "$ROOT/lolloctl")
+  [[ -n $vols ]] || fail "no BACKUP_VOLUMES"
+  [[ $vols != *browser* ]] || fail "BACKUP_VOLUMES has the browser's volume"
+}
+
 test_up_installs_the_executor_with_the_news_radar() {
   added
   with_news_radar
@@ -1535,7 +2086,7 @@ test_compose_ignores_the_callers_environment() {
   PUBLIC_ORIGIN=https://evil.example ctl up alfred
   ok_rc
   log_lacks "PUBLIC_ORIGIN=https://evil.example"
-  log_has "--project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/landing.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "--project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/landing.yml --env-file $D/stacks/alfred/stack.env"
   log_lacks "pipelock-proxy.yml"
 }
 
@@ -1544,7 +2095,7 @@ test_compose_adds_the_proxy_overlay_only_with_pipelock() {
   with_pipelock
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/landing.yml -f $H/compose/pipelock-proxy.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/landing.yml -f $H/compose/pipelock-proxy.yml --env-file $D/stacks/alfred/stack.env"
 }
 
 # PIPELOCK_DIRECT: hosts an install reaches without pipelock (a model server on
@@ -3789,7 +4340,7 @@ test_compose_adds_the_doc_tools_overlay_and_its_values_only_with_the_profile() {
   with_docs
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env"
   log_has "docker-env DOC_TOOLS_NETWORK=lollo-doc-tools-alfred DOC_TOOLS_VOLUME=lollo-doc-tools-$(docs_tag)"
   grep -q '^DOC_TOOLS' "$D/stacks/alfred/stack.env" && fail "doc-tools values written to stack.env"
   true
@@ -3805,7 +4356,7 @@ test_up_with_doc_tools_builds_creates_and_connects_before_reporting() {
   log_has "docker network create --internal --label lollo.doc-tools.stack=alfred lollo-doc-tools-alfred"
   log_has "docker network connect --alias gotenberg lollo-doc-tools-alfred gotenberg-id"
   # The network exists before the app-server joins it, and Gotenberg joins after.
-  (($(line_of "network create") < $(line_of "-p lollo-alfred --project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env up -d"))) ||
+  (($(line_of "network create") < $(line_of "-p lollo-alfred --project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env up -d"))) ||
     fail "the network was created after compose up"
   (($(line_of "-p lollo_shared") > $(line_of "up -d --no-build --pull missing --remove-orphans"))) || fail "gotenberg started before the stack"
 }
@@ -4395,7 +4946,7 @@ test_mcp_needs_the_doc_tools_or_the_vault_profile() {
   added
   ctl mcp alfred
   bad_rc
-  out_has "the lollo-doc-tools, lollo-vault and lollo-news-radar profiles are all off"
+  out_has "the lollo-doc-tools, lollo-vault, lollo-news-radar and lollo-browser profiles are all off"
   log_lacks "node --input-type=module"
 }
 
@@ -4528,6 +5079,91 @@ test_up_retries_a_vault_removal_that_failed() {
   ctl up alfred
   ok_rc
   eq "$(senv alfred VAULT_MCP_REGISTERED)" ""
+}
+
+BROWSER_ADD="exec -T app-server node --input-type=module - add /root/.letta/mcp-home/.letta/settings.json browser"
+BROWSER_REMOVE="exec -T app-server node --input-type=module - remove /root/.letta/mcp-home/.letta/settings.json browser"
+
+test_mcp_registers_the_browser_with_its_profile() {
+  added
+  with_browser
+  mcp_answer '{"added":["browser"],"present":[],"conflicts":[],"removed":[],"attempts":1}'
+  ctl mcp alfred
+  ok_rc
+  log_has "$BROWSER_ADD"
+  log_lacks "$VAULT_ADD"
+  log_lacks "$MCP_ADD"
+  out_has "alfred: added browser to Settings -> MCP"
+  eq "$(senv alfred BROWSER_MCP_REGISTERED)" 1
+  eq "$(bff_restarts)" 1
+  (($(line_of "restart --no-deps bff") > $(line_of "$BROWSER_ADD"))) || fail "the BFF restarted before the change"
+}
+
+test_mcp_runs_the_browser_once_unless_forced() {
+  added
+  with_browser
+  echo "BROWSER_MCP_REGISTERED=1" >>"$D/stacks/alfred/stack.env"
+  ctl mcp alfred
+  ok_rc
+  log_lacks "$BROWSER_ADD"
+  out_has "alfred: registered the browser before; a server the person removed stays removed (--force adds it again)"
+  mcp_answer '{"added":["browser"],"present":[],"conflicts":[],"removed":[],"attempts":1}' browser
+  ctl mcp alfred --force
+  ok_rc
+  log_has "$BROWSER_ADD"
+  out_has "alfred: added browser to Settings -> MCP"
+}
+
+test_mcp_leaves_a_persons_browser_server() {
+  added
+  with_browser
+  mcp_answer '{"added":[],"present":[],"conflicts":["browser"],"removed":[],"attempts":1}'
+  ctl mcp alfred
+  ok_rc
+  out_has "alfred: Settings -> MCP already has a browser server with another URL; it was left as it is"
+  eq "$(senv alfred BROWSER_MCP_REGISTERED)" 1
+  log_lacks "restart --no-deps bff"
+}
+
+test_profiles_with_the_browser_says_how_to_register_it() {
+  added
+  pipelock_config
+  browser_config
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  ok_rc
+  out_has "Browser: in https://alfred.example.org Settings -> MCP, add an HTTP server:"
+  out_has "browser -> http://lollo-browser:8000/mcp (docs/browser.md)"
+  log_lacks "$BROWSER_ADD"
+  echo "BROWSER_MCP_REGISTERED=1" >>"$D/stacks/alfred/stack.env"
+  ctl profiles cloudflared,search,lollo-pipelock,lollo-browser
+  ok_rc
+  out_has "Browser: browser is in https://alfred.example.org Settings -> MCP (docs/browser.md)"
+}
+
+test_profiles_dropping_the_browser_removes_its_server() {
+  added
+  with_browser
+  ctl up alfred
+  ok_rc
+  echo "BROWSER_MCP_REGISTERED=1" >>"$D/stacks/alfred/stack.env"
+  : >"$T/calls.log"
+  mcp_answer '{"added":[],"present":[],"conflicts":[],"removed":["browser"],"attempts":1}'
+  ctl profiles cloudflared,lollo-pipelock
+  ok_rc
+  log_has "$BROWSER_REMOVE"
+  out_has "alfred: removed browser from Settings -> MCP (the lollo-browser profile is off)"
+  eq "$(senv alfred BROWSER_MCP_REGISTERED)" ""
+  (($(line_of "restart --no-deps bff") > $(line_of "$BROWSER_REMOVE"))) || fail "the BFF was not restarted after the removal"
+}
+
+test_up_removes_the_browsers_server_when_its_profile_is_off() {
+  added
+  echo "BROWSER_MCP_REGISTERED=1" >>"$D/stacks/alfred/stack.env"
+  mcp_answer '{"added":[],"present":[],"conflicts":[],"removed":["browser"],"attempts":1}'
+  ctl up alfred
+  ok_rc
+  log_has "$BROWSER_REMOVE"
+  eq "$(senv alfred BROWSER_MCP_REGISTERED)" ""
 }
 
 test_mcp_failures_fail_at_the_end_without_a_mark() {
@@ -4815,7 +5451,7 @@ test_compose_always_merges_the_code_editor_overlay() {
   added
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/landing.yml --env-file"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/landing.yml --env-file"
 }
 
 test_profiles_routes_the_code_editor_and_lists_it_on_the_landing_page() {

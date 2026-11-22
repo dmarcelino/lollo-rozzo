@@ -42,7 +42,7 @@ Reused images keep their base images. To pick up their security fixes, change `R
 GitHub skips a push's workflows when its commit message has `[ci skip]`, and that can take the tag's `publish.yml` with it. The notes commit a tag points at goes without it: `ci.yml` ignores a push that changes only `NOTES.md`, and `publish.yml` runs the checks itself. Only the commit that starts the next version, never tagged, carries `[ci skip]`.
 
 ### What the image carries is what lolloctl reads
-A file lolloctl reads at run time (a compose file, a skill, the executor, a build context built on the host) goes into `lolloctl.Dockerfile` and its `.dockerignore`, or a release install cannot find it.
+A file lolloctl reads at run time (a compose file, the browser engine's seccomp profile, which Compose reads itself, a skill, the executor, a build context built on the host) goes into `lolloctl.Dockerfile` and its `.dockerignore`, or a release install cannot find it.
 
 ## Cutting a release
 The `release` skill does steps 2 to 4 (`/release rc`, `/release final`); without an agent, do them by hand.

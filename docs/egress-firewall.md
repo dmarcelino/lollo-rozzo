@@ -5,7 +5,9 @@ an egress proxy for AI agents. The agents' tools send their web traffic through 
 where each request goes, blocks some destinations, and writes a **signed receipt** for every
 decision. It is opt-in and **advisory**: it catches mistakes and naive attempts, and records
 what went where, but an agent that wants to can go around it. Read "What it does not do" before
-relying on it.
+relying on it. The one exception is the agents' browser (the `lollo-browser` profile, which
+needs this one): its engine, where web pages run, has no other way out, so for that container
+alone pipelock is a boundary (see "The browser's engine").
 
 ![What goes through pipelock, what it records, and what goes around it](diagrams/egress-proxy-flow.svg)
 
@@ -17,9 +19,10 @@ How pipelock is built and wired, for developers: [pipelock/README.md](../pipeloc
 - **Proxy settings** (`compose/pipelock-proxy.yml`): `HTTPS_PROXY`/`HTTP_PROXY` in the
   app-server (letta-code itself, with its calls to the model provider, and agent shells, Claude
   Code and Codex subagents, `npm`, `pip`, `git`, `curl`...), in SearXNG and in the DuckDuckGo
-  reader. Traffic inside the stack (the vault, Gmail triggers, News Radar, the search sidecars,
-  localhost, `host.docker.internal`) stays direct: pipelock must never see the vault's values, and
-  `lolloctl check` refuses a stack where it would.
+  reader. Traffic inside the stack (the vault, Gmail triggers, News Radar, the browser's tools,
+  the search sidecars, localhost, `host.docker.internal`) stays direct: pipelock must never see
+  the vault's values, which agents also type through the browser, and `lolloctl check` refuses
+  a stack where it would.
 - **Destination checks** (balanced mode, `pipelock/pipelock.yaml`):
   - a short built-in blocklist of paste and file-drop sites (pastebin, transfer.sh, ...);
   - private, internal and cloud-metadata addresses (SSRF): the LAN, the host, `169.254.169.254`.
@@ -41,10 +44,27 @@ How pipelock is built and wired, for developers: [pipelock/README.md](../pipeloc
   with the stack's own Ed25519 key. They show where the agents' tools went, and that this
   pipelock decided it.
 
+## The browser's engine
+With the `lollo-browser` profile, the browser's engine (`lollo-browser-engine`, the container
+where Chromium loads pages) is on a network of its own that has no route out of the host. The
+only other containers on it are `lollo-browser`, which drives it, and pipelock, so every request
+a page makes, to the internet or to an address inside the host, goes through pipelock, which
+refuses private, loopback, link-local and cloud-metadata addresses, also when a site's name
+changes to point at one. `lolloctl check` refuses a stack where the engine joins another network
+or another container joins this one. For that one container, and only there, pipelock is a
+boundary on where requests go. It is still only a destination check: it does not see inside
+HTTPS, it lets through any site not on its short blocklist, and it does not make what a page
+shows the agent safe ([docs/browser.md](browser.md) has the browser's own security model). The
+host's own public address counts as public, so a page can reach any port the host serves on it.
+
+Never give the pipelock of a stack that can run the browser `trusted_domains` (they skip the
+private-address check): pages could then reach those hosts.
+
 ## What it does not do
-- **It is not a boundary.** The stack network still reaches the internet directly, and any agent
-  can unset the variable or use a tool that ignores it. The BFF, the vault, google-mcp, Gmail
-  triggers and News Radar connect directly by design; so does what the BFF does for agents,
+- **It is not a boundary** (but for the browser's engine, above). The stack network still
+  reaches the internet directly, and any agent can unset the variable or use a tool that
+  ignores it. The BFF, the vault, google-mcp, Gmail triggers, News Radar and the browser's
+  service (its push notifications) connect directly by design; so does what the BFF does for agents,
   such as its Remote Pi runs over SSH, which carry the agent's instructions. With the `telegram`
   profile, the Telegram gateway connects directly too, including the packages it installs at
   every start. Hosts in `PIPELOCK_DIRECT` are reached directly.

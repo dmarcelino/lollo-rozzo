@@ -101,6 +101,18 @@
       automerge: false,
       prBodyNotes: ['Before merging, check the pip package and the image are the same Playwright release, and run `scripts/code-server-e2e.sh --browser`.'],
     },
+    // The browser's Playwright: the engine's npm playwright-core and the
+    // service's pip playwright. Playwright's server refuses a client of another
+    // major.minor, and a new one can change the snapshots the service masks, so
+    // they move in one PR that waits for a person. After the group above, so
+    // the service's pip playwright lands here, not there.
+    {
+      matchFileNames: ['browser/**'],
+      matchDepNames: ['playwright', 'playwright-core'],
+      groupName: 'browser Playwright',
+      automerge: false,
+      prBodyNotes: ['Before merging, check the engine\'s playwright-core and the service\'s playwright have the same major.minor (the engine refuses another), then run `tests/run-sidecar.sh browser` and the browser\'s acceptance suite: browser/README.md, "Build and test".'],
+    },
     // What goes with a version is recomputed in the same branch
     // (scripts/renovate-post-upgrade.sh; the workflow allows only that script).
     {

@@ -1,0 +1,208 @@
+# browser
+
+The agents' browser: a Chromium that agents drive through MCP tools, and that the person watches and takes over on their own page. It is two containers behind the `lollo-browser` profile, which needs `lollo-pipelock`:
+- **`lollo-browser-engine`** (`engine/`): Chromium, with its sandbox on, and TigerVNC's Xvnc as its display. It loads hostile pages, so it holds nothing at rest, controls nothing, and its only way out is pipelock.
+- **`lollo-browser`** (`service/`): the agents' tools at `http://lollo-browser:8000/mcp`, the person's page at `/browser/` on the stack's lollo host, the settings, the audit log, the kept sign-ins and the push keys. It drives the engine over Playwright's WebSocket and relays its display to the page.
+
+The design record is `openspec/changes/add-lollo-browser/design.md`. The guide for users and admins, `docs/browser.md`, is added with the service.
+
+## Files
+
+### Engine
+| Path | What it does |
+|---|---|
+| `engine/Dockerfile` | `node:22-bookworm-slim` with Chromium's libraries (Playwright's list for Debian 12, without its Xvfb), TigerVNC's `Xvnc`, `tini` as PID 1, and fonts for common sites (Liberation, Noto core and colour emoji, WenQuanYi Zen Hei for CJK); `playwright-core` from the lockfile and the Chromium that version pins, without the headless shell. The build fails if `ldd` finds a library Chromium needs missing. Runs as uid 10003, with `HOME=/tmp`. The `test` stage adds `tests/*.mjs`. |
+| `engine/package.json`, `engine/package-lock.json` | `playwright-core`, pinned exactly (1.65.1) with its integrity hash. Its major.minor must match the service's Python `playwright`: the server refuses a client of another minor with 428. |
+| `engine/entrypoint.sh` | Checks `BROWSER_ENGINE_SECRET`, writes the VNC password file to `/tmp/vnc/passwd` (`vncpasswd -f`, mode 600), starts `Xvnc :99` (1280x900x24, VNC on 5900 with VNC authentication only, `-nolisten tcp`), waits for its socket in `/tmp/.X11-unix`, then runs the launcher with any argument it was given, so the launcher can refuse it. |
+| `engine/launcher.mjs` | Refuses to start on anything that would turn the sandbox off, then starts Chromium once with Playwright's `launchServer` and fixed options (below), and serves its WebSocket at `/<BROWSER_ENGINE_SECRET>` on port 3000. Exit codes below. |
+| `engine/healthcheck.mjs` | The image's health check: passes once the WebSocket endpoint accepts a connection at the secret path, and closes it without a request. |
+| `engine/policies.json` | Chromium's managed policies, installed as `/etc/opt/chrome_for_testing/policies/managed/lollo.json` ([Managed policies](#managed-policies)). |
+| `engine/seccomp.json` | The engine's seccomp profile ([Chromium's sandbox is always on](#chromiums-sandbox-is-always-on)). Not in the image (`.dockerignore`): Compose reads it on the client and sends its JSON to the daemon. |
+| `engine/tests/run.sh` | Builds the `test` stage and runs every case as its own container under the stack's hardening ([Build and test](#build-and-test)). |
+| `engine/tests/engine.test.mjs` | `node --test` tests run inside a running engine: sandbox, policies, blocked schemes, proxy, listeners, VNC authentication, the secret path. |
+| `engine/tests/kill-chromium.mjs` | Kills Chromium's browser process, for the exit code test. |
+
+### Service
+| Path | What it does |
+|---|---|
+| `service/Dockerfile` | `python:3.14-slim-bookworm` (3.14 because `lollo-common` needs it; bookworm because the test stage's `playwright install --with-deps` supports it) plus `libatomic1` for Playwright's bundled Node driver, `lollo-common` from its build context, and `playwright` without browsers. A `novnc` stage fetches noVNC's npm tarball pinned by version and SHA-256 (`ADD --checksum`) and keeps its `core/`, `vendor/` and licence in `/opt/novnc`. Runs as uid 10004, owning `/data`. The `test` stage adds pytest and a Chromium (`playwright install --with-deps chromium`) that only the tests use. |
+| `service/pyproject.toml` | Pinned dependencies, the vault's pins where shared; `playwright==1.65.2`, whose major.minor must match the engine's `playwright-core`; `tldextract` for the Public Suffix List snapshot it bundles. |
+| `service/src/lollo_browser/__main__.py` | Reads the settings, scrubs the engine secret from every log line, and serves the app on port 8000 with uvicorn (no access log). |
+| `.../config.py` | Settings from the environment (below), limits and timeouts. |
+| `.../app.py` | The ASGI app: `/healthz`, the page's routes, the MCP server at `/mcp`, all behind the guard; its lifespan keeps the engine connection and the housekeeping (idle and overdue tasks, hand-offs nobody answered). |
+| `.../guard.py` | The guard in front of every route ([The guard](#the-guard)). |
+| `.../engine.py` | The engine connection: `chromium.connect()` to `ws://lollo-browser-engine:3000/<secret>`. Tests launch a local Chromium through the same interface. |
+| `.../tasks.py` | Tasks, tabs and every tool's work: contexts, masking calls, the site check, checkout recognition before clicks and Enter, take-over, the page's task controls. |
+| `.../mcp_tools.py` | The fixed MCP tool list ([Tools](#tools)). |
+| `.../masking.py`, `.../scrub.py` | Field-based masking of snapshots and screenshot masks; the value scrub of results, errors, audit entries, pushes and logs ([Masking secrets](#masking-secrets)). |
+| `.../sites.py` | What a site is (a registrable domain), which URLs may be opened, and the HTTPS same-site test. |
+| `.../totp.py` | RFC 6238 codes from a base32 key or an `otpauth://totp/` URI. |
+| `.../sessions.py` | Per-site settings and kept sign-ins on `browser-data` ([Tasks, sessions and kept sign-ins](#tasks-sessions-and-kept-sign-ins)). |
+| `.../handoffs.py` | Hand-offs in memory: request, answer, wait, no answer. |
+| `.../checkout.py` | Checkout recognition ([Checkout](#checkout)). |
+| `.../audit.py` | The audit log on `browser-data`. |
+| `.../push.py` | Web Push, like the vault's, with the browser's own keys; subscriptions on `browser-data`. |
+| `.../page.py`, `templates/`, `static/` | The person's page and the live view's relay endpoint ([The page and the live view](#the-page-and-the-live-view)). `static/live.js` loads the vendored noVNC. |
+| `.../vnc.py` | The live view's RFB relay. |
+| `.../icons.py` | The app icon, drawn in code. |
+| `service/tests/` | pytest against a Chromium launched in the test stage and hostile local pages served over HTTPS and HTTP inside the test (every host name maps to 127.0.0.1), a fake VNC server, a stub push sender and stub Access keys. |
+
+## How it plugs in
+
+### Engine
+- **Service:** `lollo-browser-engine`, image `${LOLLO_IMAGE_BROWSER_ENGINE:-lollo-browser-engine:local}`, built from `browser/engine/`, behind the `lollo-browser` profile. `compose/browser.yml`, added with the Compose wiring, gives it a read-only root, `/tmp` on tmpfs, `cap_drop: [ALL]`, `security_opt: ["no-new-privileges:true", "seccomp=${LOLLO_HOME}/browser/engine/seccomp.json"]`, memory and process limits, no volume, and one network: `browser`, `internal: true`, whose only other members are `lollo-browser` and `lollo-pipelock`. The seccomp path is absolute because Compose resolves a relative one against the project directory, `upstream/docker`.
+- **Environment:** `BROWSER_ENGINE_SECRET`, generated once per stack in `stack.env` and given only to the engine and `lollo-browser`; `BROWSER_PROXY`, `http://lollo-pipelock:8888`. Both are required: the launcher refuses a secret shorter than 32 characters or outside `A-Z a-z 0-9 _ -` (it is a URL path), and a proxy that is not `http://<host>:<port>`.
+- **Launch options**, fixed in `launcher.mjs`; a client cannot change them (Playwright ignores an `x-playwright-launch-options` header): `headless: false`, `chromiumSandbox: true`, `proxy: {server: $BROWSER_PROXY, bypass: "<-loopback>"}`, `args: ["--disable-quic", "--window-position=0,0", "--window-size=1280,900"]`, `host: "0.0.0.0"`, `port: 3000`, `wsPath: "/" + $BROWSER_ENGINE_SECRET`. The window fills the X display, so the live view shows the tab strip and address bar; there is no window manager.
+- **Ports**, both on the `browser` network only: 3000, Playwright's WebSocket at the secret path (a plain HTTP GET answers `200 Running` without the secret); 5900, VNC. Nothing else listens on TCP: X11 is on its Unix socket only, and Playwright talks to Chromium over a pipe, not a debugging port.
+- **Exit codes:** 0 stopped by `SIGTERM` or `SIGINT`; 1 Chromium exited, or did not start for a reason other than its sandbox, or Xvnc did not start; 2 refused to start (an argument, an environment variable that would turn the sandbox off, a bad secret or proxy); 3 Chromium's sandbox failed, after logging `lollo-browser-engine: Chromium's sandbox failed` and Chromium's own lines. `up`'s check that refuses the browser on exit 3 is added with the Compose wiring.
+- **Health check:** `node /opt/engine/healthcheck.mjs` every 30 s, every 2 s during a 60 s start period.
+- **Release:** `release/images` gets `browser-engine  browser/engine  -  lollo-browser-engine`, and `seccomp.json` goes into the `lolloctl` image, since Compose reads it at run time; both are added with the Compose wiring.
+
+### Service
+- **Service:** `lollo-browser`, image `${LOLLO_IMAGE_BROWSER:-lollo-browser:local}`, built from `browser/service/` with the `lollo-common` build context, behind the `lollo-browser` profile, on the `default` network (the app-server calls `/mcp`, cloudflared forwards `/browser/`) and on `browser` (the engine's WebSocket and display). It mounts `browser-data` at `/data` and nothing else, and starts once the engine is healthy.
+- **Port 8000:** `/mcp` for agents, `http://lollo-browser:8000/mcp`, outside the tunnelled prefix; `/browser/` for the person, through the lollo host's tunnel route; `/healthz`, which answers 200 whether or not the engine is connected, so the page still works while it is down.
+- **Environment:** `BROWSER_ENGINE_URL` (default `ws://lollo-browser-engine:3000`); `BROWSER_ENGINE_SECRET` (required, 16 to 256 of `A-Z a-z 0-9 _ -`; the service exits 2 without it); `BROWSER_VNC` (default `lollo-browser-engine:5900`); `BROWSER_VAPID_PUBLIC_KEY`, `BROWSER_VAPID_PRIVATE_KEY`, `PUSH_VAPID_CONTACT_EMAIL`; the lollo page's `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` (`${CF_LOLLO_AUD}`), `CF_ACCESS_ISSUER`, `ALLOWED_USERS` and `PUBLIC_ORIGIN` (`${LOLLO_ORIGIN}`, https). Optional: `BROWSER_DATA_DIR` (`/data`), `BROWSER_ENGINE_NETWORK_CIDR` ([The guard](#the-guard)), and the limits `BROWSER_MAX_TASKS` (4), `BROWSER_MAX_TABS` (8 per task), `BROWSER_TASK_IDLE_SECONDS` (900) and `BROWSER_TASK_MAX_SECONDS` (14400).
+- **The engine connection:** connected at start and again after it drops, with backoff up to 30 s. When it drops, every task ends ("the browser engine disconnected"), since its context is gone.
+- **`browser-data`:** `settings.json` (per-site settings), `signins/<hash of the site>.json` (kept sign-ins), `audit.jsonl` (rotated to `audit.jsonl.1` past 5 MB; one old file is kept) and `push.json` (subscriptions), all mode 600. Never backed up: it holds live sign-ins.
+- **MCP entry:** `lolloctl mcp` writes `{"name": "browser", "transport": "http", "url": "http://lollo-browser:8000/mcp"}` once per stack while the profile is on ([lib/README.md](../lib/README.md#mcp-registers-the-document-tools-the-vault-news-radar-and-the-browser-once-per-stack-and-only-those)). `lollo-browser` is in the app-server's `NO_PROXY`, since vault values pass from the app-server to it.
+- **Release:** `release/images` has `browser  browser/service  lollo-common  lollo-browser`. Bump the noVNC pin with both `NOVNC_*` arguments in the Dockerfile.
+
+## Rules
+
+### Chromium's sandbox is always on
+Chromium runs as uid 10003 with `chromiumSandbox: true`, so Playwright passes no `--no-sandbox`. Its renderers run in their own user, PID and network namespaces under seccomp-BPF, with no capabilities and `NoNewPrivs`. A renderer exploit then still needs a sandbox escape before it owns the engine.
+
+Docker's default seccomp profile refuses the sandbox: it denies `clone` and `unshare` with namespace flags without `CAP_SYS_ADMIN`, and `chroot` without `CAP_SYS_CHROOT`. Playwright's published profile allows the namespace calls but still gates `chroot`, so with every capability dropped the zygote exits. `engine/seccomp.json` is `moby/profiles` `seccomp/default.json` at commit `9ee3204f`, plus an unconditional allow of `clone`, `clone3`, `setns`, `unshare` and `chroot`, minus the one rule that returns `ENOSYS` for `clone3` without `CAP_SYS_ADMIN` (an errno rule wins over an allow). Inside its own user namespace Chromium then has what its sandbox needs, so `cap_drop: [ALL]` and `no-new-privileges` stay, and the setuid helper, which `no-new-privileges` breaks, is not used. Never `seccomp=unconfined`, never a `cap_add`, never another profile.
+
+Host prerequisites: `user.max_user_namespaces` above 0; on Debian kernels, `kernel.unprivileged_userns_clone` not 0; on Ubuntu 23.10 and later, the engine keeps Docker's default AppArmor profile. With `apparmor=unconfined`, Ubuntu's restriction on unprivileged user namespaces strips the capabilities inside the new namespace and the sandbox fails.
+
+How it is enforced:
+- The launcher refuses to start, exit 2, when any argument, environment variable name or value (the secret's value aside) matches `no-sandbox`, `no_sandbox` or `disable-...-sandbox`, and it takes no other argument. It checks before Chromium starts.
+- When Chromium cannot set up its sandbox, the launcher exits 3 with `lollo-browser-engine: Chromium's sandbox failed`. It never retries without the sandbox, and nothing else may: a host where the sandbox fails runs no browser.
+- `tests/run.sh` checks `chrome://sandbox` ("You are adequately sandboxed.", PID and network namespaces and seccomp-BPF on), each renderer's `/proc` status, the exit 3 under Docker's default profile, and each refusal.
+- `check_browser` (the engine's seccomp file, no `--no-sandbox` in its command or environment, no `apparmor=unconfined`) and `up`'s refusal are added with the Compose wiring.
+
+### Nothing at rest in the engine
+The engine mounts no volume and no host path, and its root is read-only. What it writes is on the `/tmp` tmpfs: the X socket, the VNC password file, and the temporary profile directory Playwright gives Chromium, which it deletes when Chromium exits. A restart starts from nothing. The engine has no persistent Chromium profile, so no password store, card store or history survives; each task is a Playwright context that `lollo-browser` creates and destroys. Settings, the audit log, kept sign-ins and the push keys live with `lollo-browser`, on `browser-data`.
+
+What a compromised engine does get: the cookies and storage of the tasks open at that moment, including any kept sign-ins loaded into them, and what the person types during a take-over.
+
+### The only way out is pipelock
+The boundary is the network: the engine is on the internal `browser` network only, where the one route out is `lollo-pipelock`, which refuses private, loopback, link-local and metadata addresses, and resolves names itself, connecting to the address it checked. The app-server is not on that network.
+
+Chromium's own settings are belt and braces:
+- `--proxy-server` and `--proxy-bypass-list=<-loopback>`: since M72 Chromium sends loopback and link-local addresses direct unless told otherwise, which would let a page reach the engine's own ports 3000 and 5900. With `<-loopback>` those requests go to pipelock too, which refuses them.
+- `--disable-quic`, `WebRtcIPHandling=disable_non_proxied_udp` and `DnsOverHttpsMode=off`: nothing leaves by UDP or by Chromium's own resolver.
+
+They are not a boundary on their own: a Playwright context's own `proxy` option overrides the browser's, and `bypass: "*"` makes Chromium connect directly. Only the network keeps the engine on pipelock, so `lollo-browser` never sets a context proxy. For the same reason pipelock is a boundary for this container only, and the browser's stack must never get pipelock `trusted_domains`, which skip its internal-address check ([pipelock's Rules](../pipelock/README.md#rules)).
+
+`tests/run.sh` runs the engine with no network and checks that requests to `127.0.0.1:3000`, `localhost:5900` and a public name all fail at the unreachable proxy (`ERR_PROXY_CONNECTION_FAILED`) rather than load: direct, the first would answer `Running`.
+
+### Managed policies
+Playwright's Chromium reads managed policies only from `/etc/opt/chrome_for_testing/policies/managed/`; `/etc/chromium/policies/managed/` and `/etc/opt/chrome/policies/managed/` are ignored (checked on arm64). `engine/policies.json` sets:
+
+| Policy | Value | Why |
+|---|---|---|
+| `WebRtcIPHandling` | `disable_non_proxied_udp` | WebRTC sends no UDP that bypasses the proxy. The name is not `WebRtcIPHandlingPolicy`, which Chromium does not know. |
+| `DnsOverHttpsMode` | `off` | Names are resolved by pipelock, not by Chromium. |
+| `PasswordManagerEnabled` | `false` | Chromium offers to save no password. |
+| `AutofillAddressEnabled`, `AutofillCreditCardEnabled` | `false` | Chromium stores no address or card. |
+| `ExtensionInstallBlocklist` | `["*"]` | No extension can be installed. |
+| `DownloadRestrictions` | `3` | Blocks downloads, but see below. |
+| `URLBlocklist` | `file://*`, `devtools://*`, `view-source:*`, `javascript:*` | Pages and agents cannot read the engine's files or open developer tools (`ERR_BLOCKED_BY_ADMINISTRATOR`). |
+
+Two policies do not do the job here:
+- **`DeveloperToolsAvailability=2`** breaks Playwright's own connection to Chromium, so it is left unset. Developer tools stay out of reach because agents have no tool that opens them and `devtools://` is blocked.
+- **`DownloadRestrictions=3`** is overridden by Playwright's download handling, so `lollo-browser` creates every context with `accept_downloads=False`, which makes a download fail.
+
+Remote debugging is not turned off by a policy: Playwright drives Chromium over `--remote-debugging-pipe`, the launcher refuses any extra argument (a `--remote-debugging-port` included), and the tests assert that only ports 3000 and 5900 listen.
+
+`tests/run.sh` reads `chrome://policy` and checks that each policy is listed as a mandatory machine policy with the status OK. Chromium 159 shows `AutofillAddressEnabled` and `AutofillCreditCardEnabled` as "Deprecated", which still applies them (their successor is `AutofillSettings`), so the tests accept that status too; check it again on each Playwright bump.
+
+### The engine obeys only lollo-browser
+Playwright's endpoint answers only at `/<BROWSER_ENGINE_SECRET>`, and whoever holds the secret controls the browser. The secret is generated once per stack, given only to the engine and `lollo-browser`, and never logged: the launcher prints neither the secret nor the endpoint, and replaces the secret in any error it prints; the entrypoint passes it to `vncpasswd` with a shell builtin, so it is in no command line; `tests/run.sh` passes it to containers as `-e BROWSER_ENGINE_SECRET`. A plain HTTP GET on port 3000 answers `200 Running` without the secret, which is one more reason the port is on the internal network only. `lollo-browser` refuses every request that comes from the `browser` network, so a compromised engine cannot call the tools or the page ([The guard](#the-guard)).
+
+### The VNC password is 8 characters; the network is the control
+Xvnc offers only VNC authentication (`-SecurityTypes VncAuth`; the tests assert it, and that a wrong response is refused and the right one accepted). VNC authentication is a DES challenge-response that uses at most 8 characters of a password, so the password is the secret's first 8 characters, about 48 bits, and a captured exchange can be brute-forced offline. It is not the control: the display listens only on the `browser` network, whose members are the engine, `lollo-browser` and pipelock; pages cannot reach it, because every request they make goes through pipelock; and the person reaches it only through `lollo-browser`'s relay at `/browser/live/ws`, after the lollo page's checks ([The page and the live view](#the-page-and-the-live-view)). The relay holds the password; the person's browser never gets it.
+
+### The guard
+`guard.py` sits in front of every route, the page's and the live view's included.
+- **Nothing from the engine's network.** A request is refused when its peer address is in the engine's network, or when it arrived on this container's own address on that network. The network is `BROWSER_ENGINE_NETWORK_CIDR` when set; otherwise it is detected: the address `lollo-browser-engine` resolves to, the local address the kernel routes to it from, and that interface's netmask. Detection runs at start, on every engine connection and in housekeeping; until the network is known, only loopback is served (503), so it fails closed. Compose fixes no subnet, so several stacks on one host don't collide.
+- **`/mcp` is for agents on the stack network.** Everything outside `/healthz` and `/browser` needs the host `lollo-browser` (with or without a port), no `Origin`, and none of `cf-access-jwt-assertion`, `cf-connecting-ip` and `cf-ray`, present at all. The MCP SDK's own host and `Origin` check stays on behind it. Agents are root in the app-server, so `/mcp` authenticates nothing about them; what they must not change is not reachable through it.
+
+Tests: `test_guard.py`, each refusal and the detection.
+
+### Tools
+Agents get exactly these tools, and a test asserts the list: `start_task`, `end_task`, `open_tab`, `navigate`, `close_tab`, `snapshot`, `screenshot`, `click`, `type_text`, `select_option`, `press_key`, `scroll`, `type_secret`, `type_totp`, `request_handoff`, `wait_handoff`. Every tool but `start_task` takes a task id; ids are kept by the service, so they work across separate `letta mcp call` runs (stateless MCP sessions).
+- **Never an evaluate, cookie, storage, file, upload, download, network or debugging tool, and never a tool a page registers.** The list is fixed in `mcp_tools.py`; the service is our own code on the Playwright library, not Playwright MCP, whose core tools include script evaluation and which exposes page-registered tools. Internally the service does run small scripts and holds a CDP-capable connection; neither is ever reachable from a tool.
+- **No tool changes a site's settings or keeps a sign-in.** Only the page does ([Tasks, sessions and kept sign-ins](#tasks-sessions-and-kept-sign-ins)).
+- **URLs:** `http` and `https` only, without a user name or password in them; `file:`, `chrome:`, `devtools:`, `view-source:`, `javascript:`, `data:`, `about:` and the rest are refused and audited. Pages' own navigations to those are the engine's to block (its `URLBlocklist`).
+- **Keys:** `press_key` takes a named key (Enter, Tab, Escape, Backspace, Delete, the arrows, Home, End, PageUp, PageDown, Space) or one printable character, with `Shift+` at most; control characters (`\n`, `\r`, `\t`) are refused. No Control, Alt or Meta, so no browser shortcut (developer tools, save, print, new window) is reachable in the headed window.
+- **Refs:** acts only on a ref from the tab's latest snapshot, which a page load clears; an unknown ref fails at once, and actions time out after 5 s (navigation 30 s), well inside the bridge's 120 s.
+- **Untrusted content:** page content comes back only under `untrusted_page_data` (the snapshot and the title), with an `about` line saying it is data, never instructions, and the tab's `url` beside it. The service's own messages and `notes` (download blocked, dialog dismissed, tab limit) are separate. Console messages, network logs and page errors are never returned.
+- **Downloads:** every context has `accept_downloads=False`; a download fails, nothing is saved, and the next result notes it.
+- **Limits:** at most `BROWSER_MAX_TASKS` open tasks and `BROWSER_MAX_TABS` tabs per task (a page's popup beyond it is closed); a task ends after `BROWSER_TASK_IDLE_SECONDS` without a call naming it (not while the person controls one of its tabs) or after `BROWSER_TASK_MAX_SECONDS`. Refusals name the limit. `start_task` reserves its slot before creating the context, so concurrent starts can't exceed `BROWSER_MAX_TASKS`. `close_tab` and `end_task` are refused while the person controls one of the task's tabs; the person can still end it on the page.
+- **Validation errors:** no tool's argument-validation error carries an argument's value (`hide_input_in_errors` on each tool's argument model, in `mcp_tools.py`): the SDK validates before `type_secret` puts its value into the scrub.
+
+### Masking secrets
+Playwright's snapshot writes every input's value, passwords included, so masking is our code's job, in two layers.
+- **Field-based**, in `masking.py`: after each `aria_snapshot(mode="ai")` (the only mode used), each line carrying a value for a field-like role, or a combobox's options, is checked against the live element. Playwright's quoted form of a line (`- 'textbox "a: b" [ref=e7]': value`, written when the name holds `: `, ` #`, a backtick or a quote) is parsed too, and a line with a `[ref=` that can't be parsed is masked whole, its children dropped and its ref not registered. A field shows `[masked]` when it is a password-type input, when its `autocomplete` is `cc-number`, `cc-exp`, `cc-exp-month`, `cc-exp-year`, `cc-csc`, `one-time-code`, `current-password` or `new-password` (not `cc-name` or `cc-type`, which agents need to check a form), when it is drawn with `-webkit-text-security` other than `none`, or when it was typed with `type_secret` or `type_totp`, in any frame; so card details and codes the person types during a take-over are masked too. A line whose element can't be resolved is masked as well. Attributes are read through Playwright's utility world, with one selector (`MASK_SELECTOR`) shared with screenshot masks, so page script cannot change what it reads; the text-security style is read in the page's world, so a page can fake it only for its own field, whose value it has anyway. Fields typed with a secret are marked with `data-lollo-secret`, and the mark is put back from the element handles the service keeps before every snapshot and screenshot, so a page that strips it doesn't unmask them. Screenshots are taken with Playwright's `mask` over the same fields in every frame.
+- **The value scrub**, in `scrub.py`: every value typed through a secret tool, the authenticator key and the typed code, and the engine secret, are cut out of every tool result, error, audit entry, push and log line, in any case and with spaces or dashes inserted, when they are 6 characters or more, separators aside, like `vault-run`. Shorter values (an expiry month, a security code) rely on field masking alone: cutting "5" out of everything would break ids and refs. Dict keys and the service's own ids (task, tab, hand-off) are never scrubbed. Matching is a substring search over the text lower-cased once with separators removed, so its cost doesn't grow with the values' length. Values are kept in memory only, until a restart, at most 512.
+- **The site check** of `type_secret` and `type_totp`: they type only when the tab's top-level page and every frame up the field's chain are HTTPS and under `expect_site`'s registrable domain (Public Suffix List, private section included, from `tldextract`'s bundled snapshot, never fetched; an unknown suffix follows the list's default rule). The check runs on the field's element handle, and the value is typed through that handle, so a navigation in between types nothing. It stops a confused agent typing into a look-alike page; it is not a boundary, since the agent chooses `expect_site`. One exception, for card fields and only in `type_secret`: the field's frame, and frames just above it, may be on one site of `PAYMENT_FRAME_SITES` in `sites.py` (Stripe, Adyen, Braintree, Checkout.com, Mollie, Square, PayPal, by the domain each documents for its card frames), when everything above them, the top-level page included, is on `expect_site` over HTTPS. The result and the audit log name the provider. The list is code, never a setting or a tool argument, so a confused agent can't type a card into an ad's or a widget's frame; adding a provider is a code change with a test.
+- `type_totp` computes the RFC 6238 code in the service from a base32 key or an `otpauth://totp/` URI (SHA1, SHA256, SHA512; 6 to 8 digits), and waits for the next code when fewer than 3 s are left.
+- A page that copies a typed secret elsewhere already has it, since it is the page that received it; the scrub keeps it out of what agents get back, the screenshot of such a copy aside.
+
+Tests: `test_masking.py` (quoted snapshot lines, card and code fields in frames, the scrub's floor, the ids it leaves, its cost) and `test_tools.py`, with pages that echo a typed value into text, the title, an error and another field (plain, spaced, dashed, upper-cased), and look-alike hosts, third-party and nested frames, payment providers' frames (allowed, nested, inside or around a third-party frame, at the top level), and plain HTTP.
+
+### Tasks, sessions and kept sign-ins
+- **One context per task**, from `browser.new_context(accept_downloads=False, no_viewport=True)`, plus the kept sign-ins' `storage_state`. **Never a `proxy` option:** a context's proxy overrides the engine's, and `bypass: "*"` would take the engine off pipelock; the tests record every `new_context` call and assert it. No context shares cookies, storage, cache or service workers with another; each is closed with its data when its task ends.
+- **Kept sign-ins** (design decision 5): when a task ends (by the agent, idle, lifetime, the person or a service stop, not an engine crash), its `storage_state(indexed_db=True)` is filtered to the kept sites the task's frames visited (loading a sign-in alone is not touching it), and each is written to its own file; cookies by their domain's registrable domain, origins by their host's. Nothing of another site is written, and a site the task never touched is left as it was. A new task starts with every kept site's file, filtered again on load. Each site has an in-memory epoch that every save and every forget moves on; a task saves a site only if its epoch hasn't moved since the task started, so overlapping tasks never roll a newer sign-in back, and a site forgotten (even if kept again) while a task was open is not brought back. When two overlapping tasks both visit a kept site, the one that ends second saves nothing for it. Session storage is not kept.
+- **Settings only from the page.** `settings.json` and the sign-in files are written only by `Sessions`' page methods (`set_keep_signed_in`, `set_may_checkout`, `forget`, `forget_all`), called from the page's POST handlers behind the Access JWT and form token. "Forget" deletes the file at once and stops keeping the site; a task already open keeps what it loaded and saves nothing. The add form refuses a site that is already listed, so it can't reset that site's row.
+- Every agent of the stack can use a kept sign-in without the vault, since they share one app-server; the page says so beside the switch.
+
+### The page and the live view
+`/browser/` is a lollo page like the vault's: every route needs a verified Access JWT for the lollo's own application (`CF_LOLLO_AUD`; Lettuce's is refused), Fetch Metadata (`check_fetch`), and for every change the form token and this origin; every response sets COOP and a CSP with `script-src 'self'`. Its sections: **Tasks** (hand-offs waiting, with summary, task purpose, site and page; open tasks with their tabs, watch, take over and give back, end task, end all tasks), **Live view**, **Sites** (each site's "keep me signed in" and "agents may finish checkouts", the saved sign-in's time, forget, forget all, add a site), **History** (the audit log, newest first, filtered by task and site, URLs without query, never a value) and **Notifications** (Web Push, as the vault's). A hand-off's own page, `/browser/h/<id>`, is where a push lands. The person's actions (answers, take-over, settings, forgetting) are audited too.
+- **The live view** is noVNC, vendored and served from `/browser/novnc/` (only its `.js` files), so nothing loads from another origin. Its WebSocket, `/browser/live/ws`, needs the Access JWT, `Sec-Fetch-Mode: websocket` from the same site, this `Origin`, and a ticket the page fetched with its form token: random, single use, bound to the person, 30 s.
+- **The relay** (`vnc.py`) ends VNC authentication itself, answering the engine's challenge with the first 8 characters of the engine secret, and offers the browser security type None, so no page ever holds the display's password. It always asks for a shared session, and holds the client to SetPixelFormat, SetEncodings (filtered to encodings that add no client message), FramebufferUpdateRequest, KeyEvent, PointerEvent and ClientCutText (at most 1 MB); anything else closes the connection.
+- **Read-only until take-over:** the relay drops key, pointer and clipboard messages unless the person has taken over the tab the view was opened for; noVNC's view-only mode mirrors that, but the relay is what enforces it. Taking over marks the tab controlled (agents' actions on it are refused with "the person has control of this tab", reading stays allowed) and brings its window to the front; giving back clears its refs, so agents take a new snapshot. While a tab is controlled, its dialogs are accepted rather than dismissed, and its task does not idle out.
+- **One controlled tab at a time, kept in front:** the display is shared, so a keystroke goes to whichever window is in front. Taking over a second tab is refused until the first is given back. The service records the page it last brought to the front (`bring_to_front` is the only way it raises a window), and the relay passes input only while the controlled tab is that page. While a tab is controlled, watching another doesn't bring it forward (the page says so), and when a new page appears in any task, input stops and the controlled tab is brought back to the front at once and again after 0.5 s. Limits: a popup the controlled page opens (a PayPal or 3-D Secure window) is pushed behind it, so the person gives the tab back and takes the popup over; a page raising its own window with `window.focus()` is not tracked.
+
+Tests: `test_page.py`, with stub Access keys, a fake VNC server and a stub push sender.
+
+### Checkout
+Recognition (`checkout.py`) is a guess and stays advisory; the page and the guide say so and name the limits that hold: the vault's approval for a vault card, the bank's confirmation, the card's own limits.
+- **Before an agent's click, or a key that can submit (Enter, Space)** on a ref or, without one, on the focused element in whichever frame holds the focus, the target is scored (Enter in a form input scores its form's submit button; Enter or Space on anything but a text field scores that element; Space in a text field just types): its name against phrases that place an order in English, German, French, Spanish and Italian (3), its form's card fields (2), the page URL's checkout words (1). At 3 or more it is a checkout. On a site whose "agents may finish checkouts" is off (every site, until the person turns it on), the action is not performed: a hand-off of kind `checkout` is created, pushed and audited (`checkout_handed_off`), and the result says the checkout was handed to the person. On an allowed site it goes ahead, pushed and audited (`checkout_submitted`, by the agent) only once the click or key press succeeded.
+- **During a take-over** the service cannot see what the person clicks, so a main-frame form POST that navigates the tab (not a page's fetch or XHR) from or to a checkout-looking page counts as a checkout submitted by the person, pushed and audited. Two on one tab within 10 s are one.
+- **Hand-offs** live in memory, end with their task, and answer `pending`, `done`, `declined` or `no answer` (nobody answered within 24 h). `wait_handoff` waits at most 50 s a call (`MAX_WAIT_SECONDS`, below the bridge's 120 s), and the skill runs it in the background.
+
+## Build and test
+```bash
+tests/run-sidecar.sh browser      # the service's pytest, then the engine's cases below
+browser/engine/tests/run.sh       # the engine image under the stack's hardening (needs Docker, not the internet once built)
+tests/run-browser-acceptance.sh   # both images and pipelock against hostile pages (needs Docker)
+shellcheck -x browser/engine/entrypoint.sh browser/engine/tests/run.sh
+node scripts/check-doc-links.mjs
+```
+`tests/run.sh` builds the `test` stage and runs each case as its own container with a read-only root, `/tmp` on tmpfs, `--cap-drop ALL`, `no-new-privileges`, memory and process limits, and no network:
+1. With `seccomp.json`: the container becomes healthy, `node --test` runs `tests/*.test.mjs` inside it (sandbox, renderers' `/proc` status, every policy applied, `file://`, `view-source:` and `devtools://` blocked, loopback through the proxy, only ports 3000 and 5900 listening, VNC authentication only, the endpoint refusing a wrong path), then Chromium is killed and the container must exit 1.
+2. With Docker's default seccomp profile: exit 3 and `lollo-browser-engine: Chromium's sandbox failed`.
+3. With `--no-sandbox` or `--disable-setuid-sandbox` as an argument, any other argument, `CHROMIUM_FLAGS=--no-sandbox` or `NO_SANDBOX=1` in the environment, or a short secret: exit 2 before Chromium starts.
+
+It needs a Linux Docker host with unprivileged user namespaces (on macOS, the Docker VM is that host).
+
+The acceptance suite (`acceptance/`, run by `tests/run-browser-acceptance.sh`) runs both images and pipelock with its shipped config, wired like `compose/browser.yml`, on internal networks. The fixture sites sit on a `198.18.x.0/24` network, which pipelock counts as public, so no `trusted_domains` is used; the engine gets one extra managed policy, `CACertificates`, with the suite's test CA. It checks that no page reaches stack services, loopback, metadata or a rebinding name, that no UDP leaves the engine, that typed secrets appear in no result, log or unmasked screenshot, the site check, task isolation, that the engine cannot call `lollo-browser`, and pipelock's receipts, and it prints each page load's requests, CONNECT tunnels and receipt bytes. Its containers are named `lollo-browser-engine-test-<pid>-<case>` and removed when it ends.
+
+The service's tests run with `tests/run-sidecar.sh browser`, which builds `service/`'s `test` stage and runs pytest in it with no network, then, given no pytest arguments, `engine/tests/run.sh`; CI runs it as the `browser` job. To run only the service's tests by hand:
+```bash
+docker build --target test --build-context lollo-common=$PWD/lollo-common -t lollo-browser:test browser/service
+docker run --rm --network none lollo-browser:test python -m pytest -q -p no:cacheprovider
+```
+The test stage needs the internet to build (pip, Playwright's Chromium, noVNC), not to run.
+
+Bumping Playwright: change `playwright-core` in `engine/package.json` and the lockfile (`npm install --package-lock-only` in a `node:22-bookworm-slim` container), and the service's Python `playwright` to the same major.minor, in one change; then run both images' tests, and check `chrome://policy`'s statuses and the Chromium library list in `engine/Dockerfile` against Playwright's for Debian 12.
+
+## Upstream seams
+The engine depends on no Lettuce internal. The service relies on these, all listed in [CONTRIBUTING.md](../CONTRIBUTING.md#upstream-seams):
+- The shared MCP list accepts the browser's `http` entry of only `name`, `transport` and `url`, which `lolloctl mcp` writes.
+- Lettuce's MCP bridge gives a tool call 120 s: `MAX_WAIT_SECONDS` (50) and every action's timeout stay below it.
+- The skill relies on letta-code telling the agent when a background command finishes, which is how an agent waiting on `wait_handoff` gets a new turn, and on `letta mcp call <tool> --args-file -` reading the arguments from stdin, which is how `vault-run` and `vault-fill` pipe a value into `type_secret` or `type_totp`.
