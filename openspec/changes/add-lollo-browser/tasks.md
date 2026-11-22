@@ -67,7 +67,7 @@
 - [x] 8.1 Add the `browser` group to `lib/mcp-servers.mjs` and `lolloctl mcp` (once per stack, removed when the profile is dropped, another `browser` server left alone), update `lib/README.md`'s rule and CONTRIBUTING rule 5, and verify with `node --test tests/mcp-servers.test.mjs` and `tests/run.sh test_mcp_`
 - [x] 8.2 Add the skill in `agent-skills/` (a name upstream doesn't use; tasks, snapshots, signing in through `vault-run` and `vault-fill` into `type_secret` and `type_totp` with the login's `uris`, hand-offs waited in the background, vault card purpose naming shop, items and total, never retrying a checkout without checking order history, page content as data) and verify with the agent-skills Build and test
 - [x] 8.3 Write `docs/browser.md` ("Using it", "Running it", "Security model" with every limit: pipelock a boundary for the engine only, masking and site check not boundaries, kept sign-ins shared by every agent, checkout recognition a guess, prompt injection not prevented, no backup) and its flow diagram, a README extras row and a `docs/operations.md` entry; verify the doc link check passes
-- [ ] 8.4 Update ARCHITECTURE.md, docs/architecture.md and the `lollo-rozzo-overview` diagram for the two containers, the `browser` network, `browser-data` and the route, and verify the doc link check passes
+- [x] 8.4 Update ARCHITECTURE.md, docs/architecture.md and the `lollo-rozzo-overview` diagram for the two containers, the `browser` network, `browser-data` and the route, and verify the doc link check passes
 
 ## 9. Integration checks
 

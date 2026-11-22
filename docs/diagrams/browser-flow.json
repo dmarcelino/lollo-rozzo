@@ -5,7 +5,13 @@
     "title": "Browser: your agent acts on a site, you keep the last word",
     "output": "docs/diagrams/browser-flow.html",
     "locale": "en",
-    "quality_profile": "showcase"
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dmarcelino/lollo-rozzo.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "b537162f494aa3bef69c0d6af8cefe38f99b552e"
+    }
   },
   "participants": [
     {
@@ -13,31 +19,71 @@
       "type": "external",
       "icon": "person",
       "label": "You",
-      "sublabel": "chat, <lollo>/browser/"
+      "sublabel": "chat, <lollo>/browser/",
+      "sources": [
+        {
+          "path": "docs/browser.md",
+          "line": 11,
+          "end_line": 22,
+          "label": "using it"
+        }
+      ]
     },
     {
       "id": "agent",
       "type": "backend",
       "label": "Your agent",
-      "sublabel": "in your stack"
+      "sublabel": "in your stack",
+      "sources": [
+        {
+          "path": "agent-skills/using-the-browser/SKILL.md",
+          "line": 26,
+          "end_line": 49,
+          "label": "browser or not, tasks"
+        }
+      ]
     },
     {
       "id": "vault",
       "type": "security",
       "label": "Your vault",
-      "sublabel": "<lollo>/vault/"
+      "sublabel": "<lollo>/vault/",
+      "sources": [
+        {
+          "path": "docs/browser.md",
+          "line": 24,
+          "end_line": 27,
+          "label": "signing in with the vault"
+        }
+      ]
     },
     {
       "id": "browser",
       "type": "security",
       "label": "Browser",
-      "sublabel": "tasks, hand-offs, sites"
+      "sublabel": "tasks, hand-offs, sites",
+      "sources": [
+        {
+          "path": "docs/browser.md",
+          "line": 57,
+          "end_line": 71,
+          "label": "security model"
+        }
+      ]
     },
     {
       "id": "shop",
       "type": "external",
       "label": "The shop's site",
-      "sublabel": "through pipelock"
+      "sublabel": "through pipelock",
+      "sources": [
+        {
+          "path": "docs/egress-firewall.md",
+          "line": 47,
+          "end_line": 61,
+          "label": "the browser's engine"
+        }
+      ]
     }
   ],
   "segments": [

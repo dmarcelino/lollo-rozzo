@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "b537162f494aa3bef69c0d6af8cefe38f99b552e"
     }
   },
   "components": [
@@ -30,8 +30,8 @@
       "sources": [
         {
           "path": "README.md",
-          "line": 9,
-          "end_line": 12,
+          "line": 13,
+          "end_line": 16,
           "label": "two hosts per person"
         }
       ]
@@ -97,13 +97,13 @@
         {
           "path": "lib/cloudflare.sh",
           "line": 114,
-          "end_line": 128,
+          "end_line": 129,
           "label": "lollo host routes"
         },
         {
           "path": "lib/cloudflare.sh",
-          "line": 154,
-          "end_line": 173,
+          "line": 155,
+          "end_line": 174,
           "label": "tunnel ingress"
         },
         {
@@ -135,8 +135,8 @@
         },
         {
           "path": "compose/pipelock-proxy.yml",
-          "line": 47,
-          "end_line": 49,
+          "line": 49,
+          "end_line": 51,
           "label": "proxied by pipelock"
         }
       ]
@@ -191,8 +191,8 @@
         },
         {
           "path": "lolloctl",
-          "line": 385,
-          "end_line": 395,
+          "line": 389,
+          "end_line": 399,
           "label": "sync_executor"
         },
         {
@@ -224,8 +224,8 @@
         },
         {
           "path": "compose/pipelock-proxy.yml",
-          "line": 44,
-          "end_line": 46,
+          "line": 46,
+          "end_line": 48,
           "label": "proxied by pipelock"
         }
       ]
@@ -253,7 +253,7 @@
         {
           "path": "compose/pipelock-proxy.yml",
           "line": 1,
-          "end_line": 43,
+          "end_line": 45,
           "label": "who follows the proxy"
         }
       ]
@@ -329,8 +329,8 @@
         },
         {
           "path": "lolloctl",
-          "line": 466,
-          "end_line": 473,
+          "line": 495,
+          "end_line": 502,
           "label": "image lolloctl builds"
         }
       ]
@@ -551,9 +551,9 @@
       "sources": [
         {
           "path": "docs/architecture.md",
-          "line": 52,
+          "line": 53,
           "label": "the stack's data",
-          "end_line": 69
+          "end_line": 72
         },
         {
           "path": "compose/code-server.yml",
