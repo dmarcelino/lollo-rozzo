@@ -1,14 +1,11 @@
-// Renovate's configuration: what it updates, when, and what merges on its own.
-// It runs from .github/workflows/renovate.yml; CONTRIBUTING.md "Dependency
-// updates" explains the policy and the one-time GitHub setup.
+// Renovate's configuration: what it updates and what merges on its own.
+// It runs from .github/workflows/renovate.yml, whose cron is its only schedule:
+// a schedule here would make every run GitHub starts late do nothing.
+// CONTRIBUTING.md "Dependency updates" explains the policy and the one-time
+// GitHub setup.
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: ['config:recommended'],
-  timezone: 'Europe/Lisbon',
-  // Tuesdays and Fridays at 16:00, Saturdays and Sundays at 07:00. The workflow
-  // starts at both UTC hours that can be that hour in Lisbon; the run outside it
-  // creates and updates nothing.
-  schedule: ['* 16 * * 2,5', '* 7 * * 0,6'],
   // Four runs a week: no cap on PRs per hour.
   prHourlyLimit: 0,
   // config:recommended skips every tests/ folder, which holds pinned images too.
