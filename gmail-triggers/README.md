@@ -13,7 +13,7 @@ An interactive version, [gmail-triggers-architecture.html](../docs/diagrams/gmai
 | `pyproject.toml` | The package and its pinned dependencies |
 | `src/gmail_triggers/__main__.py` | Entry point: reads the settings, builds the store, Google client, poller and app, runs uvicorn on port 8000 without an access log |
 | `src/gmail_triggers/config.py` | `PREFIX` (`/gmail-triggers`), the limits (poll interval, `MAX_RULES`, `MAX_CLAIM`, `LOST_AFTER_SECONDS`, ...) and `Settings` from the environment |
-| `src/gmail_triggers/app.py` | The pages under `/gmail-triggers/` (no JavaScript), `/healthz`, and the executor routes from `executor_api.py`; the poller runs in its lifespan |
+| `src/gmail_triggers/app.py` | The pages under `/gmail-triggers/` (no JavaScript; the form's Conversation ID box shows through CSS `:has`), `/healthz`, and the executor routes from `executor_api.py`; the poller runs in its lifespan |
 | `src/gmail_triggers/executor_api.py` | `/executor/v1/requests`, `results`, `agents` and `heartbeat`: `lollo_common.executor.request_routes` over the store's run log |
 | `src/gmail_triggers/google.py` | Reads the policy and token files the BFF writes, refreshes the access token in memory, and makes the few Gmail calls (profile, history, message metadata, labels) |
 | `src/gmail_triggers/poller.py` | Every `POLL_SECONDS` (default 120): what arrived since the stored history id, matched against the rules |
@@ -69,4 +69,5 @@ The tests never use the network: Google is an `httpx.MockTransport`, Access toke
 ## Upstream seams
 These are the Lettuce behaviours Gmail triggers depend on (all of them are listed in [CONTRIBUTING.md](../CONTRIBUTING.md#upstream-seams)):
 - The Google files the BFF writes on the `google-policy` and `google-creds` volumes (`/policy/sidecar.json`, `/creds/<account>.json`, upstream `bff/src/google/settings.ts`; see `google.py`).
-- Through the executor: `letta cron add` with `--name=`, `--description=`, `--prompt=`, `--at=in 1m`, `--once`, `--agent=`, `--conversation=new|default` and its JSON output (`.id`); `letta agents list` (`.items[]`); the scheduler picking up a changed task file without a restart; the app-server entrypoint copying `/root/.letta/system-cron` to `/etc/cron.d`; and `/usr/local/bin/agent-env`.
+- Through the executor: `letta cron add` with `--name=`, `--description=`, `--prompt=`, `--at=in 1m`, `--once`, `--agent=`, `--conversation=` with `new`, `default` or a conversation id, and its JSON output (`.id`); `letta agents list` (`.items[]`); the scheduler picking up a changed task file without a restart; the app-server entrypoint copying `/root/.letta/system-cron` to `/etc/cron.d`; and `/usr/local/bin/agent-env`.
+- letta-code giving the agent's shell its conversation id as `$LETTA_CONVERSATION_ID`. Lettuce shows no conversation id and letta-code has no command that lists them, so for "A specific conversation" the form tells the person to ask the agent to print it; the page checks only its shape (`CONVERSATION_ID` in `lollo_common.executor`) and refuses to keep it when the rule's agent changes, since letta-code doesn't check that a conversation is the agent's when the task fires.

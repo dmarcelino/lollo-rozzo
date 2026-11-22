@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
 import anyio
-from lollo_common.executor import AGENT_ID
+from lollo_common.executor import AGENT_ID, CONVERSATION_ID
 from lollo_common.text import encodable, one_line
 
 from . import places as place_map
@@ -56,9 +55,7 @@ from .store import QUEUED, Monitor, Report, Store, StoredItem, new_report_id
 log = logging.getLogger("lollo_news_radar.service")
 
 # Where a monitor's reports go: new (a new conversation each report), default (the
-# agent's main one), or the id of one of its conversations, as letta-code gives it
-# in $LETTA_CONVERSATION_ID. The executor checks the same shape.
-CONVERSATION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}")
+# agent's main one), or the id of one of its conversations (CONVERSATION_ID).
 # Said for the conversation an agent saves a monitor from (set_up_in).
 HERE = "here"
 TEST_ITEMS = 10

@@ -58,7 +58,7 @@ These are the Lettuce internals lollo-rozzo depends on today ("named today"). A 
 | News Radar and its skill | News Radar's `http` entry in the MCP list; the 120 s Lettuce's MCP bridge gives a tool call; through the executor, what Gmail triggers rely on (above), and `letta cron add --conversation=<id>` reporting into one conversation; letta-code giving the agent's shell its conversation id as `$LETTA_CONVERSATION_ID` (the skill passes it as `set_up_in`); the `mcp-servers` skill wrapper and its `--args`/`--args-file` | [news-radar/](news-radar/README.md#upstream-seams) |
 | the vault and its skill | the vault's `http` entry in the MCP list; letta-code telling the agent when a background command finishes, which is how an agent waiting for an approval gets a new turn; `letta mcp call <tool> --args-file -` reading the arguments from stdin and exiting 2 when the tool reports an error (the skill's email recipe pipes `vault-fill` into it, under `bash` for `pipefail`); `MAX_WAIT_SECONDS` below the MCP bridge's 120 s | [vault/](vault/README.md#upstream-seams), [agent-skills/](agent-skills/README.md#upstream-seams) |
 | skills and `backup` | the global skills directory `/root/.letta/skills`, and the BFF rewriting upstream's `docker/agent-skills` there on every connect | [agent-skills/](agent-skills/README.md#upstream-seams), [backup/](backup/README.md#upstream-seams) |
-| Gmail triggers | the Google files the BFF writes on the `google-policy` and `google-creds` volumes | [gmail-triggers/](gmail-triggers/README.md#upstream-seams) |
+| Gmail triggers | the Google files the BFF writes on the `google-policy` and `google-creds` volumes; letta-code giving the agent's shell its conversation id as `$LETTA_CONVERSATION_ID`, which the trigger form tells people to ask the agent for when a trigger runs in a specific conversation | [gmail-triggers/](gmail-triggers/README.md#upstream-seams) |
 | `app_server_image`, `upstream_image_ns`, `fetch_upstream` | the app-server's image named `${LETTA_IMAGE_NS}lettuce-app-server:<release tag>`, `LETTA_IMAGE_NS` as upstream's pull-or-build switch, its images at `ghcr.io/<owner>/`, and GitHub's tag archives | [lib/](lib/README.md#upstream-seams) |
 | `lollo-code-server-exec` | built `FROM` the app-server's image: Debian with `apt`, `bash` as root's shell, the image `ENV` pointing `PATH`, `NPM_CONFIG_PREFIX`, `CARGO_HOME`, `GOBIN` and the `UV_*` variables at `/opt/agent-tools`, `/usr/local/bin/agent-env` reading PID 1's environment; the workspaces and tools mounted as the app-server mounts them | [code-server/](code-server/README.md#upstream-seams) |
 | the landing page's agent links | code-server's `?folder=` query and the workspaces at `/work/<agent-id>` | [landing/](landing/README.md#upstream-seams) |
@@ -159,7 +159,7 @@ The CLI has no build step. From a clone, `lolloctl up` builds the sidecar images
 ```bash
 tests/run.sh                 # all offline tests (docker, curl, dig, gh, secret-tool are stubbed)
 tests/run.sh <pattern>       # only tests whose function name contains <pattern>, e.g. tests/run.sh test_add_
-shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/lolloctl-wrapper.sh
+shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/dev-tag release/lolloctl-wrapper.sh
 tests/run-sidecar.sh vault            # vault tests (pytest in its image's `test` stage; needs Docker)
 tests/run-sidecar.sh vault -k vault   # extra args go to pytest
 tests/run-sidecar.sh gmail-triggers    # Gmail triggers' tests (pytest; the executor's run with landing)
@@ -179,7 +179,7 @@ tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-
 - **Before changing docs:** `node scripts/check-doc-links.mjs`.
 - **End to end**, against real images (Docker, and the internet for the first build; throwaway containers only): `scripts/doc-tools-e2e.sh`, and `scripts/code-server-e2e.sh --browser` before keeping a new code editor extension or setting.
 
-CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release (`publish.yml` calls it). A new test script or linted file goes there too, and in both copies of the block above.
+CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release or dev build (`publish.yml` calls it, on the commit it publishes). A new test script or linted file goes there too, and in both copies of the block above.
 
 ## Dependency updates
 Renovate keeps the pinned versions current. It runs from `.github/workflows/renovate.yml` as a GitHub App, reads `.github/renovate.json5`, and opens a PR per update (one per package across the `pyproject.toml` files). CI runs on each, as on any branch.

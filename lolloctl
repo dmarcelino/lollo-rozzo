@@ -25,7 +25,8 @@ Setup
   remove <name> [--purge]       stop a stack and delete its Cloudflare resources (--purge: its data too)
   profiles [<p>,<p>...]         show, or set for every stack, the compose profiles (optional features)
   upgrade <tag>                 move Lettuce to another tag and update every stack
-  self-upgrade vX.Y.Z           (released lolloctl only) move lollo-rozzo to another release
+  self-upgrade vX.Y.Z           (released lolloctl only) move lollo-rozzo to another release,
+                                or to a pull request's dev build, vX.Y.Z-dev.<slug>.<N>
   version                       lollo-rozzo's release, or the clone it runs from
   dns-preflight <domain> <ns> <ns> [names...]
                                 compare two nameservers before moving a domain (docs/cloudflare-setup.md, step 2.6)
@@ -2338,10 +2339,15 @@ cmd_mcp() {
 # cmd__fetch_wrapper TAG -> downloads release TAG's wrapper and SHA256SUMS into
 # bin/.lolloctl.new and checks the sum. The sum comes from the same release,
 # so it catches a broken download, not a forged release: the attestation does
-# that (gh attestation verify).
+# that (gh attestation verify). A dev build has no release: fetch_dev_wrapper.
 cmd__fetch_wrapper() {
-  (($# == 1)) && [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || die "usage: lolloctl self-upgrade vX.Y.Z"
+  (($# == 1)) && [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+|-dev\.[a-z0-9-]+\.[0-9]+)?$ ]] ||
+    die "usage: lolloctl self-upgrade vX.Y.Z (or vX.Y.Z-rc.N, or a dev build's vX.Y.Z-dev.<slug>.<N>)"
   release_mode || die "self-upgrade is for a released lolloctl; from a clone, git pull"
+  if [[ $1 == *-dev.* ]]; then
+    fetch_dev_wrapper "$1"
+    return
+  fi
   local url bin sums want got
   url=https://github.com/$(release_get REPOSITORY)/releases/download/$1
   bin=$LOLLO_DATA/bin
@@ -2354,6 +2360,34 @@ cmd__fetch_wrapper() {
     rm -f "$bin/.lolloctl.new"
     die "release $1's wrapper does not match its SHA256SUMS"
   }
+  chmod 755 "$bin/.lolloctl.new"
+}
+
+# fetch_dev_wrapper TAG -> writes dev build TAG's wrapper into bin/.lolloctl.new.
+# A dev build is only the lolloctl image's tag (publish.yml, release/README.md
+# "Dev builds"), from this release's own repository: it pulls that image, pins
+# its digest, checks that its RELEASE is TAG's, and fills the wrapper template
+# the image carries, as publish.yml fills a release's.
+fetch_dev_wrapper() {
+  local tag=$1 repo name digest ref version template bin=$LOLLO_DATA/bin
+  repo=$(release_get REPOSITORY)
+  name=ghcr.io/${repo%%/*}/lolloctl
+  name=${name,,}
+  host_docker pull -q "$name:$tag" </dev/null >/dev/null || die "no dev build $tag at $name"
+  digest=$(host_docker image inspect --format '{{json .RepoDigests}}' "$name:$tag" </dev/null |
+    jq -r --arg n "$name@" '.[] | select(startswith($n)) | ltrimstr($n)' | head -1) || true
+  [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not read the digest of $name:$tag"
+  ref=$name:$tag@$digest
+  # Every lolloctl image keeps the code where this one does, LOLLO_HOME.
+  version=$(host_docker run --rm --entrypoint cat "$ref" "$LOLLO_HOME/RELEASE" </dev/null | sed -n 's/^VERSION=//p') || true
+  [[ $version == "${tag#v}" ]] || die "$ref is not dev build $tag (its RELEASE says ${version:-nothing})"
+  template=$(host_docker run --rm --entrypoint cat "$ref" "$LOLLO_HOME/release/lolloctl-wrapper.sh" </dev/null) ||
+    die "$ref carries no wrapper"
+  printf '%s\n' "$template" | sed -e "s|@VERSION@|$tag|" -e "s|@IMAGE@|$ref|" -e "s|@REPOSITORY@|$repo|" >"$bin/.lolloctl.new"
+  if [[ ! -s $bin/.lolloctl.new ]] || grep -q '@[A-Z]*@' "$bin/.lolloctl.new"; then
+    rm -f "$bin/.lolloctl.new"
+    die "$ref's wrapper template could not be filled in"
+  fi
   chmod 755 "$bin/.lolloctl.new"
 }
 

@@ -109,6 +109,14 @@
 .examples .hint {
   flex-basis: 100%;
 }
+.conversation-id {
+  margin-top: 12px;
+}
+/* The box shows only with "A specific conversation" picked; no script. A browser
+   without :has shows it always, and the server ignores it for the other choices. */
+.conversation:has(input[name="conversation"][value="specific"]:not(:checked)) .conversation-id {
+  display: none;
+}
 .field.narrow input[type="number"] {
   width: 88px;
 }

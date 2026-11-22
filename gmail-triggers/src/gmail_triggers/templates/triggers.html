@@ -39,10 +39,10 @@
       <span class="rule-name">{{ rule.name }}{% if not rule.enabled %} <span class="pill">Off</span>{% endif %}</span>
       <span class="rule-desc">
         {{ rule.label_display() | join(", ") }}{% if rule.senders %}, from {{ rule.senders | length }} sender{{ "s" if rule.senders | length != 1 }}{% endif %}
-        &middot; asks {{ rule.agent_name or rule.agent_id }}
+        &middot; asks {{ rule.agent_name or rule.agent_id }}{% set chosen, conversation_id = chosen_conversation(rule) %}{% if conversation_id %} in conversation {{ conversation_id | truncate(16, true, "...", 0) }}{% endif %}
       </span>
       <span class="rule-last">
-        {% if last %}{{ run_status(last) }} <span class="muted">{{ last.at | time }}</span>{% else %}<span class="muted">Not run yet</span>{% endif %}
+        {% if last %}{{ run_status(last, rule) }} <span class="muted">{{ last.at | time }}</span>{% else %}<span class="muted">Not run yet</span>{% endif %}
         {% if pending.get(rule.id) %}<span class="pill warn">{{ pending[rule.id] }} waiting</span>{% endif %}
       </span>
     </a>

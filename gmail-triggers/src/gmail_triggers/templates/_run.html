@@ -1,1 +1,2 @@
-{% macro run_status(run) %}{% set cls, text = status_text(run.status) %}<span class="pill {{ cls }}">{{ "Test: " if run.test }}{{ text }}</span>{% endmacro %}
+{# A run into a typed conversation id is "ok" once its task exists, even if the id is wrong. #}
+{% macro run_status(run, rule=none) %}{% set cls, text = status_text(run.status) %}{% if run.status == "ok" and rule and chosen_conversation(rule)[1] %}{% set text = text ~ ": check the conversation" %}{% endif %}<span class="pill {{ cls }}">{{ "Test: " if run.test }}{{ text }}</span>{% endmacro %}
