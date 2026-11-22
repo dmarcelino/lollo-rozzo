@@ -8,8 +8,10 @@
 /stacks.conf
 
 # Written by publish.yml for the lolloctl image; in a clone it would switch
-# lolloctl to release mode.
+# lolloctl to release mode. On a case-insensitive file system (macOS) git
+# would read it as release/ too, and ignore that folder's new files.
 /RELEASE
+!/release/
 
 # Local git worktrees: ours (git worktree add .worktrees/<branch>) and Claude Code's
 /.worktrees/
@@ -26,3 +28,6 @@ docs/diagrams/*.delivery-pending.json
 docs/diagrams/*.browser-check.json
 docs/diagrams/*.finalize.json
 docs/diagrams/*.finalize-summary.json
+
+# Local code index
+/.codegraph/

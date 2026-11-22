@@ -159,7 +159,7 @@ The CLI has no build step. From a clone, `lolloctl up` builds the sidecar images
 ```bash
 tests/run.sh                 # all offline tests (docker, curl, dig, gh, secret-tool are stubbed)
 tests/run.sh <pattern>       # only tests whose function name contains <pattern>, e.g. tests/run.sh test_add_
-shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/lolloctl-wrapper.sh
+shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/dev-tag release/lolloctl-wrapper.sh
 tests/run-sidecar.sh vault            # vault tests (pytest in its image's `test` stage; needs Docker)
 tests/run-sidecar.sh vault -k vault   # extra args go to pytest
 tests/run-sidecar.sh gmail-triggers    # Gmail triggers' tests (pytest; the executor's run with landing)
@@ -179,20 +179,20 @@ tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-
 - **Before changing docs:** `node scripts/check-doc-links.mjs`.
 - **End to end**, against real images (Docker, and the internet for the first build; throwaway containers only): `scripts/doc-tools-e2e.sh`, and `scripts/code-server-e2e.sh --browser` before keeping a new code editor extension or setting.
 
-CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release (`publish.yml` calls it). A new test script or linted file goes there too, and in both copies of the block above.
+CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release or dev build (`publish.yml` calls it, on the commit it publishes). A new test script or linted file goes there too, and in both copies of the block above.
 
 ## Dependency updates
 Renovate keeps the pinned versions current. It runs from `.github/workflows/renovate.yml` as a GitHub App, reads `.github/renovate.json5`, and opens a PR per update (one per package across the `pyproject.toml` files). CI runs on each, as on any branch.
 
 - **What it updates.** The Actions in `.github/workflows/`; the base images of every Dockerfile and the Gotenberg image in `compose/shared/gotenberg.yml`; the packages of each `pyproject.toml`; and, through its own regex rules, the pins no built-in manager reads: `config.env.example`'s `LETTUCE_REF`, `SHELLCHECK_VERSION`, `PIPELOCK_VERSION`, `CODE_SERVER_VERSION`, `OFFICEAGENT_VERSION`, doc-tools' `PYTHON_VERSION`, the images and pip pins of the test and end-to-end scripts, and Renovate's own version. A new pin uses one of those forms, or gets its own rule in `renovate.json5`.
 - **When.** Tuesdays and Fridays at 16:00, Saturdays and Sundays at 07:00, Lisbon time. Cron is UTC, so `renovate.yml` starts at both UTC hours that can be that hour, and `renovate.json5`'s `schedule` lets only the run inside it create or update branches. "Run workflow" with *ignore-schedule* runs it now.
-- **What merges on its own.** Patch, minor and digest updates three days after their release, once CI passes: Renovate turns on GitHub's auto-merge, and the `Main branch` ruleset requires CI's jobs. Never a major update, and not these, whose PRs name what to do first:
+- **What merges on its own.** Patch, minor and digest updates three days after their release (Lettuce's one day), once CI passes: Renovate turns on GitHub's auto-merge, and the `Main branch` ruleset requires CI's jobs. Never a major update, and not these, whose PRs name what to do first:
   - Lettuce, code-server and Gotenberg minor updates. Their upgrades have steps CI does not run ([the checklist above](#upgrading-lettuce_ref), [code-server's](code-server/README.md#maintaining), [Gotenberg's](doc-tools/README.md#maintaining)), so only their patch updates merge on their own.
   - A Lettuce tag that moves letta-code, even a patch one: it moves the app-server.
   - A new Python minor, which changes every sidecar's interpreter.
   - Playwright (the pip package and the browser image, in one PR): only `scripts/code-server-e2e.sh --browser` checks that they match, and CI does not run it.
   - doc-tools' Python and uv, in one PR (a Python patch with a uv patch, a minor with a minor): uv downloads that Python and knows only the releases out before it. A Python patch alone still merges on its own when CI passes; when it needs a uv minor, its build fails and it waits for that uv PR.
-  - An update whose registry gives no release date (ghcr.io and mcr.microsoft.com give none, Docker Hub none when its tag API fails), since it cannot be held three days.
+  - An update whose registry gives no release date (ghcr.io and mcr.microsoft.com give none, Docker Hub none when its tag API fails), since it cannot be held.
 
   A PR whose CI fails stays open.
 - **What goes with a version.** `scripts/renovate-post-upgrade.sh KIND` recomputes it in the same branch: the SHA-256 of shellcheck's, code-server's and OfficeAgent's downloads (OfficeAgent's checked against its `SHA256SUMS` and its build attestation), the commit of Pipelock's tag, and `doc-tools/requirements.lock`, compiled again when doc-tools' packages, Python or uv change, which also brings its indirect dependencies up to date. It refuses a version that is not a plain number and writes nothing when a lookup fails. Renovate then still opens the PR, with auto-merge on and a warning, so CI has to catch what was left stale: shellcheck's hash fails the `shellcheck` job, code-server's the editor build and OfficeAgent's the `office` stage (both in `tests/run-sidecar.sh`), Pipelock's commit `tests/run-pipelock.sh`'s build, and a lock without the new pins `test_doc_tools_lock_has_every_pin_its_pyproject_names`. Run it too when moving one of those pins by hand. `renovate.yml` lets Renovate run that script only, and gives it the workflow's read-only token; the app's token stays with Renovate.

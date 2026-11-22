@@ -19,28 +19,34 @@
   },
   packageRules: [
     // Patch, minor and digest updates merge on their own once CI passes (GitHub
-    // auto-merge, with the CI jobs required on main), after three days, so a
-    // release that is pulled or compromised early never merges by itself.
+    // auto-merge, with the CI jobs required on main), after three days (Lettuce
+    // one, below), so a release that is pulled or compromised early never
+    // merges by itself.
     {
       matchUpdateTypes: ['patch', 'minor', 'digest'],
       automerge: true,
       minimumReleaseAge: '3 days',
       minimumReleaseAgeBehaviour: 'timestamp-optional',
     },
-    // A release with no date cannot be held three days (ghcr.io and mcr.microsoft.com
+    // A release with no date cannot be held (ghcr.io and mcr.microsoft.com
     // give none, nor does Docker Hub when its tag API fails): it gets a PR, not
     // an automatic merge.
     {
       matchUpdateTypes: ['patch', 'minor', 'digest'],
       matchJsonata: ['$not($exists(releaseTimestamp)) or releaseTimestamp = null'],
       automerge: false,
-      prBodyNotes: ['The registry gives no release date, so this update was not held for three days: it waits for a person.'],
+      prBodyNotes: ['The registry gives no release date, so this update could not be held: it waits for a person.'],
     },
     // These have upgrade steps CI does not run: their patch updates merge on
     // their own, their minor and major ones wait for a person.
     {
       matchDepNames: ['dmarchevsky/lettuce', 'coder/code-server', 'gotenberg/gotenberg'],
       separateMinorPatch: true,
+    },
+    // Lettuce is held one day, not three.
+    {
+      matchDepNames: ['dmarchevsky/lettuce'],
+      minimumReleaseAge: '1 day',
     },
     {
       matchDepNames: ['dmarchevsky/lettuce'],

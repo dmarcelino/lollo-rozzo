@@ -23,6 +23,8 @@ COPY lib /opt/lollo-rozzo/lib
 COPY compose /opt/lollo-rozzo/compose
 COPY agent-skills /opt/lollo-rozzo/agent-skills
 COPY release/images /opt/lollo-rozzo/release/images
+# Not run here: lolloctl fills it in from a dev build's image (fetch_dev_wrapper).
+COPY release/lolloctl-wrapper.sh /opt/lollo-rozzo/release/lolloctl-wrapper.sh
 COPY scripts/dns-preflight.sh /opt/lollo-rozzo/scripts/dns-preflight.sh
 COPY landing/executor/run.mjs /opt/lollo-rozzo/landing/executor/run.mjs
 COPY doc-tools /opt/lollo-rozzo/doc-tools

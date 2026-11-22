@@ -75,7 +75,7 @@ against a data directory of its own.
 |---|---|
 | How is it distributed? | A `lolloctl` image on GHCR, and a wrapper script attached to each GitHub release that names that image by digest. No tarball release, no packages. |
 | What is published? | Every lollo image but `doc-tools` and the code editor's shell, for `linux/amd64` and `linux/arm64`. |
-| Where are images published? | A new `.github/workflows/publish.yml`, on `v*` tags only, after every check of `ci.yml` passes. No `latest`. |
+| Where are images published? | A new `.github/workflows/publish.yml`, on `v*` tags on `main` or a `hotfix/*` branch, after every check of `ci.yml` passes; and a pull request's dev builds, a `lolloctl` image tag only. No `latest`. |
 | How are images named? | By a hash of what goes into each one, plus its digest; never by the release number. An image that did not change keeps its name, so its container is not recreated. |
 | How is Lettuce fetched? | The source archive of the tag `LETTUCE_REF`, over HTTPS; no `git clone`. Each lollo release names the Lettuce tag it was tested with. |
 | Is the people list declarative? | Yes: `stacks.conf` and `lolloctl apply`. `add`, `users` and `remove` keep the file in step, so `apply` never undoes them. A stack missing from the file is reported, never removed. |
@@ -214,7 +214,7 @@ tools today:
   release reuses the existing image, and so its digest.
 - An unchanged image therefore keeps the exact same name from release to release, and Compose leaves
   its container alone.
-- Base images (`debian:12-slim`, `python:3.12-slim`, `alpine`, `golang`) get security fixes only on
+- Base images (`debian:12-slim`, `python:3.14-slim`, `alpine`, `golang`) get security fixes only on
   a rebuild. A rebuild is asked for by changing `REBUILD` (a date), in a release of its own: it
   renames every image, so it restarts every sidecar and locks every vault, and its release notes
   say so.
@@ -246,9 +246,15 @@ published images by mistake. `doc-tools` is built by lolloctl in both modes, as 
 ### `publish.yml`
 
 - **When:** on a `v*` tag push (`vX.Y.Z`, or `vX.Y.Z-rc.N` for a release candidate to try on a test
-  host). Nothing is published from `main`, and there is no `latest`: a moving tag on an image that
-  holds the Docker socket would let one push reach every host. This differs from upstream, which
-  publishes `latest` from `main`.
+  host) on a commit of `main` or of a `hotfix/*` branch. Nothing is published from `main` without a
+  tag, and there is no `latest`: a moving tag on an image that holds the Docker socket would let one
+  push reach every host. This differs from upstream, which publishes `latest` from `main`.
+- **Dev builds:** a pull request from a branch of this repository (Renovate's excepted), when it
+  opens or gets commits, or a run by hand on a branch, publishes the same images and only one more
+  tag, `lolloctl:vX.Y.Z-dev.<slug>.<N>`: no git tag and no GitHub release, so the history and the
+  Releases page stay clean. Each number is new and never moves. `self-upgrade` installs one by
+  pulling that image and filling in the wrapper template it carries, so people can try a fix
+  before it is released ([release/README.md](../release/README.md#dev-builds)).
 - **Gate:** it calls `ci.yml` (made a reusable workflow) and publishes only when every job passes:
   `shellcheck`, `tests/run.sh`, the Node tests, every sidecar's tests, `tests/run-pipelock.sh` and
   the link checker. It also fails when `VERSION` and the tag disagree.

@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import httpcore
+import httpx
 import pytest
 
-from lollo_news_radar.fetch import BlockedAddress, FetchError, PublicOnlyBackend, check_url, is_public
+from lollo_news_radar.fetch import (
+    BlockedAddress,
+    Fetcher,
+    FetchError,
+    HostBusy,
+    PublicOnlyBackend,
+    check_url,
+    is_public,
+    looks_like_feed,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -241,3 +251,154 @@ async def test_a_pause_says_how_long(fetcher, web):
     with pytest.raises(FetchError, match="asked to wait") as second:
         await fetcher.get("https://p.example.org/x")
     assert 290 <= second.value.retry_after <= 300
+
+
+# What GitHub's robots.txt says to every agent, trimmed: wildcards and `$`.
+WILDCARD_ROBOTS = "User-agent: *\nDisallow: /*.atom$\nDisallow: /*/*/commits/\nDisallow: /a/\nAllow: /a/open/\n"
+FEED = b'<?xml version="1.0"?><rss version="2.0"><channel><title>t</title></channel></rss>'
+
+
+async def test_robots_wildcards_and_dollar_are_honoured(fetcher, web):
+    web.add("https://code.example.org/robots.txt", WILDCARD_ROBOTS, "text/plain")
+    for path in ("/o/r/releases.atom", "/o/r/commits/main", "/o/r/commits/main.atom"):
+        web.add("https://code.example.org" + path, "<html>no</html>")
+        with pytest.raises(FetchError, match="robots.txt disallows"):
+            await fetcher.get("https://code.example.org" + path)
+    assert web.fetched() == []
+    # `$` ends the pattern: a query after .atom is another URL.
+    web.add("https://code.example.org/o/r/releases.atom?page=2", "<html>ok</html>")
+    web.add("https://code.example.org/o/r/pull/1", "<html>ok</html>")
+    await fetcher.get("https://code.example.org/o/r/releases.atom?page=2")
+    await fetcher.get("https://code.example.org/o/r/pull/1")
+
+
+async def test_the_longest_robots_rule_wins_whatever_its_order(fetcher, web):
+    web.add("https://code.example.org/robots.txt", WILDCARD_ROBOTS, "text/plain")
+    web.add("https://code.example.org/a/open/x", "<html>ok</html>")
+    await fetcher.get("https://code.example.org/a/open/x")
+    with pytest.raises(FetchError, match="robots.txt disallows"):
+        await fetcher.get("https://code.example.org/a/closed")
+    web.add("https://other.example.org/robots.txt", "User-agent: *\nAllow: /b/\nDisallow: /b/shut/\n", "text/plain")
+    with pytest.raises(FetchError, match="robots.txt disallows"):
+        await fetcher.get("https://other.example.org/b/shut/x")
+
+
+async def test_a_feed_is_read_where_robots_refuses_it(fetcher, web):
+    web.add("https://code.example.org/robots.txt", WILDCARD_ROBOTS, "text/plain")
+    web.add("https://code.example.org/o/r/releases.atom", b"\xef\xbb\xbf" + FEED, "application/atom+xml")
+    web.add("https://code.example.org/o/r/releases.atom?page=2", FEED, "application/atom+xml")
+    page = await fetcher.get("https://code.example.org/o/r/releases.atom", feed=True)
+    assert page.status == 200 and page.robots_exempt
+    allowed = await fetcher.get("https://code.example.org/o/r/releases.atom?page=2", feed=True)
+    assert not allowed.robots_exempt
+
+
+async def test_a_refused_url_that_is_not_a_feed_stays_refused_without_a_sample(fetcher, web):
+    web.add("https://shut.example.org/robots.txt", "User-agent: *\nDisallow: /\n", "text/plain")
+    web.add("https://shut.example.org/page", "<html><body>private listing</body></html>")
+    web.add("https://shut.example.org/gone", "<html><body>private error</body></html>", status=404)
+    with pytest.raises(FetchError, match="not a feed, and robots.txt refuses .*robots.txt disallows") as e:
+        await fetcher.get("https://shut.example.org/page", feed=True)
+    assert e.value.page is None
+    # An error status is the refusal too, not a status for an agent to repair.
+    with pytest.raises(FetchError, match="robots.txt disallows") as e:
+        await fetcher.get("https://shut.example.org/gone", feed=True)
+    assert e.value.page is None
+
+
+async def test_a_refused_url_that_was_not_a_feed_is_not_asked_again_until_robots_is_read(fetcher, web, clock):
+    web.add("https://shut.example.org/robots.txt", "User-agent: *\nDisallow: /\n", "text/plain")
+    web.add("https://shut.example.org/old", "", status=301, location="https://shut.example.org/page")
+    web.add("https://shut.example.org/page", "<html><body>private listing</body></html>")
+    for _ in range(2):
+        with pytest.raises(FetchError, match="robots.txt disallows"):
+            await fetcher.get("https://shut.example.org/old", feed=True)
+    # Neither the URL nor the page it redirected to was asked for again.
+    assert web.fetched() == ["https://shut.example.org/old", "https://shut.example.org/page"]
+    web.add("https://shut.example.org/page", FEED, "application/rss+xml")
+    clock.t += 86400 + 1  # robots.txt is read again, and the URL with it
+    page = await fetcher.get("https://shut.example.org/old", feed=True)
+    assert page.robots_exempt
+
+
+async def test_a_feed_is_read_when_robots_txt_cannot_be_read(fetcher, web):
+    web.add("https://down.example.org/robots.txt", "oops", "text/plain", status=500)
+    web.add("https://down.example.org/feed", FEED, "application/rss+xml")
+    page = await fetcher.get("https://down.example.org/feed", feed=True)
+    assert page.robots_exempt
+    with pytest.raises(FetchError, match="robots.txt could not be read"):
+        await fetcher.get("https://down.example.org/feed")
+
+
+async def test_a_feed_robots_refuses_still_keeps_its_crawl_delay(fetcher, web, sleeps):
+    web.add("https://slow.example.org/robots.txt", "User-agent: *\nCrawl-delay: 10\nDisallow: /\n", "text/plain")
+    web.add("https://slow.example.org/feed", FEED, "application/rss+xml")
+    await fetcher.get("https://slow.example.org/feed", feed=True)
+    await fetcher.get("https://slow.example.org/feed", feed=True)
+    assert sleeps.calls and max(sleeps.calls) == pytest.approx(10, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    "body, feed",
+    [
+        (b'<?xml version="1.0"?>\n<!-- generated -->\n<?xml-stylesheet href="s.xsl"?><feed xmlns="x">', True),
+        (b"\n  <RSS version='2.0'>", True),
+        (b'<rdf:RDF xmlns:rdf="x">', True),
+        (b"<!doctype html><html><body><rss>", False),
+        (b'{"rss": 1}', False),
+        (b"<feedback/>", False),
+        (
+            b'<?xml version="1.0"?><!DOCTYPE rss PUBLIC "-//Netscape Communications//DTD RSS 0.91//EN" '
+            b'"http://my.netscape.com/publish/formats/rss-0.91.dtd"><rss version="0.91">',
+            True,
+        ),
+        (b'<!DOCTYPE rss [<!ENTITY nbsp "&#160;">]><rss>', True),
+        (b'<atom:feed xmlns:atom="http://www.w3.org/2005/Atom">', True),
+        ("<?xml version='1.0' encoding='utf-16'?><feed>".encode("utf-16"), True),
+        (b"<!--" + b"x" * 3000 + b"--><rss>", True),
+        (b'<?xml-stylesheet href="a.xsl?x=>"?><rss>', True),
+        (b"<!-- never closed <rss>", False),
+        (b"<!DOCTYPE html><html>", False),
+        (b'\n{"version": "https://jsonfeed.org/version/1.1", "title": "t", "items": []}', True),
+        (b"<!--" + b"licence " * 1500 + b"--><rss>", True),
+    ],
+)
+def test_looks_like_feed(body, feed):
+    assert looks_like_feed(body) is feed
+
+
+async def test_a_refused_url_with_an_error_status_is_not_asked_again_but_a_passing_one_is(fetcher, web):
+    web.add("https://shut.example.org/robots.txt", "User-agent: *\nDisallow: /\n", "text/plain")
+    web.add("https://shut.example.org/gone", "<html>gone</html>", status=404)
+    web.add("https://shut.example.org/busy", "<html>busy</html>", status=500)
+    for _ in range(2):
+        for path in ("/gone", "/busy"):
+            with pytest.raises(FetchError, match="robots.txt disallows"):
+                await fetcher.get("https://shut.example.org" + path, feed=True)
+    assert web.fetched() == [
+        "https://shut.example.org/gone",
+        "https://shut.example.org/busy",
+        "https://shut.example.org/busy",
+    ]
+
+
+async def test_a_pause_robots_txt_asks_for_holds_the_feed(fetcher, web):
+    web.add("https://over.example.org/robots.txt", "busy", "text/plain", status=503, **{"retry-after": "600"})
+    web.add("https://over.example.org/feed", FEED, "application/rss+xml")
+    with pytest.raises(HostBusy):
+        await fetcher.get("https://over.example.org/feed", feed=True)
+    assert web.fetched() == []
+
+
+async def test_a_host_out_of_reach_is_not_asked_for_the_feed(clock, sleeps):
+    asked: list[str] = []
+
+    def down(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        raise httpx.ConnectError("refused", request=request)
+
+    fetcher = Fetcher(transport=httpx.MockTransport(down), clock=clock, sleep=sleeps)
+    with pytest.raises(FetchError, match="cannot connect"):
+        await fetcher.get("https://down.example.org/feed", feed=True)
+    assert asked == ["https://down.example.org/robots.txt"]
+    await fetcher.aclose()
