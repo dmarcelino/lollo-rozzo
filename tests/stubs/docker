@@ -36,6 +36,18 @@ case $args in
     out=${out//'{{.ID}}'/${STUB_DOCKER_ID:-daemon-1}}
     echo "${out//'{{.Name}}'/${STUB_DOCKER_NAME:-docker-host}}"
     ;;
+  # fetch_dev_wrapper reading a dev build's image: its RELEASE, whose version is
+  # STUB_DEV_VERSION, and its wrapper template (this repo's), unless
+  # STUB_DEV_NO_WRAPPER says the image has none.
+  " run --rm --entrypoint cat "*"/RELEASE ")
+    printf 'VERSION=%s\nREPOSITORY=example/lollo-rozzo\n' "${STUB_DEV_VERSION:-}"
+    ;;
+  " run --rm --entrypoint cat "*"/release/lolloctl-wrapper.sh ")
+    [[ -z ${STUB_DEV_NO_WRAPPER:-} ]] || exit 1
+    cat "$STUB_ROOT/home/release/lolloctl-wrapper.sh"
+    ;;
+  # The digest a pulled image's name:tag has.
+  " image inspect --format {{json .RepoDigests}} "*) printf '["%s@sha256:%064d"]\n' "${last%:*}" 7 ;;
   # The wrapper on macOS reading the socket's group inside Docker's VM.
   " run "*" --entrypoint stat "*)
     [[ ${STUB_SOCKET_GID_RC:-0} == 0 ]] || exit "$STUB_SOCKET_GID_RC"

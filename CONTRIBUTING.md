@@ -159,7 +159,7 @@ The CLI has no build step. From a clone, `lolloctl up` builds the sidecar images
 ```bash
 tests/run.sh                 # all offline tests (docker, curl, dig, gh, secret-tool are stubbed)
 tests/run.sh <pattern>       # only tests whose function name contains <pattern>, e.g. tests/run.sh test_add_
-shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/lolloctl-wrapper.sh
+shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/dev-tag release/lolloctl-wrapper.sh
 tests/run-sidecar.sh vault            # vault tests (pytest in its image's `test` stage; needs Docker)
 tests/run-sidecar.sh vault -k vault   # extra args go to pytest
 tests/run-sidecar.sh gmail-triggers    # Gmail triggers' tests (pytest; the executor's run with landing)
@@ -179,7 +179,7 @@ tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-
 - **Before changing docs:** `node scripts/check-doc-links.mjs`.
 - **End to end**, against real images (Docker, and the internet for the first build; throwaway containers only): `scripts/doc-tools-e2e.sh`, and `scripts/code-server-e2e.sh --browser` before keeping a new code editor extension or setting.
 
-CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release (`publish.yml` calls it). A new test script or linted file goes there too, and in both copies of the block above.
+CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release or dev build (`publish.yml` calls it, on the commit it publishes). A new test script or linted file goes there too, and in both copies of the block above.
 
 ## Dependency updates
 Renovate keeps the pinned versions current. It runs from `.github/workflows/renovate.yml` as a GitHub App, reads `.github/renovate.json5`, and opens a PR per update (one per package across the `pyproject.toml` files). CI runs on each, as on any branch.
