@@ -5598,6 +5598,123 @@ test_publish_ci_ignores_a_push_of_only_the_release_notes() {
     fail "ci.yml runs on a push that changes only release/NOTES.md"
 }
 
+test_publish_dev_tag_names_a_branchs_builds() {
+  mkdir -p "$T/repo/release"
+  cp "$ROOT/release/dev-tag" "$T/repo/release/"
+  echo 1.2.3 >"$T/repo/VERSION"
+  local dt=$T/repo/release/dev-tag long
+  eq "$("$dt" feature/Foo_Bar)" v1.2.3-dev.feature-foo-bar
+  eq "$("$dt" -hotfix--x-)" v1.2.3-dev.hotfix-x
+  # SemVer: no numeric identifier with a leading zero.
+  eq "$("$dt" 0123)" v1.2.3-dev.b0123
+  # At most 40 characters, never ending on a dash.
+  long=$(printf 'a%.0s' {1..39})
+  eq "$("$dt" "$long/more")" "v1.2.3-dev.$long"
+  "$dt" /// >"$OUT" 2>&1 && fail "a branch without a letter or digit got a tag"
+  echo 1.2 >"$T/repo/VERSION"
+  "$dt" x >"$OUT" 2>&1 && fail "a VERSION that is not X.Y.Z gave a tag"
+  return 0
+}
+
+test_publish_dev_builds_never_write_to_the_repository() {
+  local p="$ROOT/.github/workflows/publish.yml" dev
+  dev=$(awk '/^  dev:$/ { on = 1 } on && /^  [a-z-]+:$/ && !/^  dev:$/ { on = 0 } on' "$p")
+  [[ -n $dev ]] || fail "publish.yml has no dev job"
+  grep -q 'contents: write' <<<"$dev" && fail "the dev job can write to the repository"
+  grep -q 'gh release' <<<"$dev" && fail "the dev job makes a GitHub release"
+  # Only the release job writes, and only on a tag.
+  eq "$(grep -c 'contents: write' "$p")" 1
+  grep -qF "if: needs.plan.outputs.kind == 'release'" "$p" || fail "the release job runs for dev builds too"
+}
+
+test_publish_builds_only_this_repositorys_pull_requests_but_renovates() {
+  local p="$ROOT/.github/workflows/publish.yml"
+  grep -qF 'github.event.pull_request.head.repo.full_name == github.repository' "$p" || fail "publish.yml builds forks' pull requests"
+  grep -qF "!startsWith(github.head_ref, 'renovate/')" "$p" || fail "publish.yml builds Renovate's pull requests"
+}
+
+test_publish_never_cancels_a_started_run() {
+  # A run stopped between tagging an image and attesting it would leave the
+  # image unattested for good: later runs reuse it.
+  grep -qx '  cancel-in-progress: false' "$ROOT/.github/workflows/publish.yml" || fail "publish.yml cancels running builds"
+}
+
+test_publish_releases_only_from_main_or_a_hotfix_branch() {
+  grep -qF "grep -qxE 'origin/(main|hotfix/.+)'" "$ROOT/.github/workflows/publish.yml" ||
+    fail "publish.yml releases a tag on any branch"
+}
+
+# shellcheck disable=SC2016 # GitHub's expressions, not bash's
+test_publish_checks_and_builds_the_commit_it_publishes() {
+  # A pull request's default checkout is GitHub's merge commit, not its head.
+  local p="$ROOT/.github/workflows/publish.yml" c="$ROOT/.github/workflows/ci.yml"
+  eq "$(grep -c 'ref: ${{ env.SHA }}' "$p")" "$(grep -c 'uses: actions/checkout@' "$p")"
+  eq "$(grep -c 'ref: ${{ inputs.ref }}' "$c")" "$(grep -c 'uses: actions/checkout@' "$c")"
+  grep -qF 'ref: ${{ github.event.pull_request.head.sha || github.sha }}' "$p" || fail "publish.yml checks the merge commit"
+}
+
+test_publish_the_lolloctl_image_carries_the_wrapper_template() {
+  grep -qx 'COPY release/lolloctl-wrapper.sh /opt/lollo-rozzo/release/lolloctl-wrapper.sh' "$ROOT/release/lolloctl.Dockerfile" ||
+    fail "the lolloctl image lacks the wrapper template"
+  grep -qx '!release/lolloctl-wrapper.sh' "$ROOT/release/lolloctl.Dockerfile.dockerignore" ||
+    fail "the lolloctl image's .dockerignore leaves out the wrapper template"
+}
+
+# ── self-upgrade to a dev build (fetch_dev_wrapper) ───────────────────────────
+DEV=v1.2.4-dev.feature-x.3
+test_release_fetch_wrapper_fills_a_dev_builds_wrapper_from_its_image() {
+  release_on
+  stub STUB_DEV_VERSION=${DEV#v}
+  ctl _fetch-wrapper "$DEV"
+  ok_rc
+  log_has "docker pull -q ghcr.io/example/lolloctl:$DEV"
+  local w=$D/bin/.lolloctl.new
+  [[ -x $w ]] || fail "no new wrapper"
+  grep -qxF "IMAGE=ghcr.io/example/lolloctl:$DEV@sha256:$(printf '%064d' 7)" "$w" || fail "the wrapper is not pinned to the image's digest"
+  grep -qxF "VERSION=$DEV" "$w" || fail "the wrapper does not name the dev build"
+  grep -qxF "REPOSITORY=example/lollo-rozzo" "$w" || fail "the wrapper does not name the repository"
+  grep -q '@[A-Z]*@' "$w" && fail "the wrapper still has a placeholder"
+  log_lacks "curl-get"
+}
+
+test_release_fetch_wrapper_refuses_an_image_of_another_build() {
+  release_on
+  stub STUB_DEV_VERSION=1.2.4-dev.feature-y.1
+  ctl _fetch-wrapper "$DEV"
+  bad_rc
+  out_has "is not dev build $DEV"
+  [[ ! -e $D/bin/.lolloctl.new ]] || fail "a wrapper was left behind"
+}
+
+test_release_fetch_wrapper_says_when_there_is_no_such_dev_build() {
+  release_on
+  stub STUB_PULL_RC=1
+  ctl _fetch-wrapper "$DEV"
+  bad_rc
+  out_has "no dev build $DEV at ghcr.io/example/lolloctl"
+}
+
+test_release_fetch_wrapper_needs_the_template_in_the_image() {
+  release_on
+  stub STUB_DEV_VERSION=${DEV#v}
+  stub STUB_DEV_NO_WRAPPER=1
+  ctl _fetch-wrapper "$DEV"
+  bad_rc
+  out_has "carries no wrapper"
+  [[ ! -s $D/bin/.lolloctl.new ]] || fail "a wrapper was left behind"
+}
+
+test_release_fetch_wrapper_refuses_a_malformed_dev_tag() {
+  release_on
+  local t
+  for t in v1.2.4-dev.Feature.1 v1.2.4-dev.x v1.2.4-dev..1 v1.2.4-beta.1; do
+    ctl _fetch-wrapper "$t"
+    bad_rc
+    out_has "usage: lolloctl self-upgrade"
+  done
+  log_lacks "docker pull"
+}
+
 # ── the wrapper (release/lolloctl-wrapper.sh) ─────────────────────────────
 # wrapper_in DIR -> the wrapper, filled in as publish.yml fills it, in DIR/bin,
 # and a socket for it to find
