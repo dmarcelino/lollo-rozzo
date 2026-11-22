@@ -61,17 +61,22 @@
     {% if not agents_known %}<span class="hint warn-text">Lettuce hasn't sent its list of agents yet. It sends one within a minute or two; reload then.</span>{% endif %}
   </label>
 
-  <fieldset class="field">
+  {% set chosen, conversation_id = chosen_conversation(rule) %}
+  <fieldset class="field conversation">
     <legend>In</legend>
     <div class="menu-list">
       {% for value, text in conversations.items() %}
       <label class="menu-row">
-        <input type="radio" name="conversation" value="{{ value }}"{% if rule.conversation == value %} checked{% endif %}>
+        <input type="radio" name="conversation" value="{{ value }}"{% if chosen == value %} checked{% endif %}>
         <span class="menu-row-text"><span class="menu-row-title">{{ text }}</span>
-          <span class="menu-row-desc">{{ "Each run starts fresh and shows as its own conversation." if value == "new" else "Runs add to the conversation you usually have with this agent." }}</span></span>
+          <span class="menu-row-desc">{% if value == "new" %}Each run starts fresh and shows as its own conversation.{% elif value == "default" %}Runs add to the conversation you usually have with this agent.{% else %}Runs add to one conversation you choose with this agent.{% endif %}</span></span>
       </label>
       {% endfor %}
     </div>
+    <label class="field conversation-id">Conversation ID
+      <input name="conversation_id" value="{{ conversation_id }}" maxlength="{{ max_typed_conversation }}" autocomplete="off" spellcheck="false" placeholder="conv-...">
+      <span class="hint">In Lettuce, open the conversation you want with the agent chosen under "Ask", and ask it: <q>Run <code>echo $LETTA_CONVERSATION_ID</code> and tell me the output.</q> Paste that here. A wrong id is accepted all the same: once saved, send a test and check that its reply shows in that conversation. Changing the agent needs an id from one of its own conversations.</span>
+    </label>
   </fieldset>
 
   <label class="field" id="prompt">To

@@ -34,6 +34,10 @@ MAX_AGENTS_BODY = 1024 * 1024
 MAX_AGENTS = 1000
 MAX_AGENT_NAME = 200
 AGENT_ID = re.compile(r"agent-[A-Za-z0-9-]{1,80}")
+# Where a request's turn runs: new, default, or the id of one of the agent's
+# conversations, as letta-code gives it in $LETTA_CONVERSATION_ID. The executor
+# checks the same shape (never a leading "-", so it can't read as a flag).
+CONVERSATION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}")
 # A sidecar wants a new agent list when it has none, when its list is older
 # than this, or when a page asked for one since (AgentAsks).
 AGENTS_FRESH_SECONDS = 900
