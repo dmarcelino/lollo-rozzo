@@ -42,6 +42,6 @@ Read `vault/README.md#rules` and `agent-skills/README.md#rules` before starting 
 
 ## Workflow follow-up
 
-- After committing this change, update `docs/diagrams/agent-skills-architecture.json` (the `using-vault-secrets` box lists `vault-wait`; its edge to the vault adds `get_result` via `vault-wait`) and `docs/diagrams/vault-architecture.json` (`lolloctl skills` installs `vault-wait` too), re-finalise both with archify against that commit, and export their SVGs from the viewer, as `1424beb` did.
+- Done: `docs/diagrams/agent-skills-architecture` and `vault-architecture` show `vault-wait` and its `get_result` path, re-finalised against `bb0414b` with their SVGs exported again from the viewer.
 - On `33-browser`, point `using-the-browser`'s "wait in the background" step at `vault-wait` once this is merged.
 - Archive the change once it is reviewed and merged.
