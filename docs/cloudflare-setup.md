@@ -183,27 +183,31 @@ Changes on Google's side can take from 5 minutes to a few hours to apply.
 
 ## 5. Create the API token for lolloctl
 1. In the Cloudflare dashboard, click the **profile icon** -> **My Profile** -> **API Tokens**.
-2. Click **Create Token**. At the bottom, under **Create Custom Token**, click **Get started**.
+2. Click **Create Token**. The **Create token** page opens with every setting on one page.
 3. **Token name:** `lolloctl`.
-4. **Permissions:** each row has three dropdowns (scope, item, level); **+ Add more** adds a row. Create these five:
+4. **Policies:** click **Start from scratch** (marked **Custom**), not one of the templates below it. The token needs two policies, because account permissions and zone permissions are offered in different policy types. A permission you can't find is usually in the other policy type: an **Account** policy has **DNS Settings**, **DNS Views** and **Registrar**, but not **Zone** or **DNS**.
 
-   | 1st dropdown | 2nd dropdown | 3rd dropdown |
-   |---|---|---|
-   | Account | Cloudflare Tunnel | Edit |
-   | Account | Access: Apps and Policies | Edit |
-   | Account | Access: Organizations, Identity Providers, and Groups | Read |
-   | Zone | Zone | Read |
-   | Zone | DNS | Edit |
+   | Policy type | Resources | Permission | Level |
+   |---|---|---|---|
+   | Account | your account | Cloudflare Tunnel | Edit |
+   | Account | your account | Access: Apps and Policies | Edit |
+   | Account | your account | Access: Organizations, Identity Providers, and Groups | Read |
+   | Zone | the specific zone `example.com` | Zone | Read |
+   | Zone | the specific zone `example.com` | DNS | Edit |
+
+   1. Click **Add new policy** and choose **Account**. Under its resources, **Include** your account.
+   2. Find each of the three account permissions with the search box and tick its **Edit** or **Read** box as in the table.
+   3. Click **Add new policy** again and choose **Zone**. Under its resources, **Include** -> **Specific zone** -> `example.com`.
+   4. Tick **Read** for **Zone** and **Edit** for **DNS**.
 
    - The dashboard says **Edit**; Cloudflare's API docs call the same level "Write".
    - If **Cloudflare Tunnel** is missing, use **Cloudflare One Connector: cloudflared**.
-5. **Account Resources:** **Include** -> your account.
-6. **Zone Resources:** **Include** -> **Specific zone** -> `example.com`.
-7. Optional:
-   - **Client IP Address Filtering:** restrict to your host's public IP. The token is useless elsewhere, but it breaks if that IP changes.
-   - **TTL:** an end date, if you want the token to expire.
-8. Click **Continue to summary**, check the list, then click **Create Token**.
-9. **The token is shown only once.** Without pasting it into any chat or file, store it on the host in the data directory. The command doesn't echo it, and the token never reaches your shell history:
+   - Older dashboards instead have **Create Custom Token** -> **Get started**, then one row per permission with three dropdowns (Account or Zone, the permission, the level) and separate **Account Resources** and **Zone Resources** sections. Add the same five rows, then set **Account Resources** to your account and **Zone Resources** to **Specific zone** -> `example.com`.
+5. Optional:
+   - **Token expiration:** leave **No expiration**, or pick a period (**7 days** to **1 year**, or **Custom**) if you want the token to expire. lolloctl stops working with Cloudflare when it does, until you make a new one.
+   - **Client IP address filtering:** keep **Allow** and enter your host's public IP. The token is useless elsewhere, but it breaks if that IP changes.
+6. Click **Continue to summary**. The summary should list the Account policy with three permissions on your account and the Zone policy with two on `example.com`, and nothing else: no **User** policy, no other zone. Then click **Create Token**.
+7. **The token is shown only once.** Without pasting it into any chat or file, store it on the host in the data directory. The command doesn't echo it, and the token never reaches your shell history:
    ```bash
    cd ~/lollo-rozzo && mkdir -p .secrets && chmod 700 .secrets
    (umask 077 && printf 'Cloudflare API token: ' && read -rs T && printf '%s\n' "$T" > .secrets/cloudflare-api-token)

@@ -5,8 +5,8 @@
 # so it does not show up in `ps` or shell history. Request bodies carry no
 # secrets and go in argv.
 #
-# Token permissions (docs/cloudflare-setup.md): Zone Read + DNS Write on the
-# zone; account Cloudflare Tunnel Write, Access: Apps and Policies Write, and
+# Token permissions (docs/cloudflare-setup.md): a Zone policy with Zone Read + DNS Write on the
+# zone; an Account policy with Cloudflare Tunnel Write, Access: Apps and Policies Write, and
 # Access: Organizations, Identity Providers, and Groups Read.
 
 CF_API=https://api.cloudflare.com/client/v4
