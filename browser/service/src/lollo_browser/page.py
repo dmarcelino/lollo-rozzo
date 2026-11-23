@@ -305,9 +305,10 @@ def page_routes(
         except (vnc.RelayError, OSError, WebSocketDisconnect, anyio.EndOfStream, anyio.BrokenResourceError) as e:
             log.info("live view closed: %s", type(e).__name__)
         finally:
+            # The person closing or reloading the page leaves nothing to close.
             try:
                 await websocket.close()
-            except RuntimeError:
+            except (RuntimeError, WebSocketDisconnect):
                 pass
 
     # ── sites: settings and kept sign-ins ────────────────────────────────

@@ -456,6 +456,39 @@ def test_live_view_without_a_tab_never_passes_input(page):
         assert KEY not in page.vnc.received
 
 
+def test_live_view_closing_after_the_person_left_is_quiet(page):
+    # Closing or reloading the page: the relay ends, and closing a socket the
+    # person already left raises in uvicorn (ClientDisconnected, an OSError),
+    # which logged an error traceback each time.
+    sent: list[str] = []
+    headers = {**WS, "cf-access-jwt-assertion": page.token, "host": ORIGIN.removeprefix("https://")}
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "scheme": "wss",
+        "path": "/browser/live/ws",
+        "raw_path": b"/browser/live/ws",
+        "root_path": "",
+        "query_string": f"ticket={ticket(page)}".encode(),
+        "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+        "client": ("10.20.0.8", 41000),
+        "server": ("testserver", 443),
+        "subprotocols": [],
+    }
+    messages = iter([{"type": "websocket.connect"}])
+
+    async def receive() -> dict[str, Any]:
+        return next(messages, {"type": "websocket.disconnect", "code": 1001})
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message["type"])
+        if message["type"] == "websocket.close":
+            raise OSError("the client is gone")
+
+    page.client.portal.call(page.parts.guard, scope, receive, send)
+    assert sent[0] == "websocket.accept" and sent[-1] == "websocket.close", sent
+
+
 @pytest.mark.parametrize(
     "change",
     [
