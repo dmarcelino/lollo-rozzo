@@ -124,10 +124,11 @@ When `request_secret` answers `pending`, the user has to approve the request fir
 starts a new turn for you when they do: if your turn ends with nothing waiting, you never
 collect what they approved.
 
-1. Make all the requests that need approval first, then post every `approve_url` to the user
-   in your reply (they may not get a notification). A secret the user shares without asking
-   answers at once with a handle, whose 5 minutes start then: request those after
-   `vault-wait` finishes, just before you fill.
+1. Make the requests that need approval first. Write each `approve_url` to the user in a
+   message as soon as you get it, **before your next tool call**, even if you go on with the
+   task while you wait: they see only what you write, not the vault's answer, and they may not
+   get a notification. A secret the user shares without asking answers at once with a handle,
+   whose 5 minutes start then: request those after `vault-wait` finishes, just before you fill.
 2. Then run `vault-wait` once, with all their ids, as one background command, so you are told
    when it finishes. Don't start one per request: it would collect each answer as it comes,
    and its handle's minutes would run out while the others wait. Each `pending` answer gives

@@ -15,6 +15,7 @@ Read `vault/README.md#rules` and `agent-skills/README.md#rules` before starting 
 - [x] 2.2 Turn `KEEP_WAITING` into a function of the id. Add `wait_command` (`python3 /root/.letta/skills/using-vault-secrets/vault-wait <id>`, built from `SKILL_DIR`) to both pending replies, and a message that gives the command, says "one background command; list several ids in one command", and keeps the `get_result` / `wait_seconds` fallback for agents without a shell. Verify by extending `test_a_pending_answer_tells_the_agent_to_keep_waiting`: `wait_command` is exact and in the message, the fallback is still in it, and there is no `wait_command` on done, denied, expired or unknown.
 - [x] 2.3 Extend `_deliver`'s message: MCP arguments go through a `vault-fill` JSON template piped into the wrapper with `--args-file -`, never `$VAULT_...` in the arguments, and a failed command still uses up the handle. Verify with a `test_service.py` assertion on the done reply.
 - [x] 2.4 Run the full suite, `tests/run-sidecar.sh vault`, and verify it passes.
+- [x] 2.5 Make the `pending` replies (and the locked-vault reply) open with "Before your next tool call, write this link to the user in a message, even if you go on working while you wait", with `get_result`'s asking only if it wasn't written yet; say the same in the MCP instructions, `using-vault-secrets`' first waiting step and `using-the-browser`'s sign-in step. Verify with `test_a_pending_answer_tells_the_agent_to_keep_waiting`.
 
 ## 3. Skill: `vault-wait` helper
 

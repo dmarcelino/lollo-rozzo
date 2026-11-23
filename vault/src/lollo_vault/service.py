@@ -64,6 +64,17 @@ def wait_command(rid: str) -> str:
 # Nothing starts an agent's turn when the user answers: an agent that ends its
 # turn with nothing waiting never collects what the user approved. So every
 # pending answer carries the one command that waits, ready to run.
+#
+# The user sees only what the agent writes, not this answer. Agents that went on
+# working after a request ("your reply" read as the end of the turn) never wrote
+# the link, so it is asked for before the next tool call.
+def post_link(url: str) -> str:
+    return (
+        "Before your next tool call, write this link to the user in a message, even if you go on working while "
+        f"you wait: they see only what you write, and they may not get a notification. {url}"
+    )
+
+
 def keep_waiting(rid: str) -> str:
     return (
         "Wait for the answer before you end your turn. Once you have made every request the task needs, run one "
@@ -184,8 +195,7 @@ class Service:
             )
         return {
             "locked": True,
-            "message": "The user's vault is locked. Send them this link in your reply now, since they may not "
-            f"get a notification, and ask them to unlock it: {self.url('')} Then try again.",
+            "message": f"The user's vault is locked. {post_link(self.url(''))} Ask them to unlock it, then retry.",
         }
 
     # ── erase without the passphrase ─────────────────────────────────────────
@@ -524,8 +534,7 @@ class Service:
             "status": PENDING,
             "approve_url": approve_url,
             "wait_command": wait_command(req.id),
-            "message": "Waiting for the user's approval. Send them this link in your reply now, since they may "
-            f"not get a notification: {approve_url} {keep_waiting(req.id)}",
+            "message": f"Waiting for the user's approval. {post_link(approve_url)} {keep_waiting(req.id)}",
         }
 
     async def get_result(self, rid: str, wait_seconds: float = 0, collect: bool = True) -> dict[str, Any]:
@@ -540,7 +549,10 @@ class Service:
         if req is None:
             return {"status": "unknown", "error": f"no request '{rid}' (requests are forgotten after a restart)"}
         if req.status == PENDING:
-            message = f"Still waiting for the user's approval. {keep_waiting(rid)}"
+            message = (
+                "Still waiting for the user's approval. If you haven't written its link to the user yet, do it "
+                f"before your next tool call: {self.url(f'r/{rid}')} {keep_waiting(rid)}"
+            )
             return {
                 "id": rid,
                 "status": PENDING,

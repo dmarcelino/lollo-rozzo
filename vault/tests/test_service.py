@@ -125,7 +125,14 @@ async def test_a_pending_answer_tells_the_agent_to_keep_waiting(settings, vault)
         # The fallback without a shell.
         assert f"get_result with this id and wait_seconds {MAX_WAIT_SECONDS}" in message
         assert "until" in message and "end your turn" in message
-    assert sub["approve_url"] in sub["message"]
+    # The link comes first, to write before anything else: agents that went on
+    # working after a request never showed it to the user.
+    assert sub["message"].startswith(
+        "Waiting for the user's approval. Before your next tool call, write this link to the user in a message"
+    )
+    assert sub["approve_url"] in sub["message"] and "even if you go on working" in sub["message"]
+    assert still["message"].startswith("Still waiting for the user's approval. If you haven't written its link")
+    assert sub["approve_url"] in still["message"]
 
 
 async def test_no_wait_command_once_answered(settings, vault, clock):
