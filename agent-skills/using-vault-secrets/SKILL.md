@@ -91,7 +91,8 @@ python3 $V/vault-run <handle1> <handle2> -- python3 $V/vault-fill letter.tmpl.do
   file is so they can check it.
 - **Make commands print only a status.** `vault-run` hides values of 6 characters or more in
   the output, as `[VAULT_NUMBER]`, but not shorter ones (a postal code, a house number, a
-  security code).
+  security code). A value two fields share is shown with both names, `[VAULT_CITY/VAULT_STATE]`:
+  both fields hold that value, nothing is wrong with either.
 - Run the command in the foreground. Output from anything it leaves running in the background
   is lost when `vault-run` exits.
 - Use the values only for the purpose the user approved. Never save, log or send them anywhere

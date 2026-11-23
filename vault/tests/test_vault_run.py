@@ -25,6 +25,8 @@ HANDLES = {
     "again": ENV,  # same names as "good"
     "home": {"VAULT_HOME_CITY": "Lisboa TEST_938742"},
     "work": {"VAULT_WORK_CITY": "Porto TEST_938743"},
+    # A city that is also the district: two fields, one value.
+    "shared": {"VAULT_CITY": "Springfield TEST_938744", "VAULT_STATE": "Springfield TEST_938744", "VAULT_POSTAL": "1234-567"},
 }
 # Handles the vault no longer redeems, with its reason (Service.redeem).
 REFUSED = {
@@ -217,6 +219,17 @@ def test_several_handles_in_one_command(vault_url):
     assert r.returncode == 0, r.stderr
     assert r.stdout == b"[VAULT_HOME_CITY] | [VAULT_WORK_CITY]\n"  # both scrubbed
     assert seen == [("/redeem", {"handles": ["home", "work"], "taken": []})]  # one call: all or nothing
+
+
+def test_a_value_two_fields_share_names_both(vault_url):
+    # The output can't tell which variable printed the value: naming only one
+    # made an agent report the other field as wrong.
+    url, _ = vault_url
+    script = "import os; e = os.environ; print(e['VAULT_CITY'], '|', e['VAULT_STATE'], '|', e['VAULT_POSTAL'])"
+    r = run(url, "shared", "--", sys.executable, "-c", script)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == b"[VAULT_CITY/VAULT_STATE] | [VAULT_CITY/VAULT_STATE] | [VAULT_POSTAL]\n"
+    assert b"Springfield" not in r.stdout and b"1234-567" not in r.stdout
 
 
 @pytest.mark.parametrize("handles,error", [(["good", "again"], b"alias"), (["home", "stale"], b"unknown or expired")])
