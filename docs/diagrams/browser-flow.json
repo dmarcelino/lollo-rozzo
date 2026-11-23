@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "b537162f494aa3bef69c0d6af8cefe38f99b552e"
+      "revision": "f8127bd879b2dbdc79efd08a1b9f7b7bba6fcbae"
     }
   },
   "participants": [
@@ -24,7 +24,7 @@
         {
           "path": "docs/browser.md",
           "line": 11,
-          "end_line": 22,
+          "end_line": 28,
           "label": "using it"
         }
       ]
@@ -51,8 +51,8 @@
       "sources": [
         {
           "path": "docs/browser.md",
-          "line": 24,
-          "end_line": 27,
+          "line": 30,
+          "end_line": 33,
           "label": "signing in with the vault"
         }
       ]
@@ -65,8 +65,8 @@
       "sources": [
         {
           "path": "docs/browser.md",
-          "line": 57,
-          "end_line": 71,
+          "line": 63,
+          "end_line": 77,
           "label": "security model"
         }
       ]
@@ -100,7 +100,7 @@
     {
       "from": 535,
       "to": 830,
-      "label": "Checkout, handed to you"
+      "label": "Checkout, held for you"
     }
   ],
   "messages": [
@@ -174,22 +174,22 @@
       "y": 635,
       "label": "notification: a checkout for you",
       "variant": "emphasis",
-      "note": "the click is not performed"
+      "note": "the click is held, not performed"
     },
     {
       "id": "takeover",
       "from": "you",
       "to": "browser",
       "y": 700,
-      "label": "live view: take over, pay, Done",
-      "note": "check the address bar first"
+      "label": "check it in the live view, Place this order",
+      "note": "or take over and place it, or Decline"
     },
     {
       "id": "done",
       "from": "browser",
       "to": "agent",
       "y": 755,
-      "label": "done",
+      "label": "approved: the browser placed it",
       "variant": "return"
     },
     {
