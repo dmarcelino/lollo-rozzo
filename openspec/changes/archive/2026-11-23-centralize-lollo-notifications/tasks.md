@@ -54,7 +54,7 @@
 ## 7. Integration
 
 - [x] 7.1 Run every check in AGENTS.md's Commands block (all offline tests, shellcheck, every `tests/run-sidecar.sh` target, the executor's tests, the browser acceptance suite, the doc link check) and verify all pass
-- [ ] 7.2 On a real stack upgraded from the previous release: `up` adds the new secrets and `check` passes; on a phone, add Lollo to the Home Screen from `/vault/`, enable notifications once, then verify a vault request and a browser hand-off each arrive once and a tap opens the right page; stop `lollo-notifications` and verify an erase is refused with the notice, then start it and verify an erase is scheduled and announced
+- [x] 7.2 On a real stack upgraded from the previous release: `up` adds the new secrets and `check` passes; on a phone, add Lollo to the Home Screen from `/vault/`, enable notifications once, then verify a vault request and a browser hand-off each arrive once and a tap opens the right page; stop `lollo-notifications` and verify an erase is refused with the notice, then start it and verify an erase is scheduled and announced
 
 ## 8. Review fixes
 

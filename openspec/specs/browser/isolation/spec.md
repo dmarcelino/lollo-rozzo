@@ -18,11 +18,11 @@ The browser SHALL run only in stacks with the `lollo-browser` profile, and that 
 - **THEN** no browser container runs and no `/browser/` route exists
 
 ### Requirement: Pages run apart from what controls them
-Chromium and its display SHALL run in a container of their own, `lollo-browser-engine`, separate from `lollo-browser`, which holds the tools, the page, the settings, the audit log, the kept sign-ins and the push keys. The engine SHALL mount no volume and hold none of that data at rest.
+Chromium and its display SHALL run in a container of their own, `lollo-browser-engine`, separate from `lollo-browser`, which holds the tools, the page, the settings, the audit log, the kept sign-ins and the token it sends notifications with. The engine SHALL mount no volume and hold none of that data at rest.
 
 #### Scenario: What the engine holds
 - **WHEN** the engine container is inspected
-- **THEN** it has no named volume, no host path, and no settings, audit log, push key or saved sign-in on disk
+- **THEN** it has no named volume, no host path, no notification token, and no settings, audit log or saved sign-in on disk
 
 ### Requirement: Chromium's own sandbox stays on
 Chromium SHALL run with its sandbox enabled, as a non-root user, and never with `--no-sandbox` or an equivalent switch. `lolloctl check` SHALL refuse a stack whose engine would start Chromium without the sandbox, and `up` SHALL refuse to start the browser on a host where the sandbox cannot work, rather than fall back.
@@ -81,7 +81,7 @@ The engine's control and display connections SHALL listen only on its internal n
 - **THEN** it is refused, whatever its path
 
 ### Requirement: Browser data stays on its own volume
-The browser's stored state (kept sign-ins, settings, audit log, push subscriptions) SHALL live only on the named volume `browser-data`, which only `lollo-browser` mounts, whatever the profiles. Nothing of it SHALL be written under `stacks/<name>/state/`. `lolloctl backup` SHALL NOT copy `browser-data`.
+The browser's stored state (kept sign-ins, settings, audit log) SHALL live only on the named volume `browser-data`, which only `lollo-browser` mounts, whatever the profiles. Nothing of it SHALL be written under `stacks/<name>/state/`. `lolloctl backup` SHALL NOT copy `browser-data`.
 
 #### Scenario: Another service mounts the volume
 - **WHEN** any service other than `lollo-browser` mounts `browser-data`, or a `volumes_from` names `lollo-browser`
