@@ -42,7 +42,7 @@ Read `vault/README.md#rules` and `agent-skills/README.md#rules` before starting 
 ## 5. Integration check
 
 - [x] 5.1 Run every check the touched folders list: `tests/run-sidecar.sh vault`, `tests/run.sh test_skills_`, `node scripts/check-doc-links.mjs`, and the CLAUDE.md `shellcheck` line (unchanged files, to confirm nothing else broke). Verify they all pass, and record the output.
-- [ ] 5.2 On a test stack (not a person's), after the user agrees: `lolloctl skills all`, then rebuild and restart the vault (it locks), unlock it, and ask the agent for two secrets. Approve one at once and the other after two minutes. Verify that the agent gets one background notification with both handles, and that redeeming one handle twice prints "already used". This needs the user's go-ahead, since it restarts a stack's vault.
+- [x] 5.2 On a test stack (not a person's), after the user agrees: `lolloctl skills all`, then rebuild and restart the vault (it locks), unlock it, and ask the agent for two secrets. Approve one at once and the other after two minutes. Verify that the agent gets one background notification with both handles, and that redeeming one handle twice prints "already used". This needs the user's go-ahead, since it restarts a stack's vault. Done on 23 Nov 2026 on alfred's stack (the user's, with their agreement) rather than a separate test stack, through dev builds `v0.4.1-dev.vault-approvals.2` to `.6`: with the final reply, one background `vault-wait` per batch collected both handles a few seconds after the last approval (approvals 38 s apart, not two minutes), and a reused handle printed "already used". Earlier wordings and other models are in design.md.
 
 ## Workflow follow-up
 
