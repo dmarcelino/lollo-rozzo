@@ -1,11 +1,11 @@
 """The ASGI app: MCP at /mcp and vault-run's /redeem (internal only; the tunnel
 forwards /vault/ on the lollo's host alone) and the vault UI at /vault/
-(every route needs a verified Access JWT, and all but setup/unlock/erase/notifications
-an unlocked vault)."""
+(every route needs a verified Access JWT, and all but setup/unlock/erase an
+unlocked vault). Notifications go through lollo-notifications, whose page at
+/notifications/ is where a device turns them on."""
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
@@ -16,7 +16,7 @@ from importlib import resources
 from typing import Any
 
 import anyio
-from lollo_common.auth import COOP, FETCH, FORM, PAGE, Authenticator, AuthError, admit
+from lollo_common.auth import COOP, FORM, PAGE, Authenticator, AuthError, admit
 from lollo_common.lollo import stylesheet
 from jinja2 import Environment, PackageLoader, select_autoescape
 from mcp.server.transport_security import TransportSecuritySettings
@@ -30,14 +30,14 @@ from .bitwarden import MAX_IMPORT_BYTES, read_export
 from .config import ERASE_REQUESTS_PER_HOUR, PREFIX, UNLOCK_ATTEMPTS_PER_MINUTE
 from .kinds import KINDS, MAX_CUSTOM_FIELDS, group_fields, may_share_without_asking, preview
 from .mcp_tools import build_server
-from .service import ERASE_DELAY, Service, hours
+from .service import ERASE_DELAY, Service, TooManyErases, hours
 from .vault import ASK, AUTO, Field, Locked, Secret, Vault, VaultError, build_fields
 
 log = logging.getLogger("lollo_vault.ui")
 
 SECURITY_HEADERS = {
     "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
-    "connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; form-action 'self'; "
+    "connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; form-action 'self'; "
     "base-uri 'none'; object-src 'none'",
     "x-content-type-options": "nosniff",
     # same-origin, not no-referrer: with no-referrer browsers send `Origin: null`
@@ -69,21 +69,31 @@ class RateLimiter:
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
     def allow(self, key: str) -> bool:
+        if self.full(key):
+            return False
+        self.count(key)
+        return True
+
+    def full(self, key: str) -> bool:
         now = self._clock()
         hits = self._hits[key]
         while hits and now - hits[0] > self._window:
             hits.popleft()
-        if len(hits) >= self._limit:
-            return False
-        hits.append(now)
-        return True
+        return len(hits) >= self._limit
+
+    def count(self, key: str) -> None:
+        self._hits[key].append(self._clock())
 
 
 def _safe_next(path: Any) -> str:
     return path if isinstance(path, str) and path.startswith(PREFIX + "/") and "//" not in path else PREFIX + "/"
 
 
-def create_app(service: Service, authenticator: Authenticator, vapid_public_key: str) -> Starlette:
+# Shown on the unlock page when lollo-notifications did not take the erase's notice.
+NOTIFICATIONS_DOWN = "Notifications are unavailable right now, so the erase was not scheduled. Try again later."
+
+
+def create_app(service: Service, authenticator: Authenticator) -> Starlette:
     env = Environment(loader=PackageLoader("lollo_vault", "templates"), autoescape=select_autoescape(default=True))
     env.filters["time"] = _fmt_time
     env.globals["base"] = PREFIX
@@ -91,7 +101,8 @@ def create_app(service: Service, authenticator: Authenticator, vapid_public_key:
     static = resources.files("lollo_vault") / "static"
     vault: Vault = service.vault
     unlock_limiter = RateLimiter(UNLOCK_ATTEMPTS_PER_MINUTE)
-    # Every erase request notifies every device: a session must not flood them.
+    # Every erase scheduled notifies every device: a session must not flood them.
+    # Only an erase that was scheduled counts, not one refused while notifications are down.
     erase_limiter = RateLimiter(ERASE_REQUESTS_PER_HOUR, window=3600)
 
     def render(name: str, email: str, status: int = 200, **ctx: Any) -> HTMLResponse:
@@ -99,7 +110,6 @@ def create_app(service: Service, authenticator: Authenticator, vapid_public_key:
         html = env.get_template(name).render(
             email=email,
             csrf=authenticator.csrf_token(email) if email else "",
-            vapid_public_key=vapid_public_key,
             unlocked=unlocked,
             pending_count=len(service.pending()) if unlocked else 0,
             **ctx,
@@ -125,14 +135,14 @@ def create_app(service: Service, authenticator: Authenticator, vapid_public_key:
     def page(
         handler: Handler, post: bool = False, unlocked: bool = True, asset: bool = False, max_body: int | None = None
     ) -> Callable[[HttpRequest], Awaitable[Response]]:
-        """`asset`: a script, stylesheet, icon or manifest, loaded by pages as a subresource (or as the
-        service worker); it holds nothing to protect. `max_body`: a post must declare its size, at most
-        this, before any of it is read (a multipart upload is otherwise spooled whole, at any size)."""
+        """`asset`: a script, stylesheet or icon, loaded by pages as a subresource (or the old service
+        worker, by the browser's update check); it holds nothing to protect. A post is a form a person
+        sends: no page script posts here. `max_body`: a post must declare its size, at most this,
+        before any of it is read (a multipart upload is otherwise spooled whole, at any size)."""
 
         async def endpoint(request: HttpRequest) -> Response:
-            is_json = request.headers.get("content-type", "").startswith("application/json")
             try:
-                use = None if asset else (FETCH if is_json else FORM) if post else PAGE
+                use = None if asset else FORM if post else PAGE
                 email = await admit(authenticator, request.headers, use)
             except AuthError as e:
                 log.info("refused %s %s reason=%s", request.method, request.url.path, e.reason)
@@ -144,10 +154,7 @@ def create_app(service: Service, authenticator: Authenticator, vapid_public_key:
             if post:
                 try:
                     authenticator.check_origin(request.headers)
-                    if is_json:
-                        token = request.headers.get("x-csrf-token")
-                    else:
-                        token = (await request.form()).get("csrf")
+                    token = (await request.form()).get("csrf")
                     authenticator.check_csrf(email, token if isinstance(token, str) else None)
                 except AuthError as e:
                     return error(str(e), e.status, email)
@@ -222,13 +229,17 @@ def create_app(service: Service, authenticator: Authenticator, vapid_public_key:
 
     async def erase(request: HttpRequest, email: str) -> Response:
         """A locked vault (forgotten passphrase): erased after a delay, unless
-        someone unlocks it or cancels first. Every device is told."""
+        someone unlocks it or cancels first. Every device is told: nothing is
+        scheduled until lollo-notifications takes the notice."""
         form = await request.form()
         if form.get("confirm") != "DELETE":
             raise VaultError("type DELETE to erase the vault")
-        if not erase_limiter.allow(email):
+        try:
+            at = await service.schedule_erase(email, erase_limiter)
+        except TooManyErases:
             return locked_page(email, PREFIX + "/", 429, "Too many erase requests. Wait an hour.")
-        service.schedule_erase(email)
+        if at is None:
+            return locked_page(email, PREFIX + "/", 503, NOTIFICATIONS_DOWN)
         return back("/")
 
     async def erase_cancel(request: HttpRequest, email: str) -> Response:
@@ -381,48 +392,6 @@ def create_app(service: Service, authenticator: Authenticator, vapid_public_key:
         vault.audit(email, "deleted secret", secret.id, secret.name)
         return back("/secrets")
 
-    # ── notifications ────────────────────────────────────────────────────────
-    async def notifications(request: HttpRequest, email: str) -> Response:
-        mine = [s for s in vault.subscriptions() if s["email"] == email]
-        return render("notifications.html", email, devices=len(mine))
-
-    def bad(message: str) -> JSONResponse:
-        return JSONResponse({"error": message}, status_code=400, headers=SECURITY_HEADERS)
-
-    async def push_subscribe(request: HttpRequest, email: str) -> Response:
-        try:
-            data = json.loads(await request.body())
-            endpoint, keys = data["endpoint"], data["keys"]
-            p256dh, auth_key = keys["p256dh"], keys["auth"]
-        except (ValueError, KeyError, TypeError):
-            return bad("invalid subscription")
-        if not (isinstance(endpoint, str) and endpoint.startswith("https://") and len(endpoint) < 2048):
-            return bad("invalid endpoint")
-        if not (isinstance(p256dh, str) and isinstance(auth_key, str) and len(p256dh) < 256 and len(auth_key) < 64):
-            return bad("invalid keys")
-        vault.add_subscription(endpoint, p256dh, auth_key, email)
-        return JSONResponse({"ok": True}, headers=SECURITY_HEADERS)
-
-    async def push_unsubscribe(request: HttpRequest, email: str) -> Response:
-        try:
-            endpoint = json.loads(await request.body())["endpoint"]
-        except (ValueError, KeyError, TypeError):
-            return bad("invalid request")
-        if isinstance(endpoint, str):
-            vault.remove_subscription(endpoint)
-        return JSONResponse({"ok": True}, headers=SECURITY_HEADERS)
-
-    async def push_test(request: HttpRequest, email: str) -> Response:
-        sent = await service.pusher.send(
-            {
-                "title": "Test notification",
-                "body": "Vault requests will arrive like this.",
-                "url": PREFIX + "/",
-                "tag": "test",
-            }
-        )
-        return JSONResponse({"delivered": sent}, headers=SECURITY_HEADERS)
-
     # ── audit ────────────────────────────────────────────────────────────────
     async def audit_page(request: HttpRequest, email: str) -> Response:
         return render("audit.html", email, entries=vault.audit_log())
@@ -490,21 +459,14 @@ def create_app(service: Service, authenticator: Authenticator, vapid_public_key:
         Route("/secrets/{sid}/edit", page(secret_edit)),
         Route("/secrets/{sid}/show", page(secret_show, post=True), methods=["POST"]),
         Route("/secrets/{sid}/delete", page(secret_delete, post=True), methods=["POST"]),
-        Route("/notifications", page(notifications, **open_page)),
-        Route("/push/subscribe", page(push_subscribe, post=True, **open_page), methods=["POST"]),
-        Route("/push/unsubscribe", page(push_unsubscribe, post=True, **open_page), methods=["POST"]),
-        Route("/push/test", page(push_test, post=True, **open_page), methods=["POST"]),
         Route("/audit", page(audit_page)),
+        # Kept so a device that installed the old service worker drops it (sw.js).
         Route("/sw.js", page(static_file("sw.js", "text/javascript"), **open_page, asset=True)),
         Route("/app.js", page(static_file("app.js", "text/javascript"), **open_page, asset=True)),
         Route("/lollo.css", page(static_bytes(stylesheet(), "text/css"), **open_page, asset=True)),
         Route("/app.css", page(static_file("app.css", "text/css"), **open_page, asset=True)),
-        Route(
-            "/manifest.webmanifest",
-            page(static_file("manifest.webmanifest", "application/manifest+json"), **open_page, asset=True),
-        ),
+        # The tab's icon and the top bar's; the Home Screen's are the lollo's (/assets/).
         Route("/icon-192.png", page(icon(192), **open_page, asset=True)),
-        Route("/icon-512.png", page(icon(512), **open_page, asset=True)),
     ]
 
     mcp_server = build_server(service)

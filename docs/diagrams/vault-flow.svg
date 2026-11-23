@@ -968,13 +968,13 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         </g>
 
-        <g data-edge-from="vault" data-edge-to="you" data-edge-label="push notification" data-edge-key="2" data-edge-id="notify">
+        <g data-edge-from="vault" data-edge-to="you" data-edge-label="notification, through the lollo" data-edge-key="2" data-edge-id="notify">
           <path data-composition-edge-from="vault" data-composition-edge-to="you" data-composition-edge-id="notify" data-composition-points="356.83333333333337,265;156.5,265" d="M 356.83333333333337 265 L 156.5 265" class="a-default" data-animate="edge" style="--step: 2;" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="194.5666666666667" y="245" width="124.19999999999999" height="18" rx="3" class="c-mask"/>
-          <text x="256.6666666666667" y="255" class="t-muted" font-size="11" text-anchor="middle">push notification</text>
+          <rect x="148.36666666666667" y="245" width="216.6" height="18" rx="3" class="c-mask"/>
+          <text x="256.6666666666667" y="255" class="t-muted" font-size="11" text-anchor="middle">notification, through the lollo</text>
         </g>
-        <text x="168.5" y="283" class="t-muted" font-size="7"><tspan x="168.5" dy="0">the agent also posts the request's link in</tspan><tspan x="168.5" dy="11">the chat</tspan></text>
+        <text x="168.5" y="283" class="t-muted" font-size="7"><tspan x="168.5" dy="0">on every device with notifications on; the</tspan><tspan x="168.5" dy="11">agent also posts the request's link in the</tspan><tspan x="168.5" dy="11">chat</tspan></text>
         </g>
 
         <g data-edge-from="you" data-edge-to="vault" data-edge-label="Share once / Deny" data-edge-key="3" data-edge-id="decide">
@@ -1108,7 +1108,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
 
         <!-- Legend -->
-        <g data-legend="" style="">
+        <g data-legend="">
           <text x="40" y="759" class="t-primary" font-size="12" font-weight="650">Legend</text>
           <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="779" data-legend-width="118">
             <path d="M 40 776 L 74 776" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>

@@ -6,11 +6,11 @@ import sys
 
 import uvicorn
 from lollo_common.auth import Authenticator
+from lollo_common.notify import Notifier
 
 from . import logs
 from .app import create_app
 from .config import ConfigError, Settings
-from .push import Pusher
 from .service import Service
 from .vault import Vault
 
@@ -19,12 +19,14 @@ def main() -> None:
     logs.setup()
     try:
         settings = Settings.from_env()
-    except ConfigError as e:
+        # Notices go through lollo-notifications, with the vault's own token (NOTIFY_TOKEN).
+        notifier = Notifier.from_env("vault")
+    except (ConfigError, ValueError) as e:
         print(f"vault: {e}", file=sys.stderr)
         sys.exit(2)
     vault = Vault(settings.db_path)
-    service = Service(vault, Pusher(settings, vault), settings.public_origin)
-    app = create_app(service, Authenticator(settings), settings.vapid_public_key)
+    service = Service(vault, notifier, settings.public_origin)
+    app = create_app(service, Authenticator(settings))
     uvicorn.run(
         app,
         host="0.0.0.0",

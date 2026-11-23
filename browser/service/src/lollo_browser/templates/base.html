@@ -4,15 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="csrf" content="{{ csrf }}">
-  <meta name="vapid" content="{{ vapid_public_key }}">
   <meta name="base" content="{{ base }}">
   <meta name="theme-color" content="#e7eaf0">
   <meta name="color-scheme" content="light">
   <title>{% block title %}Browser{% endblock %} - Lollo Rozzo</title>
-  <!-- use-credentials: the manifest fetch must carry the Access cookie. -->
-  <link rel="manifest" href="{{ base }}/manifest.webmanifest" crossorigin="use-credentials">
+  <!-- The lollo's one manifest, served by landing; use-credentials: its fetch must carry the Access cookie. -->
+  <link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">
   <link rel="icon" href="{{ base }}/icon-192.png">
-  <link rel="apple-touch-icon" href="{{ base }}/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
   <link rel="stylesheet" href="{{ base }}/lollo.css">
   <link rel="stylesheet" href="{{ base }}/app.css">
   <script src="{{ base }}/app.js" defer></script>
@@ -31,7 +30,7 @@
       <a href="{{ base }}/live">Live view</a>
       <a href="{{ base }}/sites">Sites</a>
       <a href="{{ base }}/audit">History</a>
-      <a href="{{ base }}/notifications">Notifications</a>
+      <a href="/notifications/">Notifications</a>
     </nav>
     {% endif %}
   </header>

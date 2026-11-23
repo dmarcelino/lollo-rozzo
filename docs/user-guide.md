@@ -14,6 +14,7 @@ This page is for you if someone runs Lollo Rozzo and has given you a stack: your
   | News Radar, `/news-radar/` | What your agents keep an eye on for you (films, concerts, news on a topic) and when they report; ask an agent to set one up. | [Using News Radar](news-radar.md#using-it) |
   | Code editor, `/code-server/` | VS Code in the browser on your agents' workspaces, with a terminal that has the agents' tools. | [Using the code editor](code-server.md#using-it) |
   | Browser, `/browser/` | The browser your agents use to sign in, fill in forms and get orders ready: watch it live, take over a tab when a CAPTCHA or a payment needs you, answer their hand-offs, and choose which sites stay signed in and where agents may finish a checkout. | [Using the browser](browser.md#using-it) |
+  | Notifications, `/notifications/` | With the vault or the browser on: turns on notifications for every lollo page on the device in use, and lists your devices. | [Notifications](notifications.md) |
 
   Two more features have no page: your agents may have Office and PDF tools ([document tools](doc-tools.md#using-it)), and their web traffic may go through a proxy that checks where it goes and records it, which catches mistakes but is not a wall: an agent can go around it ([egress proxy](egress-firewall.md)). Ask your admin which are on.
 
@@ -28,7 +29,7 @@ If Cloudflare says you may not sign in, or Lettuce says forbidden or unknown use
 1. **Connect a model provider:** in Lettuce, **Settings -> Providers & models**. Your own API key keeps your spending separate from everyone else's. Provider keys stay in your stack, on the server.
 2. **Create an agent** from the sidebar.
 3. **Optionally connect Google** (Gmail, Calendar, Tasks, Contacts) in **Settings -> Google**, if the admin turned it on. The admin gives you the client ID and secret; start with low access levels. Details: [google-setup.md](google-setup.md#5-each-person-connect-in-lettuce).
-4. **Turn on notifications** on each device you use, in Lettuce and, if you use them, on the vault's and the browser's **Notifications** pages.
+4. **Turn on notifications** on each device you use, in two places: in Lettuce, for your agents' messages, and, if the vault or the browser is on, on your lollo's **Notifications** page (`/notifications/`, linked from the lollo's home page), once per device for every lollo page. On an iPhone, notifications reach only apps on the Home Screen: first add your lollo to the Home Screen (Share -> Add to Home Screen, from any lollo page except the code editor; it is one app, "Lollo"), open it from there, then turn them on. Details: [notifications](notifications.md).
 
 ## Good to know
 - **Your agents are powerful inside your stack.** They run commands as root on the server, and can read everything in your stack: every agent's memory and workspace, and your provider keys. Only the vault keeps secrets from them: an agent gets a private value only when you approve, or when you let that detail be used without asking.

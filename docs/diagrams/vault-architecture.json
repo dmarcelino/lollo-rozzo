@@ -133,13 +133,28 @@
       ]
     },
     {
+      "id": "notifications",
+      "type": "backend",
+      "label": "lollo-notifications",
+      "sublabel": "push key, subscriptions",
+      "pos": [730, 640],
+      "size": [170, 62]
+    },
+    {
       "id": "push",
       "type": "external",
       "label": "Web Push service",
       "sublabel": "browser vendor",
-      "pos": [40, 640],
-      "size": [130, 62],
-      "sources": [{ "path": "vault/src/lollo_vault/push.py", "line": 27, "end_line": 55, "label": "VAPID push" }]
+      "pos": [1300, 640],
+      "size": [130, 62]
+    },
+    {
+      "id": "devices",
+      "type": "external",
+      "label": "Person's devices",
+      "sublabel": "notifications on",
+      "pos": [1300, 800],
+      "size": [130, 62]
     }
   ],
   "boundaries": [
@@ -147,7 +162,7 @@
     {
       "kind": "region",
       "label": "Compose project lollo-<name> (one per person)",
-      "wraps": ["cloudflared", "lollo", "bff", "appserver", "vaultrun", "vault", "volume"],
+      "wraps": ["cloudflared", "lollo", "bff", "appserver", "vaultrun", "vault", "volume", "notifications"],
       "pad": 26
     },
     { "kind": "security-group", "label": "shared network namespace", "wraps": ["bff", "appserver", "vaultrun"], "pad": 18 },
@@ -172,8 +187,10 @@
     { "from": "vaultrun", "to": "vault", "label": "POST /redeem (handles)", "variant": "security" },
     { "from": "vault", "to": "jwks", "label": "JWKS", "variant": "dashed" },
     { "from": "vault", "to": "volume", "label": "encrypted SQLite" },
-    { "from": "vault", "to": "push", "label": "Web Push (VAPID)", "variant": "dashed" },
-    { "from": "push", "to": "browser", "label": "notification", "variant": "dashed" }
+    { "from": "cloudflared", "to": "notifications", "label": "lollo host /notifications/ + lollo JWT", "variant": "security" },
+    { "from": "vault", "to": "notifications", "label": "POST /notify/v1/send (vault's token)", "variant": "security" },
+    { "from": "notifications", "to": "push", "label": "Web Push (VAPID)", "variant": "dashed" },
+    { "from": "push", "to": "devices", "label": "notification", "variant": "dashed" }
   ],
   "cards": [
     {
@@ -184,7 +201,8 @@
         "Lettuce's JWT, which reaches the BFF in plain HTTP, is for another audience: the vault refuses it, and check_lollo_audience refuses a stack where it would not",
         "Pages load only as top-level documents and forms post only from the lollo origin (Fetch Metadata); every response sets COOP same-origin",
         "/mcp and /redeem answer only Host lollo-vault with no Origin; the tunnel routes only /vault/ to the vault",
-        "The data key lives only in the vault process while unlocked; a lock drops handles and uncollected values"
+        "The data key lives only in the vault process while unlocked; a lock drops handles and uncollected values",
+        "The vault holds no push key: it hands each notice to lollo-notifications with its own token, and schedules an erase only once that service has taken its notice"
       ]
     },
     {
@@ -201,6 +219,7 @@
       "title": "Not shown",
       "items": [
         "Other lollo pages on the same host (gmail-triggers, the code editor) and Lettuce's opt-in services",
+        "lollo-notifications' own volume and its other sender, the browser; a device turns notifications on at /notifications/",
         "The LLM provider that the app-server calls",
         "lolloctl on the host: builds and checks each stack, registers the vault in Settings -> MCP (lolloctl mcp), installs vault-run, vault-fill and vault-wait (lolloctl skills)"
       ]

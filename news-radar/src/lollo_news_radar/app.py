@@ -40,7 +40,7 @@ log = logging.getLogger("lollo_news_radar.app")
 
 SECURITY_HEADERS = {
     "content-security-policy": "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; "
-    "frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'",
+    "manifest-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'",
     "x-content-type-options": "nosniff",
     # same-origin, not no-referrer: with no-referrer browsers send `Origin: null`
     # on form posts, which check_origin must refuse.

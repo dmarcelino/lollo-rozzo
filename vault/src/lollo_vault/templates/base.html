@@ -3,17 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="csrf" content="{{ csrf }}">
-  <meta name="vapid" content="{{ vapid_public_key }}">
-  <meta name="base" content="{{ base }}">
   <meta name="theme-color" content="#e7eaf0">
   <meta name="color-scheme" content="light">
   <title>{% block title %}Vault{% endblock %} - Lollo Rozzo</title>
-  <!-- use-credentials: the manifest fetch must carry the Access cookie, or Access
-       answers with its login page and the app cannot be installed. -->
-  <link rel="manifest" href="{{ base }}/manifest.webmanifest" crossorigin="use-credentials">
+  <!-- The lollo's one Home Screen app, served by the landing page. use-credentials:
+       the manifest fetch must carry the Access cookie, or Access answers with its
+       login page and the app cannot be installed. -->
+  <link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">
   <link rel="icon" href="{{ base }}/icon-192.png">
-  <link rel="apple-touch-icon" href="{{ base }}/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
   <link rel="stylesheet" href="{{ base }}/lollo.css">
   <link rel="stylesheet" href="{{ base }}/app.css">
   <script src="{{ base }}/app.js" defer></script>
@@ -35,7 +33,7 @@
     <nav class="tabs">
       <a href="{{ base }}/">Requests{% if pending_count %} <span class="badge">{{ pending_count }}</span>{% endif %}</a>
       <a href="{{ base }}/secrets">Secrets</a>
-      <a href="{{ base }}/notifications">Notifications</a>
+      <a href="/notifications/">Notifications</a>
       <a href="{{ base }}/audit">History</a>
       <a href="{{ base }}/settings">Settings</a>
     </nav>

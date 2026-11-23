@@ -378,17 +378,23 @@ def limits() -> Limits:
     return Limits(max_tasks=3, max_tabs=3, idle_seconds=900, max_task_seconds=4 * 3600)
 
 
+NOTIFY_TOKEN = "ab" * 32
+
+
 class FakeSender:
-    """Stands in for pywebpush.webpush: records every push."""
+    """Stands in for the notifications service: the transport of a real
+    lollo_common.notify.Notifier, so a payload reaches it only once the
+    client's own checks passed. Records every notice and accepts it (202)."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def __call__(self, **kw: Any) -> None:
-        self.calls.append(kw)
+    async def __call__(self, url: str, body: bytes, headers: Any, timeout: float) -> int:
+        self.calls.append({"url": url, "body": body, "headers": dict(headers)})
+        return 202
 
     def payloads(self) -> list[dict[str, Any]]:
-        return [json.loads(c["data"]) for c in self.calls]
+        return [json.loads(c["body"]) for c in self.calls]
 
 
 EMAIL = "alfred@gmail.com"
@@ -403,9 +409,6 @@ def page_settings(vnc_port: int = 5900) -> PageSettings:
         issuer="https://team1.cloudflareaccess.com",
         allowed_users=frozenset({EMAIL}),
         public_origin=ORIGIN,
-        vapid_public_key="BPublicKeyForTests",
-        vapid_private_key="private-key-for-tests",
-        vapid_contact="ops@example.com",
         vnc_host="127.0.0.1",
         vnc_port=vnc_port,
         vnc_password=VNC_SECRET[:8],
@@ -427,18 +430,16 @@ def build(tmp_path: Path, limits: Limits, signing_key: Any = None, vnc_port: int
     import ipaddress
 
     from lollo_common.auth import Authenticator
+    from lollo_common.notify import Notifier
 
     from lollo_browser.page import page_routes
-    from lollo_browser.push import Pusher, Subscriptions
 
     clock = Clock()
     scrubber = Scrubber()
     engine = LocalEngine()
     sender = FakeSender()
     settings = page_settings(vnc_port)
-    subscriptions = Subscriptions(tmp_path)
-    subscriptions.add("https://push.example/1", "p256dh-key", "auth-key", EMAIL)
-    pusher = Pusher(settings, subscriptions, sender=sender, scrubber=scrubber)
+    notifier = Notifier("browser", NOTIFY_TOKEN, transport=sender)
     service = BrowserService(
         engine,
         Sessions(tmp_path),
@@ -447,13 +448,13 @@ def build(tmp_path: Path, limits: Limits, signing_key: Any = None, vnc_port: int
         limits,
         scrubber=scrubber,
         clock=clock,
-        pusher=pusher,
+        notifier=notifier,
     )
     routes = []
     if signing_key is not None:
         public = signing_key.public_key()
         authenticator = Authenticator(settings, key_resolver=lambda token: public)
-        routes = page_routes(service, settings, authenticator, pusher)
+        routes = page_routes(service, settings, authenticator)
     network = EngineNetwork(ipaddress.ip_network(ENGINE_CIDR), "lollo-browser-engine")
     guard = create_app(service, network, routes, housekeeping_seconds=3600)
     return Parts(service, engine, guard, sender, clock, scrubber, tmp_path)

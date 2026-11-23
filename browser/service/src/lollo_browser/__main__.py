@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import sys
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import uvicorn
 from lollo_common.auth import Authenticator
+from lollo_common.notify import Notifier
 
 from .app import create_app
 from .audit import AuditLog
@@ -15,10 +18,25 @@ from .engine import RemoteEngine
 from .guard import EngineNetwork
 from .handoffs import Handoffs
 from .page import page_routes
-from .push import Pusher, Subscriptions
 from .scrub import SCRUBBER, setup_logging
 from .sessions import Sessions
 from .tasks import BrowserService
+
+log = logging.getLogger("lollo_browser")
+
+# Where the browser kept its own push subscriptions before the notifications
+# service held them all. Nothing is sent to them any more.
+OLD_SUBSCRIPTIONS = "push.json"
+
+
+def remove_old_subscriptions(data_dir: str | Path) -> bool:
+    """Deletes the old push.json from browser-data; True when there was one."""
+    try:
+        (Path(data_dir) / OLD_SUBSCRIPTIONS).unlink()
+    except FileNotFoundError:
+        return False
+    log.info("old push subscriptions removed: notifications go through lollo-notifications")
+    return True
 
 
 def main() -> None:
@@ -28,12 +46,17 @@ def main() -> None:
     except ConfigError as e:
         print(f"lollo-browser: {e}", file=sys.stderr)
         sys.exit(2)
+    try:
+        notifier = Notifier.from_env("browser")
+    except ValueError as e:
+        print(f"lollo-browser: {e}", file=sys.stderr)
+        sys.exit(2)
+    remove_old_subscriptions(settings.data_dir)
     # The secret is the engine's WebSocket path: scrubbed from every log line,
     # pinned so that typed values never push it out.
     SCRUBBER.pin(settings.engine_secret)
     network = EngineNetwork(settings.engine_network, urlsplit(settings.engine_url).hostname or "")
     network.detect()
-    pusher = Pusher(settings.page, Subscriptions(settings.data_dir))
     service = BrowserService(
         RemoteEngine(settings.engine_url, settings.engine_secret),
         Sessions(settings.data_dir),
@@ -41,9 +64,9 @@ def main() -> None:
         Handoffs(),
         settings.limits,
         on_connected=network.detect,
-        pusher=pusher,
+        notifier=notifier,
     )
-    routes = page_routes(service, settings.page, Authenticator(settings.page), pusher)
+    routes = page_routes(service, settings.page, Authenticator(settings.page))
     uvicorn.run(
         create_app(service, network, routes),
         host="0.0.0.0",

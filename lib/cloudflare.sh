@@ -127,6 +127,13 @@ PROFILE_ROUTES=(
 # API and /healthz never match.
 LOLLO_LANDING_PATH='^/(assets/[^/]+)?$'
 LOLLO_LANDING_SERVICE=http://landing:8000
+# The notifications page, its script and service worker, served by the
+# notifications service (compose/notifications.yml) whenever a sender's profile
+# is on (notify_profiles): not a PROFILE_ROUTES row, which has one profile and
+# feeds LOLLO_PROFILES and the landing page's links. Its send API,
+# /notify/v1/send, and /healthz never match.
+LOLLO_NOTIFICATIONS_PATH='^/notifications(/|$)'
+LOLLO_NOTIFICATIONS_SERVICE=http://lollo-notifications:8000
 
 # lollo_profiles PROFILES -> the PROFILE_ROUTES profiles in PROFILES, comma-separated,
 # in PROFILE_ROUTES order
@@ -140,7 +147,7 @@ lollo_profiles() {
 }
 
 # lollo_services -> the services the lollo host routes to, one per line: each
-# PROFILE_ROUTES service, then the landing page's
+# PROFILE_ROUTES service, then the notifications service's and the landing page's
 lollo_services() {
   local r p path svc
   for r in "${PROFILE_ROUTES[@]}"; do
@@ -148,14 +155,17 @@ lollo_services() {
     svc=${svc#http://}
     printf '%s\n' "${svc%%:*}"
   done
-  svc=${LOLLO_LANDING_SERVICE#http://}
-  printf '%s\n' "${svc%%:*}"
+  for svc in "$LOLLO_NOTIFICATIONS_SERVICE" "$LOLLO_LANDING_SERVICE"; do
+    svc=${svc#http://}
+    printf '%s\n' "${svc%%:*}"
+  done
 }
 
 # cf_tunnel_configure ACCOUNT TUNNEL_ID HOST LOLLO_HOST PROFILES -> on
-# LOLLO_HOST, the PROFILE_ROUTES of the profiles that are on, then the landing
-# page when any of them is, then 404 for anything else; HOST to the stack's
-# app-server, and nothing else.
+# LOLLO_HOST, the PROFILE_ROUTES of the profiles that are on, then the
+# notifications page when a sender's profile is, then the landing page when any
+# of them is, then 404 for anything else; HOST to the stack's app-server, and
+# nothing else.
 cf_tunnel_configure() {
   local r p path svc first='' routes='[]'
   for r in "${PROFILE_ROUTES[@]}"; do
@@ -164,6 +174,10 @@ cf_tunnel_configure() {
     routes=$(jq -c --arg h "$4" --arg p "$path" --arg s "$svc" '. + [{hostname: $h, path: $p, service: $s}]' <<<"$routes")
     first=${first:-$svc}
   done
+  if [[ -n $(notify_profiles "${5:-}") ]]; then
+    routes=$(jq -c --arg h "$4" --arg p "$LOLLO_NOTIFICATIONS_PATH" --arg s "$LOLLO_NOTIFICATIONS_SERVICE" \
+      '. + [{hostname: $h, path: $p, service: $s}]' <<<"$routes")
+  fi
   if [[ -n $first ]]; then
     routes=$(jq -c --arg h "$4" --arg p "$LOLLO_LANDING_PATH" --arg s "$LOLLO_LANDING_SERVICE" \
       '. + [{hostname: $h, path: $p, service: $s}]' <<<"$routes")

@@ -95,10 +95,8 @@ def test_change_passphrase_keeps_secrets(vault, vault_path, clock):
 
 def test_reset_erases_everything(vault, vault_path):
     add_card(vault)
-    vault.add_subscription("https://push.example/1", "k", "a", "alfred@gmail.com")
     vault.reset()
     assert not vault.is_setup() and not vault.is_unlocked()
-    assert len(vault.subscriptions()) == 1
     assert CARD.encode() not in open(vault_path, "rb").read()
 
 
@@ -113,7 +111,6 @@ def test_erase_can_be_scheduled_only_for_a_locked_vault(vault, vault_path, clock
 
 def test_scheduled_erase_runs_after_24_hours(vault, vault_path, clock):
     add_card(vault)
-    vault.add_subscription("https://push.example/1", "k", "a", "alfred@gmail.com")
     vault.lock()
     at, new = vault.schedule_erase("alfred@gmail.com")
     assert new and at == int(clock.t) + ERASE_DELAY_SECONDS
@@ -127,7 +124,6 @@ def test_scheduled_erase_runs_after_24_hours(vault, vault_path, clock):
     clock.t = at
     assert vault.erase_if_due() == "alfred@gmail.com"
     assert not vault.is_setup() and vault.pending_erase() is None
-    assert len(vault.subscriptions()) == 1
     assert CARD.encode() not in open(vault_path, "rb").read()
     assert vault.erase_if_due() is None
 
@@ -354,3 +350,22 @@ def test_an_erase_waits_for_its_not_before(vault, clock):
     assert vault.erase_if_due(not_before=at + 3600) is None and vault.is_setup()
     clock.t = at + 3600
     assert vault.erase_if_due(not_before=at + 3600) == "alfred@gmail.com"
+
+
+def test_the_old_push_subscriptions_are_dropped_at_start(vault, vault_path, clock):
+    """Devices enable notifications on the lollo's Notifications page now: a vault.db
+    from before keeps its secrets and loses its own subscriptions."""
+    secret = add_card(vault)
+    db = sqlite3.connect(vault_path)
+    db.executescript(
+        "CREATE TABLE push_subscriptions (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL,"
+        " email TEXT NOT NULL, created_at INTEGER NOT NULL);"
+        "INSERT INTO push_subscriptions VALUES ('https://push.example/1', 'k', 'a', 'alfred@gmail.com', 1);"
+    )
+    db.close()
+    for _ in range(2):  # every start, harmlessly
+        reopened = Vault(vault_path, clock=clock, kdf=FAST_KDF)
+        tables = {r[0] for r in reopened._q("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        assert "push_subscriptions" not in tables
+    reopened.unlock(PASSPHRASE)
+    assert reopened.secret(secret).field("number").value == CARD

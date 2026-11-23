@@ -6,8 +6,12 @@
   <meta name="theme-color" content="#e7eaf0">
   <meta name="color-scheme" content="light">
   <title>{% block title %}Gmail triggers{% endblock %} - Lollo Rozzo</title>
+  <!-- The lollo's one Home Screen app, served by the landing page. use-credentials:
+       the manifest fetch must carry the Access cookie, or Access answers with its
+       login page and the app cannot be installed. -->
+  <link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">
   <link rel="icon" href="{{ base }}/icon-192.png">
-  <link rel="apple-touch-icon" href="{{ base }}/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
   <link rel="stylesheet" href="{{ base }}/lollo.css">
   <link rel="stylesheet" href="{{ base }}/app.css">
 </head>

@@ -65,9 +65,9 @@ services:
       BROWSER_ENGINE_URL: ws://lollo-browser-engine:3000
       BROWSER_ENGINE_SECRET: ${BROWSER_ENGINE_SECRET:-}
       BROWSER_VNC: lollo-browser-engine:5900
-      BROWSER_VAPID_PUBLIC_KEY: ${BROWSER_VAPID_PUBLIC_KEY:-}
-      BROWSER_VAPID_PRIVATE_KEY: ${BROWSER_VAPID_PRIVATE_KEY:-}
-      PUSH_VAPID_CONTACT_EMAIL: ${PUSH_VAPID_CONTACT_EMAIL:-}
+      # Its own token for the notifications service's send API, which only it
+      # and that service get (compose/notifications.yml).
+      NOTIFY_TOKEN: ${NOTIFY_TOKEN_BROWSER:-}
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
       # The lollo's own Access application and host, never Lettuce's.
       CF_ACCESS_AUD: ${CF_LOLLO_AUD:-}
