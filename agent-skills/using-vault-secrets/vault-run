@@ -4,7 +4,8 @@
 Redeems single-use handles from the vault (request_secret's default
 "placeholders" delivery), runs COMMAND with the values as VAULT_<FIELD>
 environment variables (vault-fill puts them into a file), and scrubs them from
-its output, so they never reach the conversation. Standard library
+its output, so they never reach the conversation: each value becomes
+[VAULT_<FIELD>], or [VAULT_A/VAULT_B] when several fields hold it. Standard library
 only: it runs with whatever python3 the app-server has.
 """
 
@@ -87,14 +88,20 @@ def forms(value: str) -> set[str]:
 
 
 def scrubber(env: dict[str, str]):
+    # Fields with the same value (a city that is also the district) share one
+    # label naming them all: the output can't tell which variable printed it,
+    # and naming only the first made an agent think the other field was wrong.
+    names: dict[str, list[str]] = {}
+    for name, value in env.items():
+        names.setdefault(value, []).append(name)
     rules = []
-    for name, value in sorted(env.items(), key=lambda item: len(item[1]), reverse=True):
+    for value, shared in sorted(names.items(), key=lambda item: len(item[0]), reverse=True):
         alternatives = [re.escape(f) for f in sorted(forms(value), key=len, reverse=True)]
         digits = re.sub(r"\D", "", value)
         if len(digits) >= MIN_DIGITS and SEPARATED.fullmatch(value):
             alternatives.append("[ .-]?".join(digits))  # 4111 1111 1111 4242, 4111-1111-...
         if alternatives:
-            rules.append((re.compile("|".join(alternatives).encode()), f"[{name}]".encode()))
+            rules.append((re.compile("|".join(alternatives).encode()), f"[{'/'.join(sorted(shared))}]".encode()))
 
     def scrub(line: bytes) -> bytes:
         for pattern, replacement in rules:
