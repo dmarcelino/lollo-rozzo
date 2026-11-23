@@ -23,17 +23,18 @@ Whenever `request_secret` or `get_result` answers `pending`, the reply SHALL inc
 - **WHEN** a request is `done`, `denied`, `expired` or unknown
 - **THEN** the `get_result` reply has no `wait_command`
 
-### Requirement: A pending reply asks for the link alongside the wait
-A `pending` reply SHALL give the `approve_url`, say the user sees only what the agent writes, and tell the agent to start the wait command before writing to the user, giving every link in the same response or in the message that ends its turn, since a response with no tool call ends the turn. The locked-vault reply SHALL give the unlock link the same way.
+### Requirement: A pending reply opens with three steps, the wait first
+A `pending` reply SHALL open with "Next, in this order:" and three numbered steps: call Bash with `run_in_background: true` and the wait command, give the user the `approve_url` in the same response or after it, and end the turn leaving the command running. The reasons SHALL follow the steps. Its `wait_command` field SHALL come before `approve_url`. The locked-vault reply SHALL ask the agent to give the user the unlock link.
 
-#### Scenario: a request made in the middle of a task
+#### Scenario: a request that needs approval
 - **WHEN** an agent calls `request_secret` for a field that needs approval
-- **THEN** the message starts with "Waiting for the user's approval. The user sees only what you write", followed by the `approve_url`
-- **AND** it says to start the wait command before writing to the user, because a response with no tool call ends the turn
+- **THEN** the message starts with "Waiting for the user's approval. Next, in this order: 1. Call Bash with run_in_background: true and the command" followed by the wait command
+- **AND** step 2 gives the `approve_url`, and step 3 says to end the turn and leave the command running
+- **AND** the reply's fields are `id`, `status`, `wait_command`, `approve_url`, in that order, then `message`
 
 #### Scenario: still pending
 - **WHEN** `get_result` answers `pending`
-- **THEN** the message says to give the user the request's link in the next response if that hasn't been done yet, and contains the link
+- **THEN** the message opens with the same three steps, step 2 asking for the link only if the user hasn't been given it yet
 
 ### Requirement: get_result can report status without collecting
 `get_result` SHALL accept an optional `collect` flag, default true. With `collect` false it SHALL wait and report the status as usual, but SHALL NOT hand over a handle or values, SHALL NOT start a handle's lifetime, and SHALL leave an approved result collectable by a later call.

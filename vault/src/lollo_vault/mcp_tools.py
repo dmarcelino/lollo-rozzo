@@ -24,9 +24,10 @@ INSTRUCTIONS = (
     "reason about the value itself (and a public detail such as the country is not enough); it needs a reason the "
     "user reads before approving. "
     "Unless the user set a field to share without asking, they approve first: start the one wait command its answer "
-    "gives you (vault-wait, with every request's id, in the background; get_result without a shell), and give the "
-    "user each approve_url in that same response or in the message that ends your turn (they see only what you "
-    "write, and may not get a notification; a response with no tool call ends your turn). Use values only for the "
+    "gives you (vault-wait, with every request's id, as a Bash call with run_in_background: true; get_result "
+    "without a shell), and give the user each approve_url in that same response or in the message that ends your "
+    "turn (they see only what you write, and may not get a notification; a response with no tool call ends your "
+    "turn). Use values only for the "
     "approved purpose. Never repeat a value in your reply, memory or files, and never open a filled file to check "
     "it: check the template instead."
 )

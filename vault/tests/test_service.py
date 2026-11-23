@@ -120,23 +120,29 @@ async def test_a_pending_answer_tells_the_agent_to_keep_waiting(settings, vault)
         message = answer["message"]
         # The command to run, ready to copy, in a field and in the message.
         assert answer["wait_command"] == command and command in message
-        assert "background command" in message and "every request the task needs" in message
-        assert f"{command} <other ids>" in message and "Don't start it for each request" in message
+        assert "add the ids of your other pending requests to it" in message
+        assert "Run only one, with every pending request's id" in message
+        assert "Don't start it for each request" in message
         # An agent that asked again later started no wait; one stopped its wait to end its turn.
         assert "even if this is the only request, or one you make again later" in message
-        assert "Leave it running when you end your turn: don't stop it" in message
-        # One sent the link as a text-only response, which ended its turn before the wait started.
-        assert "Start it before you write to the user: a response with no tool call ends your turn" in message
+        assert "Don't stop it: its notification starts your next turn" in message
+        # Small models sent the link as a text-only response, which ended the turn before the wait
+        # started: three short steps come first, the tool call first, then the reasons.
+        assert "a response with no tool call ends your turn" in message.lower()
         assert "in the same response as your next tool call" in message
+        assert f"1. Call Bash with run_in_background: true and the command {command} (add" in message
+        assert f"{answer['approve_url']} 3. End your turn and leave the command running." in message
+        # The command is the first field to act on.
+        assert list(answer)[:4] == ["id", "status", "wait_command", "approve_url"]
         # The fallback without a shell.
         assert f"get_result with this id and wait_seconds {MAX_WAIT_SECONDS}" in message
         assert "until" in message and "end your turn" in message
     # The link and why the user needs it from the agent: agents that went on
     # working after a request never showed it to the user.
-    assert sub["message"].startswith("Waiting for the user's approval. The user sees only what you write")
-    assert sub["approve_url"] in sub["message"]
-    assert still["message"].startswith("Still waiting for the user's approval. If you haven't given the user its link")
-    assert sub["approve_url"] in still["message"]
+    assert sub["message"].startswith("Waiting for the user's approval. Next, in this order: 1. Call Bash")
+    assert f"2. In the same response, or after it, give the user this link: {sub['approve_url']}" in sub["message"]
+    assert still["message"].startswith("Still waiting for the user's approval. Next, in this order: 1. Call Bash")
+    assert "2. If you haven't given the user this link yet, do it in the same response" in still["message"]
 
 
 async def test_no_wait_command_once_answered(settings, vault, clock):

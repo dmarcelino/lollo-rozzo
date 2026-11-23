@@ -66,28 +66,32 @@ def wait_command(rid: str) -> str:
 # pending answer carries the one command that waits, ready to run.
 #
 # The user sees only what the agent writes, not this answer. Agents that went on
-# working after a request never wrote the link; one told to write it "before your
-# next tool call" sent it as a text-only response, which ends the turn, and never
-# started its wait. So: start the wait first, and give the link in that same
-# response or in the message that ends the turn.
-def post_link(url: str) -> str:
+# working after a request never wrote the link; told to write it first, small
+# models sent it as a text-only response, which ends a letta-code turn, before
+# starting their wait. So the reply opens with three short steps, the tool call
+# first (one model that got it right named run_in_background, the others didn't),
+# and explains afterwards.
+def next_steps(rid: str, url: str, *, again: bool = False) -> str:
+    give = (
+        f"If you haven't given the user this link yet, do it in the same response, or after it: {url}"
+        if again
+        else f"In the same response, or after it, give the user this link: {url}"
+    )
     return (
-        "The user sees only what you write, not this answer, and may not get a notification, so they need this "
-        f"link from you: {url}"
+        f"Next, in this order: 1. Call Bash with run_in_background: true and the command {wait_command(rid)} (add "
+        f"the ids of your other pending requests to it). 2. {give} 3. End your turn and leave the command running."
     )
 
 
 def keep_waiting(rid: str) -> str:
     return (
-        "Once you have made every request the task needs, start one background command with all their ids, this "
-        f"one included: {wait_command(rid)} <other ids>. Run it even if this is the only request, or one you make "
-        "again later in the task. Start it before you write to the user: a response with no tool call ends your "
-        "turn, so give the user every link in the same response as the command, or in the message that ends your "
-        "turn after it. If you go on working while you wait, put each link in the same response as your next tool "
-        "call. Run only one: it waits until every request is answered, then collects them together and prints the "
-        "answers, and you are told it finished. Leave it running when you end your turn: don't stop it, since its "
-        "notification starts your next turn. Don't start it for each request, or a handle's minutes start before "
-        "the others are answered. Without a shell, call get_result with "
+        "Why: the user sees only what you write, not this answer, and may not get a notification. A response with "
+        "no tool call ends your turn, so a link written before the command leaves nothing waiting; if you go on "
+        "working instead, put each link in the same response as your next tool call. Run the command even if this "
+        "is the only request, or one you make again later in the task. Run only one, with every pending request's "
+        "id: it waits until every request is answered, then collects them together and prints the answers, and "
+        "you are told it finished. Don't start it for each request, or a handle's minutes start before the others "
+        "are answered. Don't stop it: its notification starts your next turn. Without a shell, call get_result with "
         f"this id and wait_seconds {MAX_WAIT_SECONDS}, and call it again until the status is no longer pending "
         f"(the request expires after {REQUEST_TTL_SECONDS // 60} minutes). Don't end your turn with nothing "
         "waiting: nothing tells you when the user answers."
@@ -201,7 +205,8 @@ class Service:
             )
         return {
             "locked": True,
-            "message": f"The user's vault is locked. {post_link(self.url(''))} Ask them to unlock it, then retry.",
+            "message": "The user's vault is locked. The user sees only what you write, not this answer, and may not "
+            f"get a notification, so give them this link and ask them to unlock it, then retry: {self.url('')}",
         }
 
     # ── erase without the passphrase ─────────────────────────────────────────
@@ -538,9 +543,9 @@ class Service:
         return {
             "id": req.id,
             "status": PENDING,
-            "approve_url": approve_url,
             "wait_command": wait_command(req.id),
-            "message": f"Waiting for the user's approval. {post_link(approve_url)} {keep_waiting(req.id)}",
+            "approve_url": approve_url,
+            "message": f"Waiting for the user's approval. {next_steps(req.id, approve_url)} {keep_waiting(req.id)}",
         }
 
     async def get_result(self, rid: str, wait_seconds: float = 0, collect: bool = True) -> dict[str, Any]:
@@ -555,15 +560,13 @@ class Service:
         if req is None:
             return {"status": "unknown", "error": f"no request '{rid}' (requests are forgotten after a restart)"}
         if req.status == PENDING:
-            message = (
-                "Still waiting for the user's approval. If you haven't given the user its link yet, put it in your "
-                f"next response: {self.url(f'r/{rid}')} {keep_waiting(rid)}"
-            )
+            url = self.url(f"r/{rid}")
+            message = f"Still waiting for the user's approval. {next_steps(rid, url, again=True)} {keep_waiting(rid)}"
             return {
                 "id": rid,
                 "status": PENDING,
-                "approve_url": self.url(f"r/{rid}"),
                 "wait_command": wait_command(rid),
+                "approve_url": url,
                 "message": message,
             }
         if req.status in (DENIED, EXPIRED):

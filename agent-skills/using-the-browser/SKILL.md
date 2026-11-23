@@ -107,9 +107,10 @@ one (the account's, or the vault entry's name), not what it says.
    the username with `type_text`.
 2. **Request the password** with a purpose naming the site and the task: `"Sign in to
    shop.example.com to order the printer ink you asked for"`. Never `delivery: "text"`: the
-   password must not enter the conversation. Start one background `vault-wait` for it, and
-   give the person the `approve_url` in that same response, as `using-vault-secrets` shows: a
-   response with only text ends your turn, so a link written first leaves nothing waiting.
+   password must not enter the conversation. Start one `vault-wait` for it (a Bash call with
+   `run_in_background: true`), and give the person the `approve_url` in that same response, as
+   `using-vault-secrets` shows: a response with only text ends your turn, so a link written
+   first leaves nothing waiting.
 3. **When the approval arrives, take a new snapshot**, then write the call's arguments as a
    template with the placeholder where the value goes, in a file ending in `.json` (`vault-fill`
    escapes values for JSON). The `ref` is the password field's in **that** snapshot, never one
