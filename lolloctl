@@ -1225,7 +1225,7 @@ cmd_remove() {
 
 cmd_profiles() {
   (($# <= 1)) || die "usage: lolloctl profiles [<profile>,<profile>...]"
-  local new n changed="" stale running docs=1 rc
+  local new n changed="" stale running docs=1 rc kept=0
   local -a stacks gone failed=() unrouted=() executors=() undropped=() unstarted=()
   mapfile -t stacks < <(list_stacks)
   if (($# == 0)); then
@@ -1297,10 +1297,19 @@ cmd_profiles() {
   # Compose leaves the containers of a dropped profile running. This looks at
   # what exists rather than at what changed, so a re-run also clears what an
   # interrupted run left behind.
+  # A stack that did not start keeps them: its old app-server still runs, with
+  # their servers in Settings -> MCP and its executor, which its `up` syncs;
+  # removing them first would fail every `letta mcp tools` call until then.
+  # The same command, run again after that `up`, removes them.
   for n in "${stacks[@]}"; do
     stale=$(stale_services "$n")
     [[ -n $stale ]] || continue
     mapfile -t gone <<<"$stale"
+    if [[ " ${unstarted[*]} " == *" $n "* ]]; then
+      info "$n: keeping ${gone[*]} (their profile is off) until it starts"
+      kept=1
+      continue
+    fi
     info "$n: removing ${gone[*]} (their profile is off)"
     compose "$n" rm -sf "${gone[@]}" || failed+=("$n")
   done
@@ -1355,7 +1364,7 @@ cmd_profiles() {
     n=all
     ((${#unstarted[@]} > 1)) || n=${unstarted[0]}
     warn "the profiles are set, but these stacks did not start: ${unstarted[*]} (see the messages above)"
-    ((${#unrouted[@]} + ${#failed[@]} + ${#executors[@]} + ${#undropped[@]} == 0 && docs)) ||
+    ((kept + ${#unrouted[@]} + ${#failed[@]} + ${#executors[@]} + ${#undropped[@]} == 0 && docs)) ||
       die "fix the cause, then run: lolloctl up $n, then the same command again"
     die "fix the cause, then run: lolloctl up $n"
   fi

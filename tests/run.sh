@@ -1885,6 +1885,43 @@ test_profiles_names_up_all_when_every_browser_sandbox_fails() {
   out_has "fix the cause, then run: lolloctl up all"
 }
 
+# A stack that did not start still runs its old app-server, whose Settings ->
+# MCP lists the servers of the profiles now off: their containers stay until
+# its `up` drops those entries, and a re-run then removes them.
+test_profiles_keeps_dropped_services_of_a_stack_that_did_not_start() {
+  ctl add alfred alfred@example.com
+  ctl add hal hal@example.com
+  ok_rc
+  local n
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-vault/' "$D/config.env"
+  for n in alfred hal; do
+    sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-vault/' "$D/stacks/$n/stack.env"
+    echo "VAULT_MCP_REGISTERED=1" >>"$D/stacks/$n/stack.env"
+    containers "$n" app-server bff cloudflared lollo-vault
+  done
+  vault_config
+  pipelock_config
+  browser_config
+  printf '%s\n' "lollo-browser-engine-1  | lollo-browser-engine: Chromium's sandbox failed" >"$T/engine-logs"
+  mcp_answer '{"added":[],"present":[],"conflicts":[],"removed":["vault"],"attempts":1}' vault
+  : >"$T/calls.log"
+  stub STUB_ENGINE_UP_FAIL=lollo-alfred
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  bad_rc
+  out_has "alfred: Chromium's sandbox cannot start on this host"
+  # alfred: the vault, its entry in Settings -> MCP and its marker all stay.
+  grep -q '^docker compose -p lollo-alfred .* rm -sf' "$T/calls.log" && fail "alfred's vault removed before it started"
+  grep -q "^docker compose -p lollo-alfred .* $VAULT_REMOVE" "$T/calls.log" && fail "alfred's vault entry removed before it started"
+  eq "$(senv alfred VAULT_MCP_REGISTERED)" 1
+  out_has "alfred: keeping lollo-vault (their profile is off) until it starts"
+  # hal started: its vault and its entry go.
+  grep -q '^docker compose -p lollo-hal .* rm -sf lollo-vault$' "$T/calls.log" || fail "hal's vault not removed"
+  grep -q "^docker compose -p lollo-hal .* $VAULT_REMOVE" "$T/calls.log" || fail "hal's vault entry not removed"
+  eq "$(senv hal VAULT_MCP_REGISTERED)" ""
+  out_has "the profiles are set, but these stacks did not start: alfred"
+  out_has "fix the cause, then run: lolloctl up alfred, then the same command again"
+}
+
 test_up_fails_clearly_when_the_browser_engine_is_not_healthy() {
   added
   with_browser
