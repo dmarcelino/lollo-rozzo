@@ -42,9 +42,13 @@ log = logging.getLogger("lollo_vault")
 
 PENDING, DONE, DENIED, EXPIRED = "pending", "done", "denied", "expired"
 PLACEHOLDERS, TEXT = "placeholders", "text"
+# Why a handle can no longer be redeemed.
+USED, LOCKED = "used", "locked"
 SKILL_DIR = "/root/.letta/skills/using-vault-secrets"
 VAULT_RUN = f"python3 {SKILL_DIR}/vault-run"
 VAULT_FILL = f"python3 {SKILL_DIR}/vault-fill"
+VAULT_WAIT = f"python3 {SKILL_DIR}/vault-wait"
+MCP_SH = "sh /root/.letta/skills/mcp-servers/scripts/mcp.sh"
 # Prefixes the variable names, so two secrets with the same fields (two
 # addresses) can go into one command: VAULT_HOME_CITY, VAULT_WORK_CITY.
 ALIAS = re.compile(r"[A-Za-z][A-Za-z0-9]{0,19}")
@@ -52,15 +56,46 @@ ALIAS = re.compile(r"[A-Za-z][A-Za-z0-9]{0,19}")
 # Pushes asking to unlock are sent at most this often.
 UNLOCK_NOTICE_SECONDS = 300
 
+
+def wait_command(rid: str) -> str:
+    return f"{VAULT_WAIT} {rid}"
+
+
 # Nothing starts an agent's turn when the user answers: an agent that ends its
-# turn with nothing waiting never collects what the user approved.
-KEEP_WAITING = (
-    f"Wait for the answer before you end your turn: call get_result with this id and wait_seconds "
-    f"{MAX_WAIT_SECONDS}, and call it again until the status is no longer pending (the request expires after "
-    f"{REQUEST_TTL_SECONDS // 60} minutes). If you can run a command in the background, run each call as its own "
-    "background command, so you are told when it finishes. Don't end your turn with nothing waiting: nothing "
-    "tells you when the user answers."
-)
+# turn with nothing waiting never collects what the user approved. So every
+# pending answer carries the one command that waits, ready to run.
+#
+# The user sees only what the agent writes, not this answer. Agents that went on
+# working after a request never wrote the link; told to write it first, small
+# models sent it as a text-only response, which ends a letta-code turn, before
+# starting their wait. So the reply opens with three short steps, the tool call
+# first (one model that got it right named run_in_background, the others didn't),
+# and explains afterwards.
+def next_steps(rid: str, url: str, *, again: bool = False) -> str:
+    give = (
+        f"If you haven't given the user this link yet, do it in the same response, or after it: {url}"
+        if again
+        else f"In the same response, or after it, give the user this link: {url}"
+    )
+    return (
+        f"Next, in this order: 1. Call Bash with run_in_background: true and the command {wait_command(rid)} (add "
+        f"the ids of your other pending requests to it). 2. {give} 3. End your turn and leave the command running."
+    )
+
+
+def keep_waiting(rid: str) -> str:
+    return (
+        "Why: the user sees only what you write, not this answer, and may not get a notification. A response with "
+        "no tool call ends your turn, so a link written before the command leaves nothing waiting; if you go on "
+        "working instead, put each link in the same response as your next tool call. Run the command even if this "
+        "is the only request, or one you make again later in the task. Run only one, with every pending request's "
+        "id: it waits until every request is answered, then collects them together and prints the answers, and "
+        "you are told it finished. Don't start it for each request, or a handle's minutes start before the others "
+        "are answered. Don't stop it: its notification starts your next turn. Without a shell, call get_result with "
+        f"this id and wait_seconds {MAX_WAIT_SECONDS}, and call it again until the status is no longer pending "
+        f"(the request expires after {REQUEST_TTL_SECONDS // 60} minutes). Don't end your turn with nothing "
+        "waiting: nothing tells you when the user answers."
+    )
 
 
 def rules(purpose: str) -> str:
@@ -131,6 +166,9 @@ class Service:
         self._origin = public_origin
         self._requests: dict[str, Request] = {}
         self._handles: dict[str, Handle] = {}
+        # Handles that can no longer be redeemed, by id only (never their values),
+        # until they would have expired: so vault-run can say why one is refused.
+        self._spent: dict[str, tuple[str, int]] = {}
         self._tasks: anyio.abc.TaskGroup | None = None
         self._last_unlock_notice = -UNLOCK_NOTICE_SECONDS
         # An erase that came due while the server was down still waits this long.
@@ -167,8 +205,8 @@ class Service:
             )
         return {
             "locked": True,
-            "message": "The user's vault is locked. Send them this link in your reply now, since they may not "
-            f"get a notification, and ask them to unlock it: {self.url('')} Then try again.",
+            "message": "The user's vault is locked. The user sees only what you write, not this answer, and may not "
+            f"get a notification, so give them this link and ask them to unlock it, then retry: {self.url('')}",
         }
 
     # ── erase without the passphrase ─────────────────────────────────────────
@@ -237,6 +275,8 @@ class Service:
         now = self.vault.now()
         if not self.vault.is_unlocked():
             # Values the agent has not collected are not kept past a lock.
+            for hid, handle in self._handles.items():
+                self._spent[hid] = (LOCKED, handle.expires_at)
             self._handles.clear()
             for req in self._requests.values():
                 if req.values is not None:
@@ -249,6 +289,9 @@ class Service:
         for hid, handle in list(self._handles.items()):
             if handle.expires_at <= now:
                 del self._handles[hid]
+        for hid, (_, expires_at) in list(self._spent.items()):
+            if expires_at <= now:
+                del self._spent[hid]
 
     def pending(self) -> list[Request]:
         self.expire()
@@ -327,8 +370,13 @@ class Service:
             "run": f"{VAULT_RUN} {handle.id} -- <command reading ${next(iter(names.values()))}>",
             "message": "Put the placeholders where the values go (a template file for vault-fill, or $VAULT_... "
             "in a command) and run it with vault-run once, within "
-            f"{HANDLE_TTL_SECONDS // 60} minutes; load the using-vault-secrets skill for how. Never open the "
-            "filled file or print the values.",
+            f"{HANDLE_TTL_SECONDS // 60} minutes; load the using-vault-secrets skill for how. For an MCP tool's "
+            "arguments, write them as a JSON template with the placeholders and pipe it into the tool inside "
+            f"vault-run, the whole pipe in bash -c: {VAULT_RUN} {handle.id} -- bash -c 'set -o pipefail; "
+            f"{VAULT_FILL} args.tmpl.json - | {MCP_SH} call <tool> --args-file -' (a pipe outside it would send "
+            "[VAULT_...] instead of the values; and never $VAULT_... in the arguments: your shell would expand it to "
+            "nothing first). The first vault-run uses the handle up, "
+            "even if its command fails. Never open the filled file or print the values.",
         }
 
     def redeem(self, handle_ids: Any, taken: Any = ()) -> tuple[int, dict[str, Any]]:
@@ -345,8 +393,31 @@ class Service:
         ):
             return 400, {"error": "expected 1 to 10 different handles"}
         handles = [self._handles.get(h) for h in handle_ids]
-        if any(h is None for h in handles):
-            return 404, {"error": "unknown or expired handle; request that secret again (the others are still valid)"}
+        refused = [h for h, handle in zip(handle_ids, handles, strict=True) if handle is None]
+        if refused:
+            # The first refused handle's reason; the others are valid only when it is the only one refused.
+            if len(refused) > 1:
+                others = f" ({len(refused) - 1} more of these handles can't be used either: request those again too)"
+            else:
+                others = " (the others are still valid)" if len(handle_ids) > 1 else ""
+            reason = self._spent.get(refused[0], (None, 0))[0]
+            if reason == USED:
+                error = (
+                    "already used: an earlier vault-run took this handle, even if its command failed; request "
+                    f"that secret again{others}"
+                )
+                return 410, {"error": error}
+            if reason == LOCKED:
+                error = (
+                    "dropped when the vault locked (or was erased); request that secret again once it is unlocked"
+                    f"{others}"
+                )
+                return 410, {"error": error}
+            error = (
+                f"unknown or expired handle (almost always: already used, or older than {HANDLE_TTL_SECONDS // 60} "
+                f"minutes); request that secret again{others}"
+            )
+            return 404, {"error": error}
         names = [n for h in handles for n in h.env]  # type: ignore[union-attr]
         twice = sorted({n for n in names if names.count(n) > 1})
         if twice:
@@ -363,6 +434,7 @@ class Service:
         for handle in handles:
             assert handle is not None
             del self._handles[handle.id]
+            self._spent[handle.id] = (USED, handle.expires_at)
             detail = f"{handle.secret_name}: {handle.labels}. Purpose: {handle.purpose}"
             with SECRET_FILTER.guarding(handle.env.values()):
                 self.vault.audit("agent", "given to a command", handle.secret_id, detail)
@@ -471,12 +543,15 @@ class Service:
         return {
             "id": req.id,
             "status": PENDING,
+            "wait_command": wait_command(req.id),
             "approve_url": approve_url,
-            "message": "Waiting for the user's approval. Send them this link in your reply now, since they may "
-            f"not get a notification: {approve_url} {KEEP_WAITING}",
+            "message": f"Waiting for the user's approval. {next_steps(req.id, approve_url)} {keep_waiting(req.id)}",
         }
 
-    async def get_result(self, rid: str, wait_seconds: float = 0) -> dict[str, Any]:
+    async def get_result(self, rid: str, wait_seconds: float = 0, collect: bool = True) -> dict[str, Any]:
+        """The answer to a request. collect=False reports it without handing over
+        the handle or values (vault-wait, waiting on others before it collects,
+        so no handle's few minutes start early)."""
         wait = max(0.0, min(float(wait_seconds or 0), MAX_WAIT_SECONDS))
         with anyio.move_on_after(wait):
             while (req := self.request(rid) if isinstance(rid, str) else None) and req.status == PENDING:
@@ -485,8 +560,15 @@ class Service:
         if req is None:
             return {"status": "unknown", "error": f"no request '{rid}' (requests are forgotten after a restart)"}
         if req.status == PENDING:
-            message = f"Still waiting for the user's approval. {KEEP_WAITING}"
-            return {"id": rid, "status": PENDING, "approve_url": self.url(f"r/{rid}"), "message": message}
+            url = self.url(f"r/{rid}")
+            message = f"Still waiting for the user's approval. {next_steps(rid, url, again=True)} {keep_waiting(rid)}"
+            return {
+                "id": rid,
+                "status": PENDING,
+                "wait_command": wait_command(rid),
+                "approve_url": url,
+                "message": message,
+            }
         if req.status in (DENIED, EXPIRED):
             return {"id": rid, "status": req.status}
         if req.lost_to_lock:
@@ -494,6 +576,8 @@ class Service:
             return {"id": rid, "status": EXPIRED, "note": note}
         if req.values is None:
             return {"id": rid, "status": DONE, "note": "the values were already returned"}
+        if not collect:
+            return {"id": rid, "status": DONE}
         values, req.values = req.values, None
         delivered = self._deliver(
             req.secret_id, req.secret_name, req.labels, values, req.delivery, req.purpose, req.alias

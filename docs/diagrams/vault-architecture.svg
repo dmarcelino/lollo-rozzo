@@ -1063,7 +1063,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:6">
           <path data-graph-role="automatic-crossover-underlay" d="M 1135 130 L 1135 104 Q 1135 96 1127 96 L 823 96 Q 815 96 815 104 L 815 130" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="appserver" data-edge-to="bff" data-edge-label="mcp_call (vault tool)" data-edge-key="6" data-composition-points="1135,130;1135,96;815,96;815,130" data-composition-crossover="halo" data-composition-independent="true" d="M 1135 130 L 1135 104 Q 1135 96 1127 96 L 823 96 Q 815 96 815 104 L 815 130" class="a-default" data-animate="edge" style="--step: 6;" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-edge-from="appserver" data-edge-to="bff" data-edge-label="mcp_call (vault tools, vault-wait)" data-edge-key="6" data-composition-points="1135,130;1135,96;815,96;815,130" data-composition-crossover="halo" data-composition-independent="true" d="M 1135 130 L 1135 104 Q 1135 96 1127 96 L 823 96 Q 815 96 815 104 L 815 130" class="a-default" data-animate="edge" style="--step: 6;" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:7">
           <path data-graph-role="automatic-crossover-underlay" d="M 815 192 L 815 479 Q 815 487 807 487 L 620 487" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1253,9 +1253,9 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <rect x="912.4" y="141" width="125.19999999999999" height="14" rx="3" class="c-mask"/>
           <text x="975" y="151" class="t-edge-default" font-size="8" text-anchor="middle">WebSocket 127.0.0.1:4500</text>
         </g>
-        <g data-edge-from="appserver" data-edge-to="bff" data-edge-label="mcp_call (vault tool)" data-edge-key="6">
-          <rect x="919.6" y="76" width="110.8" height="14" rx="3" class="c-mask"/>
-          <text x="975" y="86" class="t-edge-default" font-size="8" text-anchor="middle">mcp_call (vault tool)</text>
+        <g data-edge-from="appserver" data-edge-to="bff" data-edge-label="mcp_call (vault tools, vault-wait)" data-edge-key="6">
+          <rect x="888.4" y="76" width="173.2" height="14" rx="3" class="c-mask"/>
+          <text x="975" y="86" class="t-edge-default" font-size="8" text-anchor="middle">mcp_call (vault tools, vault-wait)</text>
         </g>
         <g data-edge-from="bff" data-edge-to="vault" data-edge-label="POST /mcp, Host lollo-vault" data-edge-key="7">
           <rect x="647.7" y="467" width="139.6" height="14" rx="3" class="c-mask"/>

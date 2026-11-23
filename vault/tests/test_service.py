@@ -115,11 +115,76 @@ async def test_a_pending_answer_tells_the_agent_to_keep_waiting(settings, vault)
         return sub, await service.get_result(sub["id"])
 
     sub, still = await with_service(service, flow)
+    command = f"python3 /root/.letta/skills/using-vault-secrets/vault-wait {sub['id']}"
     for answer in (sub, still):
         message = answer["message"]
-        assert f"wait_seconds {MAX_WAIT_SECONDS}" in message and "background" in message
+        # The command to run, ready to copy, in a field and in the message.
+        assert answer["wait_command"] == command and command in message
+        assert "add the ids of your other pending requests to it" in message
+        assert "Run only one, with every pending request's id" in message
+        assert "Don't start it for each request" in message
+        # An agent that asked again later started no wait; one stopped its wait to end its turn.
+        assert "even if this is the only request, or one you make again later" in message
+        assert "Don't stop it: its notification starts your next turn" in message
+        # Small models sent the link as a text-only response, which ended the turn before the wait
+        # started: three short steps come first, the tool call first, then the reasons.
+        assert "a response with no tool call ends your turn" in message.lower()
+        assert "in the same response as your next tool call" in message
+        assert f"1. Call Bash with run_in_background: true and the command {command} (add" in message
+        assert f"{answer['approve_url']} 3. End your turn and leave the command running." in message
+        # The command is the first field to act on.
+        assert list(answer)[:4] == ["id", "status", "wait_command", "approve_url"]
+        # The fallback without a shell.
+        assert f"get_result with this id and wait_seconds {MAX_WAIT_SECONDS}" in message
         assert "until" in message and "end your turn" in message
-    assert sub["approve_url"] in sub["message"]
+    # The link and why the user needs it from the agent: agents that went on
+    # working after a request never showed it to the user.
+    assert sub["message"].startswith("Waiting for the user's approval. Next, in this order: 1. Call Bash")
+    assert f"2. In the same response, or after it, give the user this link: {sub['approve_url']}" in sub["message"]
+    assert still["message"].startswith("Still waiting for the user's approval. Next, in this order: 1. Call Bash")
+    assert "2. If you haven't given the user this link yet, do it in the same response" in still["message"]
+
+
+async def test_no_wait_command_once_answered(settings, vault, clock):
+    card = add_card(vault)
+    service = make_service(settings, vault)
+
+    async def flow():
+        done = await service.request_secret(card, "Pay", ["number"])
+        denied = await service.request_secret(card, "Pay", ["number"])
+        expired = await service.request_secret(card, "Pay", ["number"])
+        service.decide(done["id"], True, ["number"], EMAIL)
+        service.decide(denied["id"], False, [], EMAIL)
+        clock.t += REQUEST_TTL_SECONDS + 1
+        return [await service.get_result(r["id"]) for r in (done, denied, expired)] + [await service.get_result("nope")]
+
+    answers = await with_service(service, flow)
+    assert [a["status"] for a in answers] == ["done", "denied", "expired", "unknown"]
+    assert not any("wait_command" in a for a in answers)
+
+
+async def test_get_result_can_report_without_collecting(settings, vault, caplog):
+    """vault-wait peeks while other requests still wait, so no handle's few
+    minutes start before the agent can use it."""
+    caplog.set_level(logging.DEBUG)
+    card = add_card(vault)
+    service = make_service(settings, vault)
+
+    async def flow():
+        sub = await service.request_secret(card, "Pay for the train", ["number"])
+        pending = await service.get_result(sub["id"], collect=False)
+        service.decide(sub["id"], True, ["number"], EMAIL)
+        peeks = [await service.get_result(sub["id"], collect=False) for _ in range(2)]
+        handles_before = dict(service._handles)
+        return sub, pending, peeks, handles_before, await service.get_result(sub["id"])
+
+    sub, pending, peeks, handles_before, collected = await with_service(service, flow)
+    assert pending["status"] == "pending" and pending["wait_command"].endswith(sub["id"])
+    for peek in peeks:
+        assert peek == {"id": sub["id"], "status": "done"}
+    assert handles_before == {}  # nothing issued while peeking
+    assert collected["status"] == "done" and collected["handle"] and CARD not in json.dumps(collected)
+    assert CARD not in json.dumps(peeks) and CARD not in caplog.text
 
 
 async def test_public_fields_are_not_requested(settings, vault):
@@ -334,12 +399,17 @@ async def test_placeholders_return_a_handle_never_values(settings, vault, caplog
     assert first["handle"] in first["run"] and "vault-run" in first["run"] and "$VAULT_NUMBER" in first["run"]
     assert first["handle"] in first["fill"] and "vault-fill <template> <output>" in first["fill"]
     assert "never open the filled file" in first["message"].lower()
+    # The MCP-arguments recipe, and that a failed command still uses the handle up.
+    message = first["message"]
+    assert "vault-fill" in message and "--args-file -" in message and "never $VAULT_" in message
+    assert f"{first['handle']} -- bash -c 'set -o pipefail; " in message  # the pipe inside vault-run
+    assert "even if its command fails" in message
     assert CARD not in json.dumps(first) and SECRET not in json.dumps(first)
     assert "handle" not in second and "values" not in second
 
     redeemed = service.redeem([first["handle"]])
     assert redeemed == (200, {"secrets": ["Visa"], "env": {"VAULT_NUMBER": CARD}})
-    assert service.redeem([first["handle"]])[0] == 404  # single use
+    assert service.redeem([first["handle"]])[0] == 410  # single use: "already used"
     assert any(e.action == "given to a command" for e in vault.audit_log())
     assert CARD not in caplog.text and first["handle"] not in caplog.text
 
@@ -433,6 +503,55 @@ async def test_redeem_is_audited_with_the_purpose(settings, vault):
     assert entry.detail == "Home address: City / Town. Purpose: delivery form"
 
 
+async def test_a_spent_handle_says_it_was_used(settings, vault, clock, caplog):
+    """A command that fails after vault-run took the values still used the handle
+    up: the agent is told so, not that it expired."""
+    caplog.set_level(logging.DEBUG)
+    secret = add_address(vault, share_mode="auto")
+    service = make_service(settings, vault)
+    res = await with_service(service, lambda: service.request_secret(secret, "letter", ["address1"]))
+    handle = res["handle"]
+    assert service.redeem([handle])[0] == 200
+    status, body = service.redeem([handle])
+    assert status == 410 and "already used" in body["error"] and "even if its command failed" in body["error"]
+    assert "others" not in body["error"]
+    # The record holds the id and why, never the values.
+    assert STREET not in repr(service._spent) and STREET not in caplog.text
+    clock.t += HANDLE_TTL_SECONDS + 1
+    status, body = service.redeem([handle])
+    assert status == 404 and "unknown or expired" in body["error"] and "already used" in body["error"]
+    assert service._spent == {}
+
+
+async def test_a_made_up_or_expired_handle_is_unknown(settings, vault, clock):
+    secret = add_address(vault, share_mode="auto")
+    service = make_service(settings, vault)
+    res = await with_service(service, lambda: service.request_secret(secret, "letter", ["city"]))
+    status, body = service.redeem(["made-up"])
+    assert status == 404 and "unknown or expired" in body["error"]
+    clock.t += HANDLE_TTL_SECONDS + 1
+    assert service.redeem([res["handle"]])[0] == 404 and service._spent == {}
+
+
+async def test_a_spent_handle_among_others_uses_up_none(settings, vault):
+    secret = add_address(vault, share_mode="auto")
+    service = make_service(settings, vault)
+
+    async def flow():
+        spent = (await service.request_secret(secret, "letter", ["city"], alias="home"))["handle"]
+        fresh = (await service.request_secret(secret, "letter", ["city"], alias="work"))["handle"]
+        return spent, fresh
+
+    spent, fresh = await with_service(service, flow)
+    assert service.redeem([spent])[0] == 200
+    status, body = service.redeem([spent, fresh])
+    assert status == 410 and "already used" in body["error"] and "others are still valid" in body["error"]
+    assert service.redeem([fresh])[0] == 200
+    # Both refused: neither is said to be valid.
+    status, body = service.redeem([spent, fresh])
+    assert status == 410 and "1 more of these handles" in body["error"] and "still valid" not in body["error"]
+
+
 async def test_lock_forgets_handles_and_uncollected_values(settings, vault):
     auto = add_address(vault, share_mode="auto")
     card = add_card(vault)
@@ -448,7 +567,8 @@ async def test_lock_forgets_handles_and_uncollected_values(settings, vault):
         return locked, service.redeem([handle]), await service.get_result(sub["id"])
 
     (redeemed, result), after_unlock, result_after_unlock = await with_service(service, flow)
-    assert redeemed[0] == 404 and after_unlock[0] == 404
+    for status, body in (redeemed, after_unlock):
+        assert status == 410 and "locked" in body["error"] and "expired" not in body["error"]
     for res in (result, result_after_unlock):
         assert res["status"] == "expired" and "locked" in res["note"] and "values" not in res
     assert CARD not in json.dumps([result, result_after_unlock])

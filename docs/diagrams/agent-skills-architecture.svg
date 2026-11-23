@@ -1001,7 +1001,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:5">
           <path data-graph-role="automatic-crossover-underlay" d="M 475 484 L 475 610" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="vaultskill" data-edge-to="vault" data-edge-label="mcp.sh call; vault-run /redeem" data-edge-key="5" data-composition-points="475,484;475,610" data-composition-crossover="halo" data-composition-independent="true" d="M 475 484 L 475 610" class="a-security" data-animate="edge" style="--step: 5;" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+          <path data-edge-from="vaultskill" data-edge-to="vault" data-edge-label="vault-wait: get_result; vault-run /redeem" data-edge-key="5" data-composition-points="475,484;475,610" data-composition-crossover="halo" data-composition-independent="true" d="M 475 484 L 475 610" class="a-security" data-animate="edge" style="--step: 5;" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:6">
           <path data-graph-role="automatic-crossover-underlay" d="M 1095 484 L 1095 610" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -1086,15 +1086,15 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="815" y="276" class="t-muted" font-size="9" text-anchor="middle">stdio MCP, lollo-doc-tools</text>
         </g>
 
-        <g id="node-vaultskill" data-node-id="vaultskill" data-node-label="using-vault-secrets" tabindex="0" role="button" aria-label="Focus using-vault-secrets, SKILL.md, vault-run, vault-fill, shared network namespace › app-server container: agents run as root" aria-pressed="false" data-node-kind="backend" data-node-sublabel="SKILL.md, vault-run, vault-fill" data-node-context="shared network namespace › app-server container: agents run as root">
-          <title>using-vault-secrets · SKILL.md, vault-run, vault-fill · shared network namespace › app-server container: agents run as root</title>
+        <g id="node-vaultskill" data-node-id="vaultskill" data-node-label="using-vault-secrets" tabindex="0" role="button" aria-label="Focus using-vault-secrets, vault-run, vault-fill, vault-wait, shared network namespace › app-server container: agents run as root" aria-pressed="false" data-node-kind="backend" data-node-sublabel="vault-run, vault-fill, vault-wait" data-node-context="shared network namespace › app-server container: agents run as root">
+          <title>using-vault-secrets · vault-run, vault-fill, vault-wait · shared network namespace › app-server container: agents run as root</title>
           <rect x="380" y="420" width="190" height="64" rx="8" class="c-mask"/>
           <rect x="380" y="420" width="190" height="64" rx="8" class="c-backend" data-animate="node" style="--step: 5; --flow-node-name: archify-relay-node-3;" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(386 426) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" x="475" y="450" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">using-vault-secrets</text>
-        <text x="475" y="466" class="t-muted" font-size="9" text-anchor="middle">SKILL.md, vault-run, vault-fill</text>
+        <text x="475" y="466" class="t-muted" font-size="9" text-anchor="middle">vault-run, vault-fill, vault-wait</text>
         </g>
 
         <g id="node-docskill" data-node-id="docskill" data-node-label="working-with-documents" tabindex="0" role="button" aria-label="Focus working-with-documents, which server, how to check, shared network namespace › app-server container: agents run as root" aria-pressed="false" data-node-kind="backend" data-node-sublabel="which server, how to check" data-node-context="shared network namespace › app-server container: agents run as root">
@@ -1186,9 +1186,9 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <rect x="757.2" y="400" width="115.6" height="14" rx="3" class="c-mask"/>
           <text x="815" y="410" class="t-edge-default" font-size="8" text-anchor="middle">mcp.sh: letta mcp call</text>
         </g>
-        <g data-edge-from="vaultskill" data-edge-to="vault" data-edge-label="mcp.sh call; vault-run /redeem" data-edge-key="5">
-          <rect x="315" y="540" width="154" height="14" rx="3" class="c-mask"/>
-          <text x="392" y="550" class="t-edge-security" font-size="8" text-anchor="middle">mcp.sh call; vault-run /redeem</text>
+        <g data-edge-from="vaultskill" data-edge-to="vault" data-edge-label="vault-wait: get_result; vault-run /redeem" data-edge-key="5">
+          <rect x="262.20000000000005" y="540" width="206.79999999999998" height="14" rx="3" class="c-mask"/>
+          <text x="365.6" y="550" class="t-edge-security" font-size="8" text-anchor="middle">vault-wait: get_result; vault-run /redeem</text>
         </g>
         <g data-edge-from="fetchskill" data-edge-to="pipelock" data-edge-label="curl /fetch?url=" data-edge-key="6">
           <rect x="1002.1999999999999" y="540" width="86.8" height="14" rx="3" class="c-mask"/>

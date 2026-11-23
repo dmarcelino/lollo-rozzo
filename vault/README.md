@@ -24,9 +24,9 @@ An interactive version, [vault-architecture.html](../docs/diagrams/vault-archite
 | `src/lollo_vault/logs.py` | Logging that redacts any value being shared |
 | `src/lollo_vault/icons.py` | The app icons, drawn as PNG at first use |
 | `src/lollo_vault/templates/`, `static/` | The pages (Jinja), their stylesheet and manifest, `app.js` (push sign-up) and `sw.js` (the service worker that shows notifications) |
-| `tests/` | pytest: the app, crypto and store, push and logs, the service, the Bitwarden import, `vault-run` against a stub `/redeem`, and `vault-fill` |
+| `tests/` | pytest: the app, crypto and store, push and logs, the service, the Bitwarden import, `vault-run` against a stub `/redeem`, `vault-fill`, and `vault-wait` against a stub `mcp-servers` wrapper |
 
-The agent side, `vault-run`, `vault-fill` and their skill, lives in [agent-skills/using-vault-secrets](../agent-skills/using-vault-secrets).
+The agent side, `vault-run`, `vault-fill`, `vault-wait` and their skill, lives in [agent-skills/using-vault-secrets](../agent-skills/using-vault-secrets).
 
 ## How it plugs in
 - **Overlay:** [compose/vault.yml](../compose/vault.yml) defines `lollo-vault` (image `lollo-vault:local`, built from this directory with the `lollo-common` build context): read-only root, `/tmp` as tmpfs, `cap_drop: [ALL]`, `no-new-privileges`, 512 MB (scrypt needs 128 MiB per unlock), no ports, on the stack's default network. Its one mount is the named volume `vault-data` at `/data`.
@@ -45,7 +45,7 @@ tests/run-sidecar.sh vault -k vault   # extra args go to pytest
 ```
 Run them before changing this directory or `lollo-common/`.
 
-The tests never use the network: pushes go to `FakeSender`, Access tokens come from `make_jwt` with a test RSA key, `FAST_KDF` makes scrypt cheap, and a fake `Clock` drives time. Fake values (`TEST_SECRET_DO_NOT_USE_938742`, a card number, a street) are asserted never to reach the vault file on disk, logs or pushes, nor pages before Show when they are masked (the card number). `test_vault_run.py` runs `agent-skills/using-vault-secrets/vault-run` against a loopback stub of `/redeem`, and `test_vault_fill.py` runs `vault-fill` (alone, and piped inside `vault-run`); `tests/run-sidecar.sh vault` mounts `agent-skills/` into the test container for them. `test_bitwarden.py` reads a fake export of every item type.
+The tests never use the network: pushes go to `FakeSender`, Access tokens come from `make_jwt` with a test RSA key, `FAST_KDF` makes scrypt cheap, and a fake `Clock` drives time. Fake values (`TEST_SECRET_DO_NOT_USE_938742`, a card number, a street) are asserted never to reach the vault file on disk, logs or pushes, nor pages before Show when they are masked (the card number). `test_vault_run.py` runs `agent-skills/using-vault-secrets/vault-run` against a loopback stub of `/redeem`, and `test_vault_fill.py` runs `vault-fill` (alone, and piped inside `vault-run`), and `test_vault_wait.py` runs `vault-wait` against a stub of the wrapper answering `get_result` from a state file; `tests/run-sidecar.sh vault` mounts `agent-skills/` into the test container for them. `test_bitwarden.py` reads a fake export of every item type.
 
 ## Rules
 
@@ -56,7 +56,7 @@ That is the same JWT cloudflared sends the BFF in plain HTTP inside that namespa
 
 ### What agents get, and what that does not protect
 - Agents read names and public fields with `list_secrets`. They get private values only through `request_secret`: after the person approves those fields, or without asking for the fields the person allowed (only fields with `FieldSpec.auto`, in a secret set to `auto`; a request with any other field waits for approval as a whole).
-- By default (`delivery: "placeholders"`) the agent gets a handle instead of the values. `vault-run` redeems one or more at `/redeem` in one call, all or none: an unknown handle, or a name two handles share or `vault-run`'s environment already has, uses up none. Each is single use, `HANDLE_TTL_SECONDS`, at most `MAX_HANDLES` unused, `lollo-vault` host and no `Origin` only. A lock drops handles and uncollected values. `vault-run` runs one command with them (`vault-fill` puts them into a template) and scrubs them from its output.
+- By default (`delivery: "placeholders"`) the agent gets a handle instead of the values. `vault-run` redeems one or more at `/redeem` in one call, all or none: an unknown handle, or a name two handles share or `vault-run`'s environment already has, uses up none. Each is single use, `HANDLE_TTL_SECONDS`, at most `MAX_HANDLES` unused, `lollo-vault` host and no `Origin` only. A lock drops handles and uncollected values. A used or dropped handle is remembered by id only (never its values), in memory, until it would have expired, so `/redeem` can answer "already used" or "dropped when the vault locked" (410) instead of "unknown or expired" (404): an agent whose command failed after `vault-run` took the values then knows to ask again rather than blame a timeout. `vault-run` runs one command with them (`vault-fill` puts them into a template) and scrubs them from its output.
 - That keeps values out of the conversation and away from the AI provider, but it is not a boundary: agents are root in the app-server and can redeem a handle themselves or open the filled file, and values under 6 characters are not scrubbed. Docs must not claim more ([docs/vault.md](../docs/vault.md#security-model) says so in plain language).
 - `delivery: "text"` needs a `reason`, shown to the person and audited. Values shared as text always come with `rules` (`service.rules`): the approved purpose only, no outside service unless the purpose needs it, never repeated in a reply, memory or files. Those are instructions to the agent, not a boundary.
 
@@ -80,5 +80,5 @@ The unlock page's erase is the one way to destroy the vault without knowing the 
 ## Upstream seams
 These are the Lettuce behaviours the vault depends on (all of them are listed in [CONTRIBUTING.md](../CONTRIBUTING.md#upstream-seams)):
 - The shared MCP list accepts the vault's `http` entry of only `name`, `transport` and `url`, and `lolloctl mcp` writes it into `/root/.letta/mcp-home/.letta/settings.json`.
-- The `using-vault-secrets` skill relies on the `mcp-servers` skill wrapper and on letta-code telling the agent when a background command finishes, which is how an agent waiting for an approval gets a new turn, and on `letta mcp call <tool> --args-file -` reading the arguments from stdin and exiting 2 when the tool reports an error (the skill's email recipe pipes `vault-fill` into it, under `bash` for `pipefail`).
+- The `using-vault-secrets` skill relies on the `mcp-servers` skill wrapper and on letta-code telling the agent when a background command finishes, which is how an agent waiting for an approval gets a new turn, and giving a background command no time limit unless one is set (`vault-wait` waits in one for up to 12 minutes; checked in letta-code 0.34.67; the `pending` reply and the skill name the Bash tool's `run_in_background: true` parameter), and on `letta mcp call <tool> --args-file -` reading the arguments from stdin and exiting 2 when the tool reports an error (the skill's MCP-arguments recipe pipes `vault-fill` into it, under `bash` for `pipefail`).
 - `MAX_WAIT_SECONDS` stays below the 120 s Lettuce's MCP bridge gives a tool call (see `config.py`).

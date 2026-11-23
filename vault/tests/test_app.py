@@ -672,6 +672,8 @@ def test_mcp_tools(env):
     props = tools["request_secret"]["inputSchema"]["properties"]
     assert props["delivery"]["enum"] == ["placeholders", "text"] and props["delivery"]["default"] == "placeholders"
     assert {"reason", "alias"} <= set(props)
+    result_props = tools["get_result"]["inputSchema"]["properties"]
+    assert result_props["collect"]["type"] == "boolean" and result_props["collect"]["default"] is True
     assert "AI provider" in tools["request_secret"]["description"]
     for name in ("request_secret", "get_result"):
         assert "never repeat" in tools[name]["description"].lower(), name
@@ -704,6 +706,8 @@ def test_end_to_end_through_mcp_and_ui(env, caplog):
     assert 'class="badge">1<' in client.get(f"{B}/secrets").text
     assert post(client, f"{B}/r/{rid}/decide", {"action": "share", "fields": ["number"]}).status_code == 303
 
+    peek, raw = call_tool(client, "get_result", {"request_id": rid, "wait_seconds": 5, "collect": False})
+    assert peek == {"id": rid, "status": "done"} and CARD not in raw
     res, _ = call_tool(client, "get_result", {"request_id": rid, "wait_seconds": 5})
     assert res["status"] == "done" and res["values"] == {"number": CARD} and res["withheld"] == ["Security code"]
     assert "Reason to read them: compare it with the receipt" in vault.audit_log()[0].detail
@@ -800,7 +804,7 @@ def test_placeholders_end_to_end(env, caplog):
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
     assert r.json() == {"secrets": ["Visa"], "env": {"VAULT_NUMBER": CARD}}
     again = redeem(client, res["handle"])
-    assert again.status_code == 404 and CARD not in again.text
+    assert again.status_code == 410 and "already used" in again.text and CARD not in again.text
     assert CARD not in client.get(f"{B}/r/{sub['id']}").text
     assert CARD not in json.dumps([c["data"] for c in sender.calls])
     assert CARD not in caplog.text and res["handle"] not in caplog.text

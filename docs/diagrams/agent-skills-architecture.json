@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "bb0414bc828c5c1d158c9d1897e490da313ac271"
     }
   },
   "components": [
@@ -30,8 +30,8 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 233,
-          "end_line": 245,
+          "line": 237,
+          "end_line": 249,
           "label": "sync_skills: */SKILL.md, names checked"
         }
       ]
@@ -52,14 +52,14 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 2016,
-          "end_line": 2024,
+          "line": 2304,
+          "end_line": 2312,
           "label": "cmd_skills"
         },
         {
           "path": "lolloctl",
-          "line": 246,
-          "end_line": 252,
+          "line": 250,
+          "end_line": 256,
           "label": "tar into compose exec"
         }
       ]
@@ -80,14 +80,14 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 242,
-          "end_line": 243,
+          "line": 246,
+          "end_line": 247,
           "label": "a shared name is refused"
         },
         {
           "path": "lolloctl",
-          "line": 1838,
-          "end_line": 1844,
+          "line": 1856,
+          "end_line": 1861,
           "label": "backup skips upstream's"
         }
       ]
@@ -108,13 +108,13 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 242,
+          "line": 246,
           "label": "rewrites its skills on connect"
         },
         {
           "path": "lolloctl",
-          "line": 706,
-          "end_line": 711,
+          "line": 710,
+          "end_line": 715,
           "label": "renders the mcp-servers skill"
         }
       ]
@@ -135,14 +135,14 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 212,
-          "end_line": 231,
+          "line": 216,
+          "end_line": 235,
           "label": "SKILLS_INSTALL"
         },
         {
           "path": "lolloctl",
-          "line": 1719,
-          "end_line": 1737,
+          "line": 1733,
+          "end_line": 1751,
           "label": "backup leaves them out"
         }
       ]
@@ -179,7 +179,7 @@
       "id": "vaultskill",
       "type": "backend",
       "label": "using-vault-secrets",
-      "sublabel": "SKILL.md, vault-run, vault-fill",
+      "sublabel": "vault-run, vault-fill, vault-wait",
       "pos": [
         380,
         420
@@ -192,20 +192,20 @@
         {
           "path": "agent-skills/using-vault-secrets/SKILL.md",
           "line": 1,
-          "end_line": 126,
+          "end_line": 151,
           "label": "placeholders; waiting for approval"
+        },
+        {
+          "path": "agent-skills/using-vault-secrets/vault-wait",
+          "line": 2,
+          "end_line": 17,
+          "label": "vault-wait: get_result until all are answered"
         },
         {
           "path": "agent-skills/using-vault-secrets/vault-run",
           "line": 42,
           "end_line": 70,
           "label": "POST /redeem, no proxy"
-        },
-        {
-          "path": "agent-skills/using-vault-secrets/vault-fill",
-          "line": 2,
-          "end_line": 15,
-          "label": "vault-fill: a template, filled"
         }
       ]
     },
@@ -326,7 +326,7 @@
         {
           "path": "agent-skills/news-radar-sources/SKILL.md",
           "line": 8,
-          "end_line": 24,
+          "end_line": 29,
           "label": "the News Radar server, through the wrapper"
         }
       ]
@@ -347,8 +347,8 @@
       "sources": [
         {
           "path": "news-radar/src/lollo_news_radar/app.py",
-          "line": 306,
-          "end_line": 317,
+          "line": 332,
+          "end_line": 343,
           "label": "internal /mcp only"
         }
       ]
@@ -424,7 +424,7 @@
     {
       "from": "vaultskill",
       "to": "vault",
-      "label": "mcp.sh call; vault-run /redeem",
+      "label": "vault-wait: get_result; vault-run /redeem",
       "variant": "security"
     },
     {

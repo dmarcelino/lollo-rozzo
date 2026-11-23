@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "bb0414bc828c5c1d158c9d1897e490da313ac271"
     }
   },
   "components": [
@@ -32,7 +32,7 @@
       "size": [170, 62],
       "sources": [
         { "path": "lib/cloudflare.sh", "line": 73, "end_line": 84, "label": "cf_app_body: HttpOnly, SameSite=Lax" },
-        { "path": "lolloctl", "line": 171, "end_line": 187, "label": "the lollo's own Access app (CF_LOLLO_AUD)" }
+        { "path": "lolloctl", "line": 175, "end_line": 191, "label": "the lollo's own Access app (CF_LOLLO_AUD)" }
       ]
     },
     {
@@ -103,7 +103,7 @@
       "sources": [
         { "path": "agent-skills/using-vault-secrets/vault-run", "line": 42, "end_line": 70, "label": "POST /redeem, all or none" },
         { "path": "agent-skills/using-vault-secrets/vault-fill", "line": 2, "end_line": 15, "label": "vault-fill: a template, filled" },
-        { "path": "lolloctl", "line": 235, "end_line": 256, "label": "installed by lolloctl skills" }
+        { "path": "lolloctl", "line": 239, "end_line": 260, "label": "installed by lolloctl skills" }
       ]
     },
     {
@@ -129,7 +129,7 @@
       "sources": [
         { "path": "compose/vault.yml", "line": 52, "end_line": 56, "label": "named volume" },
         { "path": "vault/src/lollo_vault/vault.py", "line": 1, "end_line": 7, "label": "what is encrypted" },
-        { "path": "lib/common.sh", "line": 794, "end_line": 796, "label": "only the vault mounts it" }
+        { "path": "lib/common.sh", "line": 804, "end_line": 806, "label": "only the vault mounts it" }
       ]
     },
     {
@@ -166,7 +166,7 @@
     { "from": "cloudflared", "to": "bff", "label": "Lettuce host + Lettuce JWT" },
     { "from": "cloudflared", "to": "vault", "label": "lollo host /vault/ + lollo JWT", "variant": "security" },
     { "from": "bff", "to": "appserver", "label": "WebSocket 127.0.0.1:4500" },
-    { "from": "appserver", "to": "bff", "label": "mcp_call (vault tool)", "fromSide": "top", "toSide": "top" },
+    { "from": "appserver", "to": "bff", "label": "mcp_call (vault tools, vault-wait)", "fromSide": "top", "toSide": "top" },
     { "from": "bff", "to": "vault", "label": "POST /mcp, Host lollo-vault" },
     { "from": "appserver", "to": "vaultrun", "label": "agent shell runs" },
     { "from": "vaultrun", "to": "vault", "label": "POST /redeem (handles)", "variant": "security" },
@@ -202,7 +202,7 @@
       "items": [
         "Other lollo pages on the same host (gmail-triggers, the code editor) and Lettuce's opt-in services",
         "The LLM provider that the app-server calls",
-        "lolloctl on the host: builds and checks each stack, registers the vault in Settings -> MCP (lolloctl mcp), installs vault-run and vault-fill (lolloctl skills)"
+        "lolloctl on the host: builds and checks each stack, registers the vault in Settings -> MCP (lolloctl mcp), installs vault-run, vault-fill and vault-wait (lolloctl skills)"
       ]
     }
   ]

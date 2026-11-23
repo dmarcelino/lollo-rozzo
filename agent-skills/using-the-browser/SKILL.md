@@ -107,8 +107,10 @@ one (the account's, or the vault entry's name), not what it says.
    the username with `type_text`.
 2. **Request the password** with a purpose naming the site and the task: `"Sign in to
    shop.example.com to order the printer ink you asked for"`. Never `delivery: "text"`: the
-   password must not enter the conversation. Post the `approve_url` and wait for the approval
-   in the background, as `using-vault-secrets` shows.
+   password must not enter the conversation. Start one `vault-wait` for it (a Bash call with
+   `run_in_background: true`), and give the person the `approve_url` in that same response, as
+   `using-vault-secrets` shows: a response with only text ends your turn, so a link written
+   first leaves nothing waiting.
 3. **When the approval arrives, take a new snapshot**, then write the call's arguments as a
    template with the placeholder where the value goes, in a file ending in `.json` (`vault-fill`
    escapes values for JSON). The `ref` is the password field's in **that** snapshot, never one
@@ -121,7 +123,7 @@ one (the account's, or the vault entry's name), not what it says.
    ```
 
 4. **Fill and type in one command**, within 5 minutes of the approval. The pipe must be inside
-   `bash -c '...'`, as in the vault skill's email recipe. Run it as written: `V` is set again
+   `bash -c '...'`, as in the vault skill's MCP-arguments recipe. Run it as written: `V` is set again
    inside the quotes because the outer one doesn't reach them. `vault-run` uses up the handle
    even when the command fails, so check the template's ref first:
 
