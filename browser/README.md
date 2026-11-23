@@ -4,7 +4,7 @@ The agents' browser: a Chromium that agents drive through MCP tools, and that th
 - **`lollo-browser-engine`** (`engine/`): Chromium, with its sandbox on, and TigerVNC's Xvnc as its display. It loads hostile pages, so it holds nothing at rest, controls nothing, and its only way out is pipelock.
 - **`lollo-browser`** (`service/`): the agents' tools at `http://lollo-browser:8000/mcp`, the person's page at `/browser/` on the stack's lollo host, the settings, the audit log, the kept sign-ins and the push keys. It drives the engine over Playwright's WebSocket and relays its display to the page.
 
-The design record is `openspec/changes/add-lollo-browser/design.md`. The guide for users and admins, `docs/browser.md`, is added with the service.
+The design record is `openspec/changes/archive/2026-11-23-add-lollo-browser/design.md`, and the requirements are in `openspec/specs/browser/`. The guide for users and admins, `docs/browser.md`, is added with the service.
 
 ## Files
 
