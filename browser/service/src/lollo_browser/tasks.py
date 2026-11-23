@@ -55,7 +55,7 @@ from .config import (
     Limits,
 )
 from .engine import Engine
-from .handoffs import Handoff, Handoffs
+from .handoffs import APPROVED, PENDING, Handoff, HandoffError, Handoffs
 from .push import NoPusher
 from .scrub import SCRUBBER, Scrubber
 from .sessions import Sessions
@@ -149,6 +149,22 @@ class Task:
     epochs: dict[str, int] = field(default_factory=dict)
     lock: anyio.Lock = field(default_factory=anyio.Lock)
     ended: str | None = None
+
+
+@dataclass(eq=False)
+class HeldCheckout:
+    """An agent's checkout action, held with its hand-off: the element it was
+    on, the click or the key, and the page it was held on. Approving performs
+    it on that element only (approve_checkout)."""
+
+    tab: Tab
+    handle: ElementHandle
+    key: str | None  # None: a click
+    field: str
+    url: str
+    # The tab's last_checkout when held: a checkout submitted since means the order may be placed already.
+    last_checkout: float
+    reasons: tuple[str, ...]
 
 
 def _one_line(text: str, limit: int) -> str:
@@ -624,14 +640,22 @@ class BrowserService:
             )
 
     async def _checkout_gate(
-        self, task: Task, tab: Tab, locator: Any, key: str | None, field: str, did: str = ""
+        self,
+        task: Task,
+        tab: Tab,
+        locator: Any,
+        key: str | None,
+        field: str,
+        did: str = "",
+        press: str | None = None,
     ) -> tuple[dict[str, Any] | None, Callable[[], None] | None]:
         """Before an agent's click or submitting key: a recognised checkout on a
-        site the person has not allowed becomes a hand-off (the tool's result,
-        first); on an allowed site it goes ahead, and the caller runs the
-        second, which audits and notifies it, once the action succeeded.
-        `locator` is a Locator or the focused element's handle; `did` says what
-        the agent did, for the person."""
+        site the person has not allowed is held in a hand-off for the person
+        (the tool's result, first); on an allowed site it goes ahead, and the
+        caller runs the second, which audits and notifies it, once the action
+        succeeded. `locator` is a Locator or the focused element's handle; `key`
+        is how the recognition reads it, `press` the key the agent pressed (None
+        for a click), and `did` says what the agent did, for the person."""
         url = tab.page.url
         did = did or f"clicked {field}"
         try:
@@ -649,10 +673,18 @@ class BrowserService:
         h = self._new_handoff(
             task,
             tab,
-            f"Finish the checkout on {site or 'this site'}: an agent {did}, which was not done. "
-            "Check the order and place it yourself, or decline.",
+            f"A checkout on {site or 'this site'} waits for you: an agent {did}, which was not done. "
+            "Check the order in the live view, then place it or decline.",
             kind="checkout",
         )
+        try:
+            handle = locator if isinstance(locator, ElementHandle) else await locator.element_handle(
+                timeout=ACTION_TIMEOUT_MS
+            )
+        except PlaywrightError:
+            handle = None  # nothing to approve: the person can still take over
+        if handle is not None:
+            h.held = HeldCheckout(tab, handle, press, field, url, tab.last_checkout, tuple(verdict.reasons))
         self.audit.record(
             "checkout_handed_off",
             task,
@@ -669,8 +701,9 @@ class BrowserService:
             status="handed_off",
             handoff=h.id,
             message=f"This looks like a checkout and {site or 'this site'} is not allowed to finish checkouts, so "
-            f"nothing was done (the agent {did}): the checkout was handed to the person. Wait for their answer with "
-            "wait_handoff; never retry the checkout yourself.",
+            f"nothing was done (the agent {did}): the checkout was handed to the person, who can approve it (the "
+            "browser then places it), place it themselves, or decline. Wait for their answer with wait_handoff; "
+            "never retry the checkout yourself.",
         ), None
 
     def _checkout_submitted(
@@ -810,7 +843,7 @@ class BrowserService:
                     if effect is not None:
                         as_key = "Enter" if effect == "submit" else None
                         did = f"pressed {key} on {field}"
-                        handed, done = await self._checkout_gate(task, tab, target, as_key, field, did)
+                        handed, done = await self._checkout_gate(task, tab, target, as_key, field, did, press=key)
                         if handed is not None:
                             return handed
                         await self._submits(task, tab, target, as_key, field)
@@ -979,6 +1012,11 @@ class BrowserService:
             out["note"] = h.note
         if h.status == "pending":
             out["message"] = "No answer yet; call wait_handoff again."
+        elif h.status == APPROVED:
+            out["message"] = (
+                "The person approved the checkout and the browser placed it, as you tried to. Take a new snapshot "
+                "to see the result; never submit it again."
+            )
         elif h.status == "no answer":
             out["message"] = "The person did not answer in time. The tab stays open until the task ends."
         return self.scrubber.deep(out)
@@ -1103,6 +1141,92 @@ class BrowserService:
         it is the one in front, so their input reaches it and no other."""
         found = self.find_tab(task_id, tab_id)
         return found is not None and found[1].controlled and self._front is found[1].page
+
+    async def approve_checkout(self, handoff_id: str, email: str, allow_site: bool = False) -> str:
+        """The person approves a held checkout on its page: the browser performs
+        the held click or key, once, on the element it was held on, while the
+        tab is still on that page, the person doesn't control it, and no
+        checkout was submitted on it since. With allow_site, the site's "may
+        finish checkout" setting is turned on first, as on the Sites page.
+        Returns the site; raises BrowserError, saying what to do, when nothing
+        was pressed (the hand-off then stays open)."""
+        gone = "This checkout can no longer be approved: it was answered, it expired, or its task ended."
+        try:
+            h = self.handoffs.get(handoff_id)
+        except HandoffError:
+            raise BrowserError(gone) from None
+        held = h.held
+        if h.kind != "checkout" or h.status != PENDING or held is None:
+            raise BrowserError(gone)
+        found = self.find_tab(h.task_id, h.tab_id)
+        if found is None or found[1] is not held.tab:
+            raise BrowserError("Its tab is closed: nothing was pressed.")
+        task, tab = found
+        async with task.lock:
+            if h.status != PENDING or h.held is not held:
+                raise BrowserError(gone)
+            if tab.controlled:
+                raise BrowserError(
+                    "You have control of this tab: place the order yourself and press Done, or give the tab back "
+                    "and approve it again."
+                )
+            if tab.last_checkout != held.last_checkout:
+                raise BrowserError(
+                    "A checkout was submitted in this tab since it was held: the order may be placed already. "
+                    "Nothing was pressed; check the order in the live view."
+                )
+            if tab.page.url != held.url:
+                raise BrowserError(
+                    "The tab is no longer on the page the checkout was held on: nothing was pressed. Take over in "
+                    "the live view and check the order."
+                )
+            try:
+                attached = await _evaluate(held.handle, "el => el.isConnected", None)
+            except PlaywrightError, TimeoutError:
+                attached = False
+            if not attached:
+                raise BrowserError(
+                    f"{held.field} is no longer on the page: nothing was pressed. Take over in the live view and "
+                    "check the order."
+                )
+            site = site_of(held.url)
+            if allow_site:
+                if not site:
+                    raise BrowserError("This page has no site to allow: nothing was pressed. Place this order only.")
+                after = self.sessions.set_may_checkout(site, True)
+                self.audit.record(
+                    "setting_changed",
+                    site=after.site,
+                    by=email,
+                    keep_signed_in=after.keep_signed_in,
+                    may_checkout=after.may_checkout,
+                )
+            try:
+                if held.key:
+                    await held.handle.press(held.key, timeout=ACTION_TIMEOUT_MS)
+                else:
+                    await held.handle.click(timeout=ACTION_TIMEOUT_MS)
+            except PlaywrightError as e:
+                raise BrowserError(
+                    f"Pressing {held.field} failed ({_describe_error(e)}): the order may not be placed. Take over in "
+                    "the live view and check it."
+                ) from None
+            tab.refs.clear()  # the page changes: the agent takes a new snapshot
+            task.last_used = self.clock()
+            self.handoffs.approve(h.id, by=email)
+            self.audit.record(
+                "checkout_approved",
+                task,
+                tab=tab.id,
+                handoff=h.id,
+                url=held.url,
+                site=site or None,
+                field=held.field,
+                by=email,
+                allowed_site=allow_site,
+            )
+            self._checkout_submitted(task, tab, by="person", field=held.field, url=held.url, reasons=held.reasons)
+            return site
 
     async def end_task_by_person(self, task_id: str) -> bool:
         task = self._tasks.get(task_id)

@@ -7,6 +7,7 @@ import pytest
 
 from lollo_browser import checkout
 from lollo_browser.checkout import Features, recognise
+from lollo_browser.tasks import BrowserError
 
 from .conftest import PAGES as SITE_PAGES
 from .conftest import ref_of, wait_for
@@ -323,3 +324,122 @@ async def test_wait_is_below_the_bridge_limit(env):
     from lollo_browser.config import MAX_WAIT_SECONDS
 
     assert MAX_WAIT_SECONDS < 120
+
+
+# ── approving a held checkout ────────────────────────────────────────────────
+
+EMAIL = "alfred@gmail.com"
+
+
+async def held_checkout(env, sites, how=("click", "Place order"), path="/checkout/review"):
+    """A checkout on a site not allowed, held: (task, tab, hand-off id)."""
+    task = await env.task("order the kettle")
+    tab = await env.tab(task, sites.https("shop.example.com", path))
+    snap = await env.snap(task, tab)
+    kind, target = how
+    if kind == "click":
+        result = await env.call("click", {"task": task, "tab": tab, "ref": ref_of(snap, target)})
+    else:
+        result = await env.call("press_key", {"task": task, "tab": tab, "key": kind, "ref": ref_of(snap, target)})
+    assert result["status"] == "handed_off" and await out_text(env, task, tab) == ""
+    return task, tab, result["handoff"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("how", [("click", "Place order"), ("Enter", "Name"), ("Space", "Place order")])
+async def test_approving_once_places_the_held_checkout(env, sites, how):
+    task, tab, hid = await held_checkout(env, sites, how)
+    assert "waits for you" in env.service.handoffs.get(hid).summary
+    assert await env.service.approve_checkout(hid, EMAIL) == "example.com"
+    assert await out_text(env, task, tab) == "ORDER PLACED"
+    waited = await env.call("wait_handoff", {"task": task, "handoff": hid, "wait_seconds": 0})
+    assert waited["status"] == "approved" and "never submit it again" in waited["message"]
+    approved = [e for e in env.audit() if e["event"] == "checkout_approved"]
+    assert len(approved) == 1 and approved[0]["by"] == EMAIL and approved[0]["allowed_site"] is False
+    assert approved[0]["site"] == "example.com" and approved[0]["handoff"] == hid
+    submitted = [e for e in env.audit() if e["event"] == "checkout_submitted"]
+    assert len(submitted) == 1 and submitted[0]["by"] == "person"
+    # Once: the site stays not allowed, and the agent's next checkout is held again.
+    assert not env.service.sessions.may_checkout("example.com")
+    assert env.service.handoffs.get(hid).held is None
+    await env.call("navigate", {"task": task, "tab": tab, "url": sites.https("shop.example.com", "/checkout/review")})
+    snap = await env.snap(task, tab)
+    again = await env.call("click", {"task": task, "tab": tab, "ref": ref_of(snap, "Place order")})
+    assert again["status"] == "handed_off"
+    assert await out_text(env, task, tab) == ""
+
+
+@pytest.mark.anyio
+async def test_approving_and_allowing_the_site(env, sites):
+    task, tab, hid = await held_checkout(env, sites)
+    await env.service.approve_checkout(hid, EMAIL, allow_site=True)
+    assert await out_text(env, task, tab) == "ORDER PLACED"
+    assert env.service.sessions.may_checkout("example.com")
+    changed = [e for e in env.audit() if e["event"] == "setting_changed"]
+    assert changed and changed[0]["by"] == EMAIL and changed[0]["may_checkout"] is True
+    assert next(e for e in env.audit() if e["event"] == "checkout_approved")["allowed_site"] is True
+    # From then on, agents finish checkouts there.
+    await env.call("navigate", {"task": task, "tab": tab, "url": sites.https("shop.example.com", "/kasse")})
+    snap = await env.snap(task, tab)
+    result = await env.call("click", {"task": task, "tab": tab, "ref": ref_of(snap, "Zahlungspflichtig bestellen")})
+    assert "handoff" not in result and await out_text(env, task, tab) == "ORDER PLACED"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("change", ["left the page", "button gone", "taken over", "checkout since"])
+async def test_approving_presses_nothing_when_the_tab_changed(env, sites, change):
+    task, tab, hid = await held_checkout(env, sites)
+    page = env.page(task, tab)
+    if change == "left the page":
+        await env.call("navigate", {"task": task, "tab": tab, "url": sites.https("shop.example.com", "/cart")})
+        why = "no longer on the page the checkout was held on"
+    elif change == "button gone":
+        await page.evaluate("document.querySelector('form button').remove()")
+        why = "is no longer on the page"
+    elif change == "taken over":
+        assert await env.service.take_over(task, tab, EMAIL)
+        why = "You have control of this tab"
+    else:
+        env.service._tasks[task].tabs[tab].last_checkout = env.clock()
+        why = "the order may be placed already"
+    with pytest.raises(BrowserError, match=why):
+        await env.service.approve_checkout(hid, EMAIL, allow_site=True)
+    assert await page.locator("#out").count() == 0 or await page.locator("#out").text_content() == ""
+    h = env.service.handoffs.get(hid)
+    assert h.status == "pending" and h.held is not None
+    assert not env.service.sessions.may_checkout("example.com")  # nothing changed
+    assert not [e for e in env.audit() if e["event"] in ("checkout_approved", "checkout_submitted")]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("end", ["approved", "declined", "done", "expired", "task ended"])
+async def test_a_held_checkout_is_approved_at_most_once(env, sites, end):
+    task, tab, hid = await held_checkout(env, sites)
+    if end == "approved":
+        await env.service.approve_checkout(hid, EMAIL)
+        await env.call("navigate", {"task": task, "tab": tab, "url": sites.https("shop.example.com", "/checkout/review")})
+    elif end in ("declined", "done"):
+        env.service.handoffs.answer(hid, done=end == "done", by=EMAIL)
+    elif end == "expired":
+        env.clock.t += 25 * 3600
+        env.service.handoffs.expire()
+    else:
+        await env.call("end_task", {"task": task})
+    with pytest.raises(BrowserError, match="can no longer be approved"):
+        await env.service.approve_checkout(hid, EMAIL)
+    if end != "task ended":
+        assert await out_text(env, task, tab) == ""
+    assert len([e for e in env.audit() if e["event"] == "checkout_approved"]) == (end == "approved")
+
+
+@pytest.mark.anyio
+async def test_only_a_held_checkout_can_be_approved_and_never_from_a_notification(env, sites):
+    task = await env.task()
+    tab = await env.tab(task, sites.https("shop.example.com", "/checkout/review"))
+    h = await env.call("request_handoff", {"task": task, "tab": tab, "summary": "sign in please"})
+    with pytest.raises(BrowserError, match="can no longer be approved"):
+        await env.service.approve_checkout(h["handoff"], EMAIL)
+    _, _, hid = await held_checkout(env, sites)
+    await wait_for(lambda: any(p["url"] == f"/browser/h/{hid}" for p in env.sender.payloads()))
+    push = next(p for p in env.sender.payloads() if p["url"] == f"/browser/h/{hid}")
+    assert set(push) == {"title", "body", "url", "tag"}  # it opens the page; no action of its own

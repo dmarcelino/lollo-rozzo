@@ -190,17 +190,35 @@ def page_routes(
             connected=service.connected,
         )
 
-    async def handoff_page(request: Request, email: str) -> Response:
+    def show_handoff(hid: str, email: str, problem: str = "", status: int = 200) -> Response:
         try:
-            h = handoffs.get(request.path_params["hid"])
+            h = handoffs.get(hid)
         except HandoffError:
             return error(
-                "This hand-off is no longer here: it was answered, its task ended, or the browser restarted.",
+                problem or "This hand-off is no longer here: it was answered, its task ended, or the browser restarted.",
                 404,
                 email,
             )
         purpose = next((t["purpose"] for t in service.tasks() if t["task"] == h.task_id), "")
-        return render("handoff.html", email, h=h, purpose=purpose)
+        return render("handoff.html", email, status=status, h=h, purpose=purpose, problem=problem)
+
+    async def handoff_page(request: Request, email: str) -> Response:
+        return show_handoff(request.path_params["hid"], email)
+
+    async def handoff_approve(request: Request, email: str) -> Response:
+        """Place a held checkout: the browser performs the agent's held action,
+        and with allow=site the site may finish checkouts from then on. Only
+        here, behind the form token: a notification only opens this page."""
+        form = await request.form()
+        allow = form.get("allow", "")
+        if allow not in ("", "site"):
+            return error("invalid answer", 400, email)
+        hid = request.path_params["hid"]
+        try:
+            await service.approve_checkout(hid, email, allow_site=allow == "site")
+        except BrowserError as e:
+            return show_handoff(hid, email, problem=str(e), status=409)
+        return back("/")
 
     async def handoff_answer(request: Request, email: str) -> Response:
         form = await request.form()
@@ -440,6 +458,7 @@ def page_routes(
         Route(p + "/", page(index)),
         Route(p + "/h/{hid}", page(handoff_page)),
         Route(p + "/h/{hid}/answer", page(handoff_answer, post=True), methods=["POST"]),
+        Route(p + "/h/{hid}/approve", page(handoff_approve, post=True), methods=["POST"]),
         Route(p + "/tasks/end-all", page(end_all, post=True), methods=["POST"]),
         Route(p + "/tasks/{tid}/end", page(end_task, post=True), methods=["POST"]),
         Route(p + "/tasks/{tid}/tabs/{tab}/take", page(take, post=True), methods=["POST"]),

@@ -277,6 +277,59 @@ def test_answering_a_hand_off_on_the_page(page, sites):
     assert answered and answered[0]["by"] == EMAIL and answered[0]["status"] == "done"
 
 
+def held_checkout(page, sites) -> tuple[str, str, str]:
+    task, tab = page.task_with_tab(sites.https("shop.example.com", "/checkout/review"), "order the kettle")
+    snap = page.call("snapshot", {"task": task, "tab": tab})
+    result = page.call("click", {"task": task, "tab": tab, "ref": ref_of(snap, "Place order")})
+    assert result["status"] == "handed_off"
+    return task, tab, result["handoff"]
+
+
+def page_text(page, task: str, tab: str) -> str:
+    return page.call("snapshot", {"task": task, "tab": tab})["untrusted_page_data"]["snapshot"]
+
+
+@pytest.mark.parametrize("allow", ["", "site"])
+def test_placing_a_held_checkout_on_its_page(page, sites, allow):
+    task, tab, hid = held_checkout(page, sites)
+    detail = page.get(f"/browser/h/{hid}").text
+    assert "Place this order" in detail and "Place it and always allow example.com" in detail
+    assert "I placed it myself" in detail and 'value="declined"' in detail and "Open the live view" in detail
+    assert "ORDER PLACED" not in page_text(page, task, tab)
+    r = page.post(f"/browser/h/{hid}/approve", {"allow": allow})
+    assert r.status_code == 303, r.text
+    assert "ORDER PLACED" in page_text(page, task, tab)
+    assert page.call("wait_handoff", {"task": task, "handoff": hid})["status"] == "approved"
+    assert page.service.sessions.may_checkout("example.com") is (allow == "site")
+    approved = [e for e in page.audit() if e["event"] == "checkout_approved"]
+    assert approved and approved[0]["by"] == EMAIL
+    detail = page.get(f"/browser/h/{hid}").text
+    assert "Answered: approved" in detail and "Place this order" not in detail
+    assert page.post(f"/browser/h/{hid}/approve", {"allow": allow}).status_code == 409
+
+
+def test_a_held_checkout_whose_page_changed_is_not_placed(page, sites):
+    task, tab, hid = held_checkout(page, sites)
+    page.call("navigate", {"task": task, "tab": tab, "url": sites.https("shop.example.com", "/cart")})
+    r = page.post(f"/browser/h/{hid}/approve", {"allow": "site"})
+    assert r.status_code == 409 and "no longer on the page the checkout was held on" in r.text
+    assert "Place this order" in r.text  # still open: take over, or decline
+    assert not page.service.sessions.may_checkout("example.com")
+    assert page.call("wait_handoff", {"task": task, "handoff": hid, "wait_seconds": 0})["status"] == "pending"
+
+
+def test_approving_needs_the_form_token_and_a_checkout(page, sites):
+    task, tab, hid = held_checkout(page, sites)
+    headers = {**NAVIGATE, "cf-access-jwt-assertion": page.token, "origin": ORIGIN}
+    r = page.client.post(f"/browser/h/{hid}/approve", data={"allow": ""}, headers=headers, follow_redirects=False)
+    assert r.status_code == 403
+    assert page.post(f"/browser/h/{hid}/approve", {"allow": "everything"}).status_code == 400
+    assert "ORDER PLACED" not in page_text(page, task, tab)
+    h = page.call("request_handoff", {"task": task, "tab": tab, "summary": "please sign in"})
+    assert "Place this order" not in page.get(f"/browser/h/{h['handoff']}").text
+    assert page.post(f"/browser/h/{h['handoff']}/approve", {"allow": ""}).status_code == 409
+
+
 def test_take_over_refuses_agents_and_give_back_restores_them(page, sites):
     task, tab = page.task_with_tab(sites.https("shop.example.com"))
     snap = page.call("snapshot", {"task": task, "tab": tab})

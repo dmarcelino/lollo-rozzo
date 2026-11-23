@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Governs how an order is placed through the browser: handed to the person by default, finished by an agent only on sites the person allows, and always notified and audited, with the real spending limits named honestly as the vault, the bank and the card.
+Governs how an order is placed through the browser: held for the person's answer by default (take over, approve once, approve and allow the site, or decline), finished by an agent only on sites the person allows, and always notified and audited, with the real spending limits named honestly as the vault, the bank and the card.
 
 ## ADDED Requirements
 
@@ -21,16 +21,42 @@ An agent SHALL be able to request a hand-off of a tab with a summary. The browse
 - **WHEN** the person does not answer before the hand-off's limit
 - **THEN** the agent gets "no answer", and the tab stays open until the task ends
 
-### Requirement: Checkout submits become hand-offs by default
-On a site the person has not allowed to finish checkouts, when the browser recognises that an agent's click or key would submit a checkout, it SHALL not perform it and SHALL turn it into a hand-off instead.
+### Requirement: Checkout submits wait for the person by default
+On a site the person has not allowed to finish checkouts, when the browser recognises that an agent's click or key would submit a checkout, it SHALL not perform it and SHALL hold it in a checkout hand-off for the person to answer.
 
 #### Scenario: Agent clicks "Place order"
 - **WHEN** an agent clicks a "Place order" button on a site that is not allowed
-- **THEN** the click is not performed, a hand-off is created, and the tool result says the checkout was handed to the person
+- **THEN** the click is not performed, a checkout hand-off holding it is created, and the tool result says the checkout waits for the person
 
 #### Scenario: Agent presses a key instead of clicking
 - **WHEN** an agent presses Enter in a checkout form's field, or Enter or Space on the "Place order" button, by ref or on the focused element in any frame
-- **THEN** it becomes a hand-off, as a click would
+- **THEN** it is held in a checkout hand-off, as a click would be
+
+### Requirement: The person answers a held checkout
+A checkout hand-off's page SHALL offer to take over in the live view (and then mark it done), approve it once, approve it and allow the site to finish checkouts, or decline it. Approving SHALL be possible only on `/browser/`, never from a notification. The agent waiting on it SHALL get `approved`, `done` or `declined`.
+
+#### Scenario: Approve once
+- **WHEN** the person checks the order in the live view and presses "Place this order"
+- **THEN** the browser clicks the held "Place order" button, the agent gets `approved`, and the site stays not allowed: the agent's next checkout there is held again
+
+#### Scenario: Approve and allow the site
+- **WHEN** the person presses "Place it and always allow" the site
+- **THEN** the site's "may finish checkout" setting is turned on, the held action is performed, and later checkouts there go ahead, notified and audited
+
+#### Scenario: Approving from a notification
+- **WHEN** the person gets the push notification of a held checkout
+- **THEN** it opens the hand-off page and offers no approve action of its own
+
+### Requirement: Approving performs the held action where it was held
+Approving SHALL make the browser perform the held click or key on the element it was held on, once, and only when the tab is still on the page it was held on, the element is still in it, the person does not control the tab and no checkout was submitted on the tab since. Otherwise nothing SHALL be pressed and the hand-off SHALL stay open.
+
+#### Scenario: The page changed
+- **WHEN** the person approves after the tab left the page the checkout was held on, or the button is gone
+- **THEN** nothing is pressed, the hand-off stays open, and the page suggests taking over
+
+#### Scenario: Approved twice
+- **WHEN** a held checkout was already approved, declined or expired, or its task ended
+- **THEN** approving it again does nothing
 
 ### Requirement: The person allows agents to finish checkouts per site
 The person SHALL be able to allow, per site, that agents finish checkouts themselves, on `/browser/` only. Every site SHALL start not allowed. Agents SHALL have no tool to change it.
@@ -49,6 +75,10 @@ Whenever the browser recognises a checkout submitted, by an agent or by the pers
 #### Scenario: Agent finishes a checkout
 - **WHEN** an agent submits a checkout on an allowed site
 - **THEN** the person is notified at once and the audit log shows it
+
+#### Scenario: Person approves a held checkout
+- **WHEN** the person approves a held checkout
+- **THEN** the audit log shows the approval with who approved it and whether the site was allowed, and the checkout submitted
 
 #### Scenario: Click that fails
 - **WHEN** an agent's click on an allowed site's "Place order" button fails

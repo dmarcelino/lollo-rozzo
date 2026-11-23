@@ -162,7 +162,7 @@ person, never try to get around it.**
    Waiting keeps the task open; with no call for 15 minutes it would end, and the hand-off
    with it. A task still ends after 4 hours: if the call then fails because the task ended,
    tell the person the hand-off lapsed.
-3. **`done`**: take a new snapshot and continue. **`declined`**: stop that part and ask the
+3. **`done`** (or **`approved`**, for a held checkout): take a new snapshot and continue. **`declined`**: stop that part and ask the
    person in the chat how to go on. **`no answer`**: nobody answered in time; tell them, and end
    the task unless they reply. While they control a tab, your
    actions on it are refused ("the person has control of this tab"); reading it is not.
@@ -175,7 +175,10 @@ person, never try to get around it.**
   unless they already agreed to exactly that.
 - On a site the person has not allowed to finish checkouts, the browser **turns your "Place
   order" click, Enter or Space into a hand-off**: the result has `status: "handed_off"` and a hand-off
-  id. That is expected, not an error: wait for it as above, and never retry the click. On an
+  id. That is expected, not an error: wait for it as above, and never retry the click. The
+  person checks the order and answers: **`approved`** means the browser placed it for them,
+  exactly as you tried to (take a new snapshot to read the confirmation, and never submit it
+  again); **`done`** means they placed it themselves; **`declined`** means no order. On an
   allowed site the click goes ahead and the person is notified.
 - **Paying with a card from the vault**: request `number`, `exp_month`, `exp_year` and `code`
   with a purpose naming **the shop, the items and the total**, so that approving it is

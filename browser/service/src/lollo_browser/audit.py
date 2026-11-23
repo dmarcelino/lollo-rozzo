@@ -34,6 +34,7 @@ EVENTS = (
     "engine_disconnected",
     "checkout_submitted",
     "checkout_handed_off",
+    "checkout_approved",
     "taken_over",
     "given_back",
     "setting_changed",

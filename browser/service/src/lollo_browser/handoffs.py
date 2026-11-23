@@ -4,8 +4,11 @@ in, solve a challenge, finish a checkout) and waits for the answer.
 The person answers on /browser/ (done or declined); one nobody answers within
 HANDOFF_TTL_SECONDS ends as "no answer". The agent waits with wait_handoff,
 at most MAX_WAIT_SECONDS a call (below the MCP bridge's 120 s). Checkout
-recognition creates hand-offs too (kind "checkout"). Hand-offs live in memory,
-like tasks: a restart, or the end of their task, ends them."""
+recognition creates hand-offs too (kind "checkout"), holding the agent's
+action: the person may approve it, the service then performs it ("approved").
+The held action is dropped as soon as the hand-off ends, so it runs at most
+once. Hand-offs live in memory, like tasks: a restart, or the end of their
+task, ends them."""
 
 from __future__ import annotations
 
@@ -13,12 +16,13 @@ import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import anyio
 
 from .config import HANDOFF_TTL_SECONDS
 
-PENDING, DONE, DECLINED, NO_ANSWER = "pending", "done", "declined", "no answer"
+PENDING, DONE, DECLINED, NO_ANSWER, APPROVED = "pending", "done", "declined", "no answer", "approved"
 
 
 class HandoffError(LookupError):
@@ -40,6 +44,8 @@ class Handoff:
     note: str = ""
     answered_by: str = ""
     answered: float | None = None
+    # A checkout's held action (the service's HeldCheckout), until the hand-off ends.
+    held: Any = field(default=None, repr=False)
     _event: anyio.Event = field(default_factory=anyio.Event, repr=False)
 
 
@@ -84,6 +90,15 @@ class Handoffs:
         self._finish(h, DONE if done else DECLINED, note)
         return h
 
+    def approve(self, handoff_id: str, by: str) -> Handoff:
+        """The person approved a held checkout and the service performed it."""
+        h = self.get(handoff_id)
+        if h.status != PENDING:
+            raise HandoffError("this hand-off was already answered")
+        h.answered_by = by
+        self._finish(h, APPROVED, "the person approved it and the browser placed it")
+        return h
+
     def end_task(self, task_id: str) -> None:
         """A task ended: its open hand-offs are declined and then dropped."""
         for h in list(self._items.values()):
@@ -109,4 +124,5 @@ class Handoffs:
 
     def _finish(self, h: Handoff, status: str, note: str) -> None:
         h.status, h.note, h.answered = status, note, self._clock()
+        h.held = None
         h._event.set()
