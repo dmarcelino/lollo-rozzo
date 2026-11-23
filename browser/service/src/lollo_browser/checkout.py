@@ -26,10 +26,10 @@ THRESHOLD = 3
 # (lower case, no accents, single spaces), as whole words.
 _STRONG = [
     # English
-    r"place (?:my |your |the )?order",
-    r"complete (?:my |your |the )?(?:order|purchase|payment)",
+    r"place (?:my |your |the )?order(?: (?:and )?pay| now)?",  # "&" folds to a space
+    r"complete (?:my |your |the )?(?:order|purchase|payment|checkout)",
     r"confirm (?:and pay|(?:my |your |the )?(?:order|purchase|payment))",
-    r"submit (?:my |your |the )?order",
+    r"submit (?:my |your |the )?(?:order|payment)",
     r"buy (?:it )?now",
     r"pay now",
     r"pay(?: and order| securely)?",
@@ -38,7 +38,8 @@ _STRONG = [
     r"purchase(?: now)?",
     r"checkout now",
     # German
-    r"(?:jetzt )?zahlungspflichtig bestellen",
+    # The wording §312j BGB asks of the final button, and its usual variants.
+    r"(?:jetzt )?(?:zahlungspflichtig|kostenpflichtig) (?:bestellen|kaufen|buchen|abschliessen)",
     r"kaufen",
     r"jetzt kaufen",
     r"(?:jetzt )?bestellen(?: und bezahlen)?",

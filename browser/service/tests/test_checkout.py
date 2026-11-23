@@ -49,6 +49,29 @@ def test_checkout_buttons_in_six_languages(name, url):
     assert recognise(Features(names=[name], url=url)).is_checkout, name
 
 
+# Final-step wordings that place the order by themselves, so the button alone
+# scores 3: with only a weak word (1) and a checkout URL (1) they would be missed.
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Kostenpflichtig bestellen",
+        "Jetzt kostenpflichtig bestellen",
+        "Zahlungspflichtig kaufen",
+        "Submit payment",
+        "Submit your payment",
+        "Complete checkout",
+        "Complete the checkout",
+        "Place order and pay",
+        "Place order & pay",
+        "Place order now",
+    ],
+)
+def test_final_step_wordings_place_an_order(name):
+    for url in ("https://shop.example.de/x", "https://shop.example.de/checkout/confirm"):
+        verdict = recognise(Features(names=[name], url=url))
+        assert verdict.is_checkout and "the button places an order" in verdict.reasons, (name, url, verdict)
+
+
 @pytest.mark.parametrize(
     "fields,url,expected",
     [
@@ -79,6 +102,12 @@ def test_a_bare_comprar_needs_a_checkout_page_or_card_fields(fields, url, expect
         ("Border settings", [], "https://shop.example.com/border"),
         ("Adicionar ao carrinho", [], "https://loja.example.pt/produto/1"),
         ("Continuar", ["morada", "telefone"], "https://loja.example.pt/checkout/dados"),
+        ("Versand kostenpflichtig", [], "https://shop.example.de/checkout/versand"),
+        ("Kostenpflichtige Versandarten", [], "https://shop.example.de/checkout/versand"),
+        ("Submit payment details later", [], "https://shop.example.com/account"),
+        ("Complete checkout later", [], "https://shop.example.com/cart"),
+        ("Proceed to checkout", [], "https://shop.example.com/cart"),
+        ("Payment methods", [], "https://shop.example.com/account/payment"),
     ],
 )
 def test_not_checkouts(name, fields, url):
