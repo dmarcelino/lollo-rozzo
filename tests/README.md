@@ -35,7 +35,7 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 
 ### docker
 - **Rendered config.** `compose config --format json` returns `$T/compose-config.json`, which tests overwrite to simulate rendered configs. It fills `${KEY}` from the `--env-file`, and logs that file's `COMPOSE_PROFILES` as a `docker-env-file` line in `calls.log`. When set, it logs `DOC_TOOLS_NETWORK` and `DOC_TOOLS_VOLUME` as a `docker-env` line. Every `compose` call logs a `docker-env-images` line: `LOLLO_HOME`, `APP_SERVER_IMAGE`, `LETTA_IMAGE_NS` and, in release mode, `LOLLO_IMAGE_VAULT`.
-- **Services.** `compose config --services` lists `app-server`, `bff` and the services of each profile in the `--env-file`'s `COMPOSE_PROFILES`, like upstream: `lollo-gmail-triggers`, `lollo-news-radar` and `lollo-pipelock` for their profiles, `lollo-code-server`, `lollo-code-server-editor` and `lollo-code-server-exec` for `lollo-code-server`, `lollo-browser-engine` and `lollo-browser` for `lollo-browser`, and `landing` with any profile `compose/landing.yml` gives it.
+- **Services.** `compose config --services` lists `app-server`, `bff` and the services of each profile in the `--env-file`'s `COMPOSE_PROFILES`, like upstream: `lollo-gmail-triggers`, `lollo-news-radar` and `lollo-pipelock` for their profiles, `lollo-code-server`, `lollo-code-server-editor` and `lollo-code-server-exec` for `lollo-code-server`, `lollo-browser-engine` and `lollo-browser` for `lollo-browser`, `landing` with any profile `compose/landing.yml` gives it, and `lollo-notifications` with any profile `compose/notifications.yml` gives it.
 - **Containers.** `docker ps -a --filter label=com.docker.compose.project=...` answers from `$T/containers.txt` lines of `project service` (helper `containers NAME SERVICE...`). `compose ps --status running --services` counts every container of the project there as running, but one with a third word `paused` (helper `paused NAME SERVICE...`); `ps --status running --status paused --status restarting --services` counts them all.
 - **`exec`.** `letta agents list` inside `compose exec` answers from `$T/agents.json` (helper `agents NAME...`, ids `agent-1`, `agent-2`, ...) and swallows stdin like the real thing. Any other `exec`:
   - appends its stdin to `$T/exec-stdin.log`;
@@ -71,6 +71,7 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 - `calls` prints the Cloudflare calls (`METHOD PATH`), `body_of METHOD PATH` the last such call's body, `senv NAME KEY` a `stack.env` value.
 - `added` makes a fresh `alfred` stack. `add` runs once per run for each starting state (everything under `$T`, and `CTL_DATA`); later tests that start from the same state get a copy, with the first test's `$T` replaced by theirs. The copy has the same secrets, so a test of what `add` itself does or makes, or of secrets differing, runs `ctl add`.
 - `config_edit` applies a jq filter to the rendered config; `line_of TEXT` orders calls.
+- `jq` is no stub, so the stubs' logs never see its arguments: `log_jq_argv` puts a wrapper first on `ctl`'s `PATH` that logs them to `$T/jq-argv.log`, then runs the real `jq`, for tests that a secret never reaches its argv.
 - Toolbox tests run with `HOME=$T/u` (helper `tb`), so the real home is never read.
 
 ### Per feature
@@ -78,7 +79,8 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 
 | Feature | Helpers |
 |---|---|
-| vault | `vault_config`, `with_vault` |
+| vault | `vault_config` (also the notifications service), `with_vault` |
+| notifications | `notifications_config` (the `lollo-notifications` service as Compose renders it; `vault_config` and `browser_config` call it), `notifications_refused` (with the vault on), `NS` (the jq path of the service), `with_profiles LIST` (alfred and `config.env` on LIST), `NOTIFS` (its expected tunnel rule) |
 | pipelock | `pipelock_config`, `with_pipelock` (also set the app-server's proxy variables) |
 | Gmail triggers | `triggers_config`, `with_triggers` (also place a placeholder `landing/executor/run.mjs` in the test's copy), `triggers_refused`; `state_elsewhere` (a `LETTA_STATE_DIR` outside `stacks/`), `installed_up` (a running stack with the executor installed), `partial_stream` (an installer tar missing a file) |
 | news-radar | `news_radar_config`, `with_news_radar`, `news_radar_refused`, `MS` (the jq path of the service) |

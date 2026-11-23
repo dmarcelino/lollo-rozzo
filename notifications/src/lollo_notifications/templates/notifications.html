@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Notifications</h1>
+<p>Turn notifications on once on each device, and you get every lollo notification on it: requests from the vault, and hand-offs and checkouts from the browser. Tapping one opens its page; you answer there, never from the notification.</p>
+<p class="muted">On iPhone and iPad (iOS 16.4 or later), first add Lollo to the Home Screen (Share, Add to Home Screen) and open it from there.</p>
+<section class="panel" id="push">
+  <p id="push-status" class="muted" role="status">Checking this device...</p>
+  <div class="form-actions">
+    <button class="button" id="push-enable" hidden>Enable on this device</button>
+    <button class="button ghost" id="push-disable" hidden>Disable on this device</button>
+    <button class="button ghost" id="push-test" hidden>Send a test</button>
+  </div>
+</section>
+<h2>Your devices</h2>
+{% if devices %}
+<ul class="devices" id="devices">
+  {% for d in devices %}
+  <li class="device" data-device="{{ d.id }}">
+    <span>Added {{ d.added }}</span>
+    <span class="muted small">via {{ d.host }}</span>
+    <span class="pill ok" hidden>This device</span>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty" id="devices">No device has notifications on yet.</p>
+{% endif %}
+<p class="muted small">A device you did not turn off but is missing here gets no notifications: enable it again on that device.</p>
+{% endblock %}

@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from secrets import token_urlsafe
-from typing import Any
+from secrets import token_hex, token_urlsafe
+from typing import Any, Protocol
 
 import anyio
 
@@ -29,13 +30,15 @@ from .config import (
     MAX_PENDING,
     MAX_PURPOSE_LENGTH,
     MAX_WAIT_SECONDS,
+    NOTICE_RETRY_FIRST_SECONDS,
+    NOTICE_RETRY_FOR_SECONDS,
+    NOTICE_RETRY_MAX_SECONDS,
     PREFIX,
     REQUEST_TTL_SECONDS,
     RESULT_TTL_SECONDS,
 )
 from .kinds import may_share_without_asking, preview
 from .logs import SECRET_FILTER
-from .push import Pusher
 from .vault import AUTO, Locked, Secret, Vault, VaultError
 
 log = logging.getLogger("lollo_vault")
@@ -53,8 +56,30 @@ MCP_SH = "sh /root/.letta/skills/mcp-servers/scripts/mcp.sh"
 # addresses) can go into one command: VAULT_HOME_CITY, VAULT_WORK_CITY.
 ALIAS = re.compile(r"[A-Za-z][A-Za-z0-9]{0,19}")
 
-# Pushes asking to unlock are sent at most this often.
+# Notices asking to unlock are sent at most this often.
 UNLOCK_NOTICE_SECONDS = 300
+
+
+class Notifier(Protocol):
+    """lollo_common.notify.Notifier: hands a notice to lollo-notifications, which
+    pushes it to every device the person enabled. Both return True once the
+    service took it (202), and never raise."""
+
+    async def send(self, payload: dict[str, str]) -> bool: ...
+
+    async def accept(self, payload: dict[str, str]) -> bool: ...
+
+
+class EraseLimit(Protocol):
+    """The cap on erase requests per person (app.RateLimiter)."""
+
+    def full(self, key: str) -> bool: ...
+
+    def count(self, key: str) -> None: ...
+
+
+class TooManyErases(Exception):
+    """The person has set off as many erase notices as the cap allows."""
 
 
 def wait_command(rid: str) -> str:
@@ -160,10 +185,18 @@ def env_name(key: str, alias: str = "") -> str:
 
 
 class Service:
-    def __init__(self, vault: Vault, pusher: Pusher, public_origin: str):
+    def __init__(
+        self,
+        vault: Vault,
+        notifier: Notifier,
+        public_origin: str,
+        sleep: Callable[[float], Awaitable[None]] = anyio.sleep,
+    ):
         self.vault = vault
-        self.pusher = pusher
+        self.notifier = notifier
         self._origin = public_origin
+        # The wait between a notice's tries (tests advance their clock instead).
+        self._sleep = sleep
         self._requests: dict[str, Request] = {}
         self._handles: dict[str, Handle] = {}
         # Handles that can no longer be redeemed, by id only (never their values),
@@ -173,20 +206,48 @@ class Service:
         self._last_unlock_notice = -UNLOCK_NOTICE_SECONDS
         # An erase that came due while the server was down still waits this long.
         self._erase_not_before = vault.now() + ERASE_GRACE_SECONDS
+        # True while the notice of such an erase waits for the notifications
+        # service: until it takes it, the erase cannot run (announce_overdue_erase).
+        self._erase_held = False
+        # One erase request at a time, from its check to its schedule, so two at
+        # once send one notice. Unlocking never takes it: the schedule re-checks.
+        self._erase_lock = anyio.Lock()
 
     def bind_task_group(self, tg: anyio.abc.TaskGroup | None) -> None:
         self._tasks = tg
 
-    def _spawn_push(self, payload: dict[str, str]) -> None:
+    def _spawn(self, fn: Callable[..., Awaitable[Any]], *args: Any) -> None:
         if self._tasks is None:
             raise RuntimeError("service task group is not running")
-        self._tasks.start_soon(self._push, payload)
+        self._tasks.start_soon(fn, *args)
+
+    def _spawn_push(self, payload: dict[str, str]) -> None:
+        """Once, in the background: a request or a locked vault does not wait for it."""
+        self._spawn(self._push, payload)
 
     async def _push(self, payload: dict[str, str]) -> None:
         try:
-            await self.pusher.send(payload)
+            await self.notifier.send(payload)
         except Exception as e:
-            log.warning("push failed error=%s", type(e).__name__)
+            log.warning("notification failed tag=%s error=%s", payload.get("tag"), type(e).__name__)
+
+    async def _retry(self, payload: dict[str, str], until: Callable[[], bool], deadline: int | None) -> bool:
+        """Hands `payload` over until the service takes it (True), `until()` says it
+        no longer matters, or the vault's clock passes `deadline` (False). The
+        wait between tries grows from 5 s to a minute."""
+        wait = NOTICE_RETRY_FIRST_SECONDS
+        while not until():
+            try:
+                if await self.notifier.accept(payload):
+                    return True
+            except Exception as e:
+                log.warning("notification failed tag=%s error=%s", payload.get("tag"), type(e).__name__)
+            if deadline is not None and self.vault.now() + wait > deadline:
+                log.warning("notification dropped after retries tag=%s", payload.get("tag"))
+                return False
+            await self._sleep(wait)
+            wait = min(wait * 2, NOTICE_RETRY_MAX_SECONDS)
+        return False
 
     def url(self, path: str) -> str:
         return f"{self._origin}{PREFIX}/{path}"
@@ -197,7 +258,7 @@ class Service:
             self._last_unlock_notice = now
             self._spawn_push(
                 {
-                    "title": "Vault locked",
+                    "title": "Locked",
                     "body": "An agent wants to use your vault. Unlock it to continue.",
                     "url": f"{PREFIX}/",
                     "tag": "vault-locked",
@@ -212,37 +273,91 @@ class Service:
     # ── erase without the passphrase ─────────────────────────────────────────
     # Every step is announced on every device, so whoever has the passphrase
     # hears of an erase they did not ask for while there is time to stop it.
-    def _erase_notice(self, tag: str, title: str, body: str) -> None:
+    # The erase's clock runs only once lollo-notifications has taken the notice
+    # that starts it: "scheduled", or "erase in 1 hour" after a restart. The
+    # "cancelled" and "done" notices are retried, and never hold anything up.
+    @staticmethod
+    def _erase_notice(tag: str, title: str, body: str) -> dict[str, str]:
         # A tag per kind of notice: the same tag would silently replace one still on screen.
-        self._spawn_push({"title": title, "body": body, "url": f"{PREFIX}/", "tag": f"vault-erase-{tag}"})
+        return {"title": title, "body": body, "url": f"{PREFIX}/", "tag": f"vault-erase-{tag}"}
+
+    def _spawn_later_notice(self, notice: dict[str, str]) -> None:
+        deadline = self.vault.now() + NOTICE_RETRY_FOR_SECONDS
+        self._spawn(self._retry, notice, lambda: False, deadline)
+
+    def _erase_due_from(self) -> int:
+        # While its notice waits for the service, the grace is always still ahead.
+        return self.vault.now() + ERASE_GRACE_SECONDS if self._erase_held else self._erase_not_before
 
     def pending_erase(self) -> tuple[int, str] | None:
         """(when it will really run, who asked), counting the wait after a restart."""
         pending = self.vault.pending_erase()
-        return None if pending is None else (max(pending[0], self._erase_not_before), pending[1])
+        return None if pending is None else (max(pending[0], self._erase_due_from()), pending[1])
 
     def announce_overdue_erase(self) -> None:
-        """At startup: an erase due within the grace period gets a last notice."""
+        """At startup: an erase due within the grace period gets a last notice, tried
+        until the service takes it. Until then the erase cannot run, and the grace
+        counts from that moment."""
         pending = self.vault.pending_erase()
-        if pending is not None and pending[0] < self._erase_not_before:
-            self._erase_notice(
-                "restart",
-                f"Vault erase in {ERASE_GRACE}",
-                f"The server restarted around the time your vault's erase was due. It is erased in {ERASE_GRACE} "
-                "unless someone unlocks the vault or cancels the erase.",
-            )
+        if pending is None or pending[0] >= self._erase_not_before:
+            return
+        self._erase_held = True
+        self._spawn(self._announce_overdue, pending)
 
-    def schedule_erase(self, email: str) -> int:
-        at, new = self.vault.schedule_erase(email)
-        if new:
-            self.vault.audit(email, "scheduled an erase")
-            self._erase_notice(
+    async def _announce_overdue(self, pending: tuple[int, str]) -> None:
+        notice = self._erase_notice(
+            "restart",
+            f"Erase in {ERASE_GRACE}",
+            f"The server restarted around the time your vault's erase was due. It is erased in {ERASE_GRACE} "
+            "unless someone unlocks the vault or cancels the erase.",
+        )
+        try:
+            # Cancelled or unlocked meanwhile: the "cancelled" notice tells the rest.
+            if await self._retry(notice, lambda: self.vault.pending_erase() != pending, None):
+                self._erase_not_before = self.vault.now() + ERASE_GRACE_SECONDS
+                log.info("overdue erase announced, grace starts now")
+        finally:
+            self._erase_held = False
+
+    async def schedule_erase(self, email: str, limit: EraseLimit | None = None) -> int | None:
+        """When the erase runs, or None when the notifications service did not take
+        the notice: then nothing is scheduled. `limit` caps how often one person
+        sets off a "scheduled" notice: TooManyErases when they have used it up,
+        and only an erase this call scheduled counts."""
+        async with self._erase_lock:
+            self.vault.check_erasable()
+            pending = self.vault.pending_erase()
+            if pending is not None:
+                return pending[0]  # already scheduled and announced: no second notice
+            if limit is not None and limit.full(email):
+                raise TooManyErases
+            notice = self._erase_notice(
                 "scheduled",
-                "Vault erase scheduled",
+                "Erase scheduled",
                 f"{email} asked to erase your vault. Everything in it is deleted in {ERASE_DELAY} "
                 "unless someone unlocks the vault or cancels the erase.",
             )
-        return at
+            if not await self.notifier.accept(notice):
+                log.warning("erase not scheduled: the notifications service did not take its notice")
+                return None
+            try:
+                # Re-checks: the vault may have been unlocked while the notice waited.
+                at, new = self.vault.schedule_erase(email)
+            except VaultError:
+                log.info("erase not scheduled: the vault changed while its notice waited")
+                self._spawn_later_notice(
+                    self._erase_notice(
+                        "cancelled",
+                        "Erase cancelled",
+                        "The vault was unlocked before the erase was scheduled. Nothing will be deleted.",
+                    )
+                )
+                raise
+            if new:
+                self.vault.audit(email, "scheduled an erase")
+                if limit is not None:
+                    limit.count(email)
+            return at
 
     def cancel_erase(self, email: str) -> bool:
         if not self.vault.cancel_erase():
@@ -254,20 +369,23 @@ class Service:
         """After `cancel_erase`, or an unlock that cancelled one."""
         self.vault.audit(email, "cancelled the scheduled erase" + (" by unlocking" if by_unlock else ""))
         how = "unlocked the vault, which cancels" if by_unlock else "cancelled"
-        self._erase_notice("cancelled", "Vault erase cancelled", f"{email} {how} the erase. Nothing was deleted.")
+        self._spawn_later_notice(
+            self._erase_notice("cancelled", "Erase cancelled", f"{email} {how} the erase. Nothing was deleted.")
+        )
 
     def erase_if_due(self) -> bool:
         """Run from housekeeping, which must go on (expiry, auto-lock) if this fails;
         a failed erase stays scheduled and is tried again on the next pass."""
         try:
-            by = self.vault.erase_if_due(not_before=self._erase_not_before)
+            by = self.vault.erase_if_due(not_before=self._erase_due_from())
         except Exception as e:
             log.warning("scheduled erase failed error=%s", type(e).__name__)
             return False
         if by is None:
             return False
         self.vault.audit(by, f"erased the vault (scheduled {ERASE_DELAY} earlier)")
-        self._erase_notice("done", "Vault erased", "Your vault was erased as scheduled. Open it to create a new one.")
+        done = "Your vault was erased as scheduled. Open it to create a new one."
+        self._spawn_later_notice(self._erase_notice("done", "Erased", done))
         return True
 
     # ── housekeeping ─────────────────────────────────────────────────────────
@@ -514,7 +632,8 @@ class Service:
             return {"status": "refused", "error": "too many requests are waiting; ask the user to answer them first"}
         now = self.vault.now()
         req = Request(
-            id=token_urlsafe(16),
+            # Hex: the id is also the notice's tag, which takes only a-z, 0-9 and -.
+            id=token_hex(16),
             secret_id=secret.id,
             secret_name=secret.name,
             secret_kind=secret.kind_label,

@@ -33,9 +33,9 @@ services:
       CF_ACCESS_ISSUER: ${CF_ACCESS_ISSUER:-}
       ALLOWED_USERS: ${ALLOWED_USERS:-}
       PUBLIC_ORIGIN: ${LOLLO_ORIGIN:-}
-      VAULT_VAPID_PUBLIC_KEY: ${VAULT_VAPID_PUBLIC_KEY:-}
-      VAULT_VAPID_PRIVATE_KEY: ${VAULT_VAPID_PRIVATE_KEY:-}
-      PUSH_VAPID_CONTACT_EMAIL: ${PUSH_VAPID_CONTACT_EMAIL:-}
+      # Its own token for the notifications service's send API, which only it
+      # and that service get (compose/notifications.yml).
+      NOTIFY_TOKEN: ${NOTIFY_TOKEN_VAULT:-}
       TZ: ${TZ:-UTC}
     volumes:
       - vault-data:/data

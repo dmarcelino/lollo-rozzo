@@ -5,6 +5,8 @@ from collections import Counter
 
 import anyio
 import pytest
+from lollo_common import notify
+from lollo_common.notify import Notifier
 
 from lollo_vault.config import (
     ERASE_GRACE_SECONDS,
@@ -12,20 +14,25 @@ from lollo_vault.config import (
     MAX_HANDLES,
     MAX_PENDING,
     MAX_WAIT_SECONDS,
+    NOTICE_RETRY_FOR_SECONDS,
+    NOTICE_RETRY_MAX_SECONDS,
     REQUEST_TTL_SECONDS,
 )
+from lollo_vault.service import Service
 from lollo_vault.vault import Vault, VaultError
 
 from .conftest import (
     CARD,
     EMAIL,
     FAST_KDF,
+    NOTIFY_TOKEN,
     ORIGIN,
     PASSPHRASE,
     PHONE,
     SECRET,
     STREET,
-    FakeSender,
+    FakeTransport,
+    Sleeper,
     add_address,
     add_card,
     make_service,
@@ -59,9 +66,8 @@ async def test_list_secrets_shows_public_details_never_private_values(settings, 
 async def test_locked_vault_refuses_and_asks_to_unlock(settings, vault):
     add_address(vault)
     vault.lock()
-    sender = FakeSender()
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
-    service = make_service(settings, vault, sender)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
 
     async def flow():
         return service.list_secrets(), await service.request_secret("x", "delivery")
@@ -70,16 +76,22 @@ async def test_locked_vault_refuses_and_asks_to_unlock(settings, vault):
     assert a["locked"] and b["locked"]
     # Push may be off, so the agent is told to post the link rather than that the user knows.
     assert service.url("") in b["message"] and "notified" not in b["message"]
-    # One unlock notice, not one per call.
-    assert len(sender.calls) == 1 and "locked" in json.loads(sender.calls[0]["data"])["title"].lower()
+    # One unlock notice, not one per call, opening the vault.
+    assert transport.taken == [
+        {
+            "title": "Locked",
+            "body": "An agent wants to use your vault. Unlock it to continue.",
+            "url": "/vault/",
+            "tag": "vault-locked",
+        }
+    ]
 
 
 async def test_approval_flow_shares_only_ticked_fields_once(settings, vault, caplog):
     caplog.set_level(logging.DEBUG)
     card = add_card(vault)
-    sender = FakeSender()
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
-    service = make_service(settings, vault, sender)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
 
     async def flow():
         # no fields: all private ones
@@ -98,8 +110,18 @@ async def test_approval_flow_shares_only_ticked_fields_once(settings, vault, cap
     assert first["status"] == "done" and first["values"] == {"number": CARD, "code": "123"}
     assert first["withheld"] == ["Expiration month", "Expiration year", "Notes"]
     assert "values" not in second
-    sent = json.dumps([c["data"] for c in sender.calls])
+    sent = transport.sent()
     assert "Visa" in sent and CARD not in sent and "4242" not in sent
+    rid = first["id"]
+    # The notice opens the request's own page.
+    assert transport.taken == [
+        {
+            "title": "Approve sharing",
+            "body": "Visa: Number, Expiration month, Expiration year, Security code, Notes",
+            "url": f"/vault/r/{rid}",
+            "tag": f"vault-request-{rid}",
+        }
+    ]
     assert CARD not in caplog.text and SECRET not in caplog.text
     shared = next(e for e in vault.audit_log() if e.action == "shared on approval")
     assert shared.detail.endswith(f"Reason to read them: {AS_TEXT['reason']}")
@@ -108,7 +130,7 @@ async def test_approval_flow_shares_only_ticked_fields_once(settings, vault, cap
 async def test_a_pending_answer_tells_the_agent_to_keep_waiting(settings, vault):
     # Nothing wakes an agent whose turn ended with nothing running: the user's
     # approval lands, and the agent never collects it.
-    service = make_service(settings, vault, FakeSender())
+    service = make_service(settings, vault, FakeTransport())
 
     async def flow():
         sub = await service.request_secret(add_card(vault), "Pay for the train")
@@ -252,9 +274,8 @@ async def test_shared_values_come_with_the_rules_for_using_them(settings, vault)
 
 async def test_address_fields_shared_without_asking(settings, vault):
     secret = add_address(vault, share_mode="auto")
-    sender = FakeSender()
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
-    service = make_service(settings, vault, sender)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
     listed = service.list_secrets()["secrets"][0]["private_fields"]
     assert {f["key"]: f["needs_approval"] for f in listed} == {
         "phone": True,
@@ -267,7 +288,16 @@ async def test_address_fields_shared_without_asking(settings, vault):
     assert res["status"] == "done" and res["secret"] == "Home address"
     assert res["values"] == {"address1": STREET, "city": "Lisboa"}
     assert vault.audit_log()[0].action == "shared without asking"
-    assert STREET not in json.dumps([c["data"] for c in sender.calls])
+    assert STREET not in transport.sent() and "Lisboa" not in transport.sent()
+    # Told after the fact, with a link to the history.
+    assert transport.taken == [
+        {
+            "title": "Shared with an agent",
+            "body": "Home address: Address 1, City / Town",
+            "url": "/vault/audit",
+            "tag": f"vault-shared-{secret}",
+        }
+    ]
 
 
 async def test_a_field_that_always_asks_sends_the_whole_request_for_approval(settings, vault):
@@ -590,9 +620,9 @@ async def test_unused_handles_are_capped(settings, vault):
     assert text["status"] == "done"
 
 
-def pushed(sender: FakeSender, key: str = "title") -> Counter[str]:
-    """Each push runs in its own worker thread, so notices arrive in any order."""
-    return Counter(json.loads(c["data"])[key] for c in sender.calls)
+def taken(transport: FakeTransport, key: str = "title") -> Counter[str]:
+    """What the notifications service took; each notice is sent from its own task."""
+    return Counter(p[key] for p in transport.taken)
 
 
 def audit_actions(vault) -> list[tuple[str, str]]:
@@ -600,17 +630,24 @@ def audit_actions(vault) -> list[tuple[str, str]]:
     return [(r["actor"], r["action"]) for r in vault._q("SELECT actor, action FROM audit ORDER BY rowid")]
 
 
-async def test_scheduled_erase_tells_every_device_and_runs_when_due(settings, vault, clock):
+async def settle(service) -> None:
+    """Lets the overdue erase's notice loop run until the service takes it."""
+    for _ in range(10_000):
+        if not service._erase_held:
+            return
+        await anyio.sleep(0)
+    raise AssertionError("the overdue notice is still waiting")
+
+
+async def test_scheduled_erase_is_announced_and_runs_when_due(settings, vault, clock):
     add_card(vault)
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
-    vault.add_subscription("https://push.example/2", "k", "a", EMAIL)
     vault.lock()
-    sender = FakeSender()
-    service = make_service(settings, vault, sender)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
 
     async def flow():
-        at = service.schedule_erase(EMAIL)
-        service.schedule_erase(EMAIL)  # already scheduled: no second notice
+        at = await service.schedule_erase(EMAIL)
+        assert await service.schedule_erase(EMAIL) == at  # already scheduled: no second notice
         assert service.erase_if_due() is False
         scheduled = audit_actions(vault)
         clock.t = at
@@ -619,31 +656,135 @@ async def test_scheduled_erase_tells_every_device_and_runs_when_due(settings, va
 
     actions = await with_service(service, flow)
     assert actions[-1] == (EMAIL, "scheduled an erase")
-    assert pushed(sender) == {"Vault erase scheduled": 2, "Vault erased": 2}  # one per device
+    # The vault hands each notice over once; the service tells every device.
+    assert taken(transport) == {"Erase scheduled": 1, "Erased": 1}
+    assert {p["url"] for p in transport.taken} == {"/vault/"}
     assert audit_actions(vault) == [(EMAIL, "erased the vault (scheduled 24 hours earlier)")]
     assert not vault.is_setup()
-    sent = json.dumps([c["data"] for c in sender.calls])
     for needle in (CARD, SECRET, "Visa"):
-        assert needle not in sent
+        assert needle not in transport.sent()
+
+
+async def test_an_erase_is_scheduled_only_once_its_notice_is_taken(settings, vault):
+    vault.lock()
+    transport = FakeTransport(up=False)  # lollo-notifications is not running
+    service = make_service(settings, vault, transport)
+    before = audit_actions(vault)
+
+    assert await with_service(service, lambda: service.schedule_erase(EMAIL)) is None
+    assert len(transport.tried) == 1 and transport.taken == []
+    assert vault.pending_erase() is None and service.pending_erase() is None
+    assert audit_actions(vault) == before  # no schedule recorded
+
+    # The service is back: acceptance is enough, whether or not a device is enrolled.
+    transport.up = True
+    at = await with_service(service, lambda: service.schedule_erase(EMAIL))
+    assert at is not None and vault.pending_erase() == (at, EMAIL)
+    assert audit_actions(vault)[-1] == (EMAIL, "scheduled an erase")
+    assert taken(transport, "tag") == {"vault-erase-scheduled": 1}
+
+
+async def test_an_erase_whose_notice_is_not_taken_in_time_is_not_scheduled(settings, vault, monkeypatch):
+    vault.lock()
+    monkeypatch.setattr(notify, "ACCEPT_TIMEOUT", 0.05)
+
+    async def hangs(url, body, headers, timeout):
+        await anyio.sleep(3600)
+
+    service = Service(vault, Notifier("vault", NOTIFY_TOKEN, transport=hangs), ORIGIN)
+    assert await with_service(service, lambda: service.schedule_erase(EMAIL)) is None
+    assert vault.pending_erase() is None
+
+
+async def test_an_erase_is_refused_before_any_notice_when_it_cannot_be_scheduled(settings, vault):
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)  # the vault is unlocked
+    with pytest.raises(VaultError, match="unlocked"):
+        await service.schedule_erase(EMAIL)
+    assert transport.tried == []
+
+
+async def test_an_erase_unlocked_while_its_notice_waits_is_not_scheduled(settings, vault):
+    vault.lock()
+
+    def unlock_meanwhile() -> bool:
+        # Someone unlocks while the "scheduled" notice is on its way; unlocking
+        # does not wait for the erase request.
+        if not vault.is_unlocked():
+            assert vault.unlock(PASSPHRASE) is False  # nothing stored yet to cancel
+        return True
+
+    transport = FakeTransport(up=unlock_meanwhile)
+    service = make_service(settings, vault, transport)
+    before = audit_actions(vault)
+
+    async def flow():
+        # The person gets the error they get today for an unlocked vault.
+        with pytest.raises(VaultError, match="unlocked"):
+            await service.schedule_erase(EMAIL)
+
+    await with_service(service, flow)
+    assert vault.pending_erase() is None and vault.is_unlocked()
+    assert audit_actions(vault) == before  # no schedule recorded
+    # Devices told of the erase hear that it will not happen.
+    assert taken(transport, "tag") == {"vault-erase-scheduled": 1, "vault-erase-cancelled": 1}
+    cancelled = next(p for p in transport.taken if p["tag"] == "vault-erase-cancelled")
+    assert cancelled["title"] == "Erase cancelled"
+    assert cancelled["body"] == "The vault was unlocked before the erase was scheduled. Nothing will be deleted."
+
+
+async def test_two_erase_requests_at_once_send_one_notice(settings, vault):
+    vault.lock()
+
+    class Held(FakeTransport):
+        """Holds each notice until `gate` is set, so both requests are in flight."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = anyio.Event()
+
+        async def __call__(self, url, body, headers, timeout):
+            await self.gate.wait()
+            return await super().__call__(url, body, headers, timeout)
+
+    transport = Held()
+    service = make_service(settings, vault, transport)
+    answers: list[int | None] = []
+
+    async def ask() -> None:
+        answers.append(await service.schedule_erase(EMAIL))
+
+    async def flow():
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(ask)
+            tg.start_soon(ask)
+            for _ in range(20):
+                await anyio.sleep(0)
+            transport.gate.set()
+
+    await with_service(service, flow)
+    at = vault.pending_erase()[0]
+    assert answers == [at, at]
+    assert len(transport.tried) == 1 and taken(transport, "tag") == {"vault-erase-scheduled": 1}
+    assert [a for _, a in audit_actions(vault)].count("scheduled an erase") == 1
 
 
 async def test_cancelled_erase_is_announced(settings, vault):
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
     vault.lock()
-    sender = FakeSender()
-    service = make_service(settings, vault, sender)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
 
     async def flow():
-        service.schedule_erase(EMAIL)
+        await service.schedule_erase(EMAIL)
         assert service.cancel_erase(EMAIL) is True
         assert service.cancel_erase(EMAIL) is False  # nothing left to cancel: no notice
-        service.schedule_erase(EMAIL)
+        await service.schedule_erase(EMAIL)
         assert vault.unlock(PASSPHRASE) is True
         service.erase_cancelled(EMAIL, by_unlock=True)
 
     await with_service(service, flow)
-    assert pushed(sender) == {"Vault erase scheduled": 2, "Vault erase cancelled": 2}
-    cancelled = sorted(b for b in pushed(sender, "body") if "erase" in b and "Nothing was deleted" in b)
+    assert taken(transport) == {"Erase scheduled": 2, "Erase cancelled": 2}
+    cancelled = sorted(b for b in taken(transport, "body") if "erase" in b and "Nothing was deleted" in b)
     assert len(cancelled) == 2 and "unlocked the vault" in cancelled[1] and "unlocked" not in cancelled[0]
     assert [a for _, a in audit_actions(vault)][-4:] == [
         "scheduled an erase",
@@ -655,32 +796,30 @@ async def test_cancelled_erase_is_announced(settings, vault):
 
 async def test_each_erase_notice_has_its_own_tag(settings, vault, clock):
     # One tag would let a later notice silently replace one still on screen.
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
     vault.lock()
-    sender = FakeSender()
-    service = make_service(settings, vault, sender)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
 
     async def flow():
-        service.schedule_erase(EMAIL)
+        await service.schedule_erase(EMAIL)
         service.cancel_erase(EMAIL)
-        clock.t = service.schedule_erase(EMAIL)
+        clock.t = await service.schedule_erase(EMAIL)
         service.erase_if_due()
 
     await with_service(service, flow)
-    assert pushed(sender, "tag") == {"vault-erase-scheduled": 2, "vault-erase-cancelled": 1, "vault-erase-done": 1}
+    assert taken(transport, "tag") == {"vault-erase-scheduled": 2, "vault-erase-cancelled": 1, "vault-erase-done": 1}
 
 
 async def test_a_failed_erase_is_logged_and_retried(settings, vault, clock, monkeypatch, caplog):
     vault.lock()
-    sender = FakeSender()
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
-    service = make_service(settings, vault, sender)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
 
     def broken():
         raise sqlite3.OperationalError("database or disk is full")
 
     async def flow():
-        clock.t = service.schedule_erase(EMAIL)
+        clock.t = await service.schedule_erase(EMAIL)
         monkeypatch.setattr(vault, "reset", broken)
         assert service.erase_if_due() is False  # housekeeping goes on
         monkeypatch.undo()
@@ -688,20 +827,25 @@ async def test_a_failed_erase_is_logged_and_retried(settings, vault, clock, monk
 
     assert await with_service(service, flow) is True
     assert "erase failed" in caplog.text and "OperationalError" in caplog.text
-    assert pushed(sender) == {"Vault erase scheduled": 1, "Vault erased": 1}
+    assert taken(transport) == {"Erase scheduled": 1, "Erased": 1}
+
+
+def overdue(vault, vault_path, clock) -> tuple[Vault, int]:
+    """A vault restarted four hours after its erase came due."""
+    vault.lock()
+    at, _ = vault.schedule_erase(EMAIL)
+    clock.t = at + 4 * 3600
+    return Vault(vault_path, clock=clock, kdf=FAST_KDF), int(clock.t)
 
 
 async def test_an_erase_due_during_downtime_waits_an_hour_and_says_so(settings, vault, vault_path, clock):
-    vault.lock()
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
-    at, _ = vault.schedule_erase(EMAIL)
-    clock.t = at + 4 * 3600  # the server was down when it came due
-    sender = FakeSender()
-    service = make_service(settings, Vault(vault_path, clock=clock, kdf=FAST_KDF), sender)
-    restarted = int(clock.t)
+    restarted_vault, restarted = overdue(vault, vault_path, clock)
+    transport = FakeTransport()
+    service = make_service(settings, restarted_vault, transport, Sleeper(clock))
 
     async def flow():
         service.announce_overdue_erase()
+        await settle(service)
         assert service.pending_erase() == (restarted + ERASE_GRACE_SECONDS, EMAIL)
         assert service.erase_if_due() is False
         clock.t = restarted + ERASE_GRACE_SECONDS - 1
@@ -710,18 +854,136 @@ async def test_an_erase_due_during_downtime_waits_an_hour_and_says_so(settings, 
         return service.erase_if_due()
 
     assert await with_service(service, flow) is True
-    assert pushed(sender) == {"Vault erase in 1 hour": 1, "Vault erased": 1}
+    assert taken(transport) == {"Erase in 1 hour": 1, "Erased": 1}
+    assert taken(transport, "tag") == {"vault-erase-restart": 1, "vault-erase-done": 1}
+
+
+async def test_the_grace_after_a_restart_counts_from_its_notice(settings, vault, vault_path, clock):
+    # The vault restarts past the erase's time; lollo-notifications comes up 20 minutes later.
+    restarted_vault, restarted = overdue(vault, vault_path, clock)
+    transport = FakeTransport(up=lambda: clock.t >= restarted + 20 * 60)
+    sleeper = Sleeper(clock)
+    service = make_service(settings, restarted_vault, transport, sleeper)
+
+    async def flow():
+        service.announce_overdue_erase()
+        # Until the notice is taken, the erase is always at least the grace away.
+        assert service.pending_erase() == (restarted + ERASE_GRACE_SECONDS, EMAIL)
+        await settle(service)
+        accepted = int(clock.t)
+        assert accepted >= restarted + 20 * 60
+        assert service.pending_erase() == (accepted + ERASE_GRACE_SECONDS, EMAIL)
+        clock.t = restarted + ERASE_GRACE_SECONDS  # the old rule's time: too soon now
+        assert service.erase_if_due() is False
+        clock.t = accepted + ERASE_GRACE_SECONDS - 1
+        assert service.erase_if_due() is False
+        clock.t += 1
+        return service.erase_if_due()
+
+    assert await with_service(service, flow) is True
+    assert len(transport.tried) > 2 and taken(transport, "tag")["vault-erase-restart"] == 1
+    # Tries 5 s apart at first, then at most a minute.
+    assert sleeper.waits[:4] == [5, 10, 20, 40] and max(sleeper.waits) == 60
+
+
+async def test_an_overdue_erase_cannot_run_while_its_notice_waits(settings, vault, vault_path, clock):
+    restarted_vault, restarted = overdue(vault, vault_path, clock)
+    tries: list[bool] = []
+
+    def up() -> bool:
+        tries.append(service.erase_if_due())  # what housekeeping would do meanwhile
+        return clock.t >= restarted + 3 * 3600  # down for three hours, past the old grace
+
+    transport = FakeTransport(up=up)
+    service = make_service(settings, restarted_vault, transport, Sleeper(clock))
+
+    async def flow():
+        service.announce_overdue_erase()
+        await settle(service)
+
+    await with_service(service, flow)
+    assert len(tries) > 100 and not any(tries)
+    assert restarted_vault.is_setup()
+    assert service.pending_erase() == (int(clock.t) + ERASE_GRACE_SECONDS, EMAIL)
+
+
+async def test_an_overdue_notice_stops_once_the_erase_is_cancelled(settings, vault, vault_path, clock):
+    restarted_vault, restarted = overdue(vault, vault_path, clock)
+    transport = FakeTransport(up=lambda: clock.t >= restarted + 600)
+    service = make_service(settings, restarted_vault, transport, Sleeper(clock))
+
+    async def flow():
+        service.announce_overdue_erase()
+        await anyio.sleep(0)
+        assert service.cancel_erase(EMAIL) is True  # at once, whatever the service
+        assert service.pending_erase() is None
+        await settle(service)
+
+    await with_service(service, flow)
+    assert "vault-erase-restart" not in taken(transport, "tag")
+    assert taken(transport, "tag") == {"vault-erase-cancelled": 1}
+
+
+async def test_cancel_while_the_service_is_down(settings, vault, clock):
+    vault.lock()
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport, Sleeper(clock))
+
+    async def flow():
+        await service.schedule_erase(EMAIL)
+        back = clock.t + 10 * 60
+        transport.up = lambda: clock.t >= back
+        assert service.cancel_erase(EMAIL) is True  # at once
+        assert vault.pending_erase() is None
+        return back
+
+    back = await with_service(service, flow)
+    # The notice went out once the service took it.
+    assert clock.t >= back
+    assert taken(transport, "tag") == {"vault-erase-scheduled": 1, "vault-erase-cancelled": 1}
+
+
+async def test_a_due_erase_runs_while_the_service_is_down(settings, vault, clock):
+    vault.lock()
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport, Sleeper(clock))
+
+    async def flow():
+        clock.t = await service.schedule_erase(EMAIL)
+        back = clock.t + 10 * 60
+        transport.up = lambda: clock.t >= back
+        assert service.erase_if_due() is True and not vault.is_setup()
+
+    await with_service(service, flow)
+    assert taken(transport, "tag") == {"vault-erase-scheduled": 1, "vault-erase-done": 1}
+
+
+async def test_a_later_notice_is_dropped_after_an_hour_of_tries(settings, vault, clock, caplog):
+    vault.lock()
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport, Sleeper(clock))
+
+    async def flow():
+        await service.schedule_erase(EMAIL)
+        transport.up = False
+        start = clock.t
+        assert service.cancel_erase(EMAIL) is True
+        return start
+
+    start = await with_service(service, flow)
+    assert start + NOTICE_RETRY_FOR_SECONDS - NOTICE_RETRY_MAX_SECONDS <= clock.t <= start + NOTICE_RETRY_FOR_SECONDS
+    assert "vault-erase-cancelled" not in taken(transport, "tag")
+    assert "notification dropped after retries tag=vault-erase-cancelled" in caplog.text
 
 
 async def test_no_restart_notice_for_an_erase_far_away(settings, vault):
     vault.lock()
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
     vault.schedule_erase(EMAIL)
-    sender = FakeSender()
-    service = make_service(settings, vault, sender)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
 
     async def flow():
         service.announce_overdue_erase()
 
     await with_service(service, flow)
-    assert sender.calls == []
+    assert transport.tried == []

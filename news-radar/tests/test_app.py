@@ -73,6 +73,26 @@ async def test_the_page_lists_and_deletes(client, service, web, store):
     assert r.status_code == 303 and store.source_spec("city-agenda") is None
 
 
+CSP = (
+    "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; "
+    "frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'"
+)
+MANIFEST = '<link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">'
+TOUCH_ICON = '<link rel="apple-touch-icon" href="/assets/icon-192.png">'
+
+
+def test_the_page_and_refusals_link_the_lollo_home_screen_app(client):
+    """One Home Screen app for the lollo host: its manifest and icon are the landing page's."""
+    page = client.get(f"{B}/")
+    script = {"sec-fetch-mode": "cors", "sec-fetch-dest": "empty", "sec-fetch-site": "same-origin"}
+    refusal = client.get(f"{B}/", headers=script)
+    assert page.status_code == 200 and refusal.status_code == 403
+    for r in (page, refusal):
+        assert MANIFEST in r.text and TOUCH_ICON in r.text
+        assert f'<link rel="icon" href="{B}/icon-192.png">' in r.text
+        assert r.headers["content-security-policy"] == CSP
+
+
 @pytest.mark.anyio
 async def test_the_page_warns_when_lettuce_is_not_picking_up(client, service, web):
     await setup_monitor(service, web)

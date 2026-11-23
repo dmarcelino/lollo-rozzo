@@ -1,0 +1,28 @@
+/* The Notifications page only; the shared look is lollo.css. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.devices {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.device {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.device:last-child {
+  border-bottom: none;
+}

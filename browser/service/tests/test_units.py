@@ -375,9 +375,6 @@ ENV = {
     "CF_ACCESS_AUD": "aud1",
     "ALLOWED_USERS": "Alfred@gmail.com, hal@example.com",
     "PUBLIC_ORIGIN": "https://alfred-lollo.example.com/",
-    "BROWSER_VAPID_PUBLIC_KEY": "pub",
-    "BROWSER_VAPID_PRIVATE_KEY": "priv",
-    "PUSH_VAPID_CONTACT_EMAIL": "ops@example.com",
 }
 
 
@@ -404,9 +401,39 @@ def test_settings_from_env():
         {**ENV, "BROWSER_ENGINE_URL": "http://x"},
         {**ENV, "BROWSER_ENGINE_NETWORK_CIDR": "nope"},
         {**ENV, "PUBLIC_ORIGIN": "http://alfred-lollo.example.com"},
-        {**ENV, "BROWSER_VAPID_PRIVATE_KEY": ""},
         {**ENV, "CF_ACCESS_AUD": ""},
         {**ENV, "BROWSER_VNC": "lollo-browser-engine"},
     ):
         with pytest.raises(ConfigError):
             Settings.from_env(bad)
+
+
+def test_start_removes_the_old_subscriptions(tmp_path):
+    """Notices go through the notifications service: the browser's own push.json
+    is deleted at start, and a start without one changes nothing."""
+    from lollo_browser.__main__ import remove_old_subscriptions
+
+    (tmp_path / "push.json").write_text('{"v": 1, "subscriptions": []}')
+    (tmp_path / "settings.json").write_text("{}")
+    assert remove_old_subscriptions(tmp_path) is True
+    assert not (tmp_path / "push.json").exists() and (tmp_path / "settings.json").exists()
+    assert remove_old_subscriptions(tmp_path) is False
+
+
+@pytest.mark.parametrize("token", [None, "", "AB" * 32, "ab" * 31, "zz" * 32])
+def test_start_needs_a_notify_token(monkeypatch, tmp_path, capsys, token):
+    """The browser sends with its own token, which lolloctl makes; without a
+    good one it does not start, and push.json is left until it does."""
+    from lollo_browser import __main__ as entry
+
+    for key, value in {**ENV, "BROWSER_DATA_DIR": str(tmp_path)}.items():
+        monkeypatch.setenv(key, value)
+    for key in ("NOTIFY_TOKEN", "NOTIFY_URL", "BROWSER_VAPID_PUBLIC_KEY", "BROWSER_VAPID_PRIVATE_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    if token is not None:
+        monkeypatch.setenv("NOTIFY_TOKEN", token)
+    (tmp_path / "push.json").write_text("{}")
+    with pytest.raises(SystemExit) as exit_info:
+        entry.main()
+    assert exit_info.value.code == 2 and "NOTIFY_TOKEN" in capsys.readouterr().err
+    assert (tmp_path / "push.json").exists()

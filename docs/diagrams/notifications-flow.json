@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Notifications: once per device, from every lollo page",
+    "output": "docs/diagrams/notifications-flow.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    {
+      "id": "push",
+      "type": "external",
+      "icon": "cloud",
+      "label": "Push service",
+      "sublabel": "Apple, Google, Mozilla"
+    },
+    {
+      "id": "device",
+      "type": "external",
+      "icon": "person",
+      "label": "Your device",
+      "sublabel": "Lollo, on the Home Screen"
+    },
+    {
+      "id": "hub",
+      "type": "security",
+      "label": "Notifications",
+      "sublabel": "<lollo>/notifications/"
+    },
+    {
+      "id": "sender",
+      "type": "backend",
+      "label": "Vault or browser",
+      "sublabel": "the senders"
+    }
+  ],
+  "segments": [
+    {
+      "from": 160,
+      "to": 330,
+      "label": "Once per device"
+    },
+    {
+      "from": 345,
+      "to": 560,
+      "label": "A page notifies you"
+    },
+    {
+      "from": 575,
+      "to": 660,
+      "label": "You tap it"
+    }
+  ],
+  "messages": [
+    {
+      "id": "enable",
+      "from": "device",
+      "to": "push",
+      "y": 185,
+      "label": "Enable: subscribe with the stack's key",
+      "note": "on iPhone, from the Lollo Home Screen app"
+    },
+    {
+      "id": "endpoint",
+      "from": "push",
+      "to": "device",
+      "y": 240,
+      "label": "this device's address",
+      "variant": "return"
+    },
+    {
+      "id": "subscribe",
+      "from": "device",
+      "to": "hub",
+      "y": 285,
+      "label": "add this device",
+      "variant": "security",
+      "note": "your sign-in and the page's form token"
+    },
+    {
+      "id": "send",
+      "from": "sender",
+      "to": "hub",
+      "y": 370,
+      "label": "title, body, link, tag",
+      "variant": "security",
+      "note": "its own token; its own link and tag; rate limited"
+    },
+    {
+      "id": "queued",
+      "from": "hub",
+      "to": "sender",
+      "y": 430,
+      "label": "accepted",
+      "variant": "return"
+    },
+    {
+      "id": "push-out",
+      "from": "hub",
+      "to": "push",
+      "y": 470,
+      "label": "Web Push, signed with the stack's key",
+      "variant": "emphasis",
+      "note": "to every device of everyone listed"
+    },
+    {
+      "id": "show",
+      "from": "push",
+      "to": "device",
+      "y": 530,
+      "label": "notification shown",
+      "note": "no buttons"
+    },
+    {
+      "id": "tap",
+      "from": "device",
+      "to": "sender",
+      "y": 605,
+      "label": "a tap opens its page",
+      "note": "only /vault/, /browser/ or /notifications/; else the home page"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Who can send",
+      "items": [
+        "Only the vault and the browser, each with a token only it and the service hold",
+        "Each only its own: a browser notification can't link to the vault or look like one of its requests",
+        "At most 30 a minute and 300 an hour per page; titles and bodies are never logged"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "What it does not stop",
+      "items": [
+        "Any script on the lollo's address can turn a device's notifications off, but not send one",
+        "Check Your devices: a device missing there gets nothing, the vault's erase warnings included",
+        "Notifications show on your lock screen"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Limits",
+      "items": [
+        "iPhone and iPad: only from the Home Screen, iOS 16.4 or later",
+        "At most 50 devices per stack; the oldest is dropped",
+        "After upgrading from an earlier release, enable again once per device"
+      ]
+    }
+  ]
+}

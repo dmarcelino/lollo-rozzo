@@ -323,6 +323,14 @@ case $args in
         break
       fi
     done
+    # lollo-notifications: once, with any of the profiles compose/notifications.yml gives it.
+    notifications=",$(sed -n 's/^ *profiles: *\[\(.*\)\]/\1/p' "$STUB_ROOT/home/compose/notifications.yml" | tr -d '" '),"
+    for p in "${ps[@]}"; do
+      if [[ $notifications == *",$p,"* ]]; then
+        echo lollo-notifications
+        break
+      fi
+    done
     for p in "${ps[@]}"; do
       case $p in
         search) printf '%s\n' searxng ddg-mcp ;;

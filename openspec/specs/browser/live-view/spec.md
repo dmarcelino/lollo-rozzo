@@ -87,11 +87,15 @@ The person SHALL reach the display and input stream only through `/browser/`'s o
 - **THEN** they see its navigations, form submissions, secrets typed (site and field only), hand-offs and checkouts
 
 ### Requirement: Push notifications
-The browser SHALL send push notifications to the person's subscribed devices for hand-offs and checkouts submitted, with its own push keys, generated once per stack and never rotated.
+The browser SHALL notify the person's enrolled devices of hand-offs and checkouts submitted through the lollo's notifications service, with its own sender token. It SHALL hold no push keys or subscriptions and offer no notification switch of its own; `/browser/` SHALL link to `/notifications/` instead.
 
 #### Scenario: Hand-off while away
-- **WHEN** an agent requests a hand-off and the person has subscribed a phone
+- **WHEN** an agent requests a hand-off and the person has enrolled a phone on `/notifications/`
 - **THEN** the phone shows a notification that opens the hand-off on `/browser/`
+
+#### Scenario: Notifications page
+- **WHEN** the person looks for notification settings on `/browser/`
+- **THEN** they find a link to `/notifications/`, and no switch of the browser's own
 
 ### Requirement: Listed on the landing page
 When the profile is on, the lollo host's landing page SHALL link to `/browser/` with its own label.

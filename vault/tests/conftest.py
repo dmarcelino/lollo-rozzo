@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import anyio
@@ -8,10 +10,10 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from lollo_common.auth import Authenticator
+from lollo_common.notify import Notifier
 
 from lollo_vault.config import Settings
 from lollo_vault.crypto import KdfParams
-from lollo_vault.push import Pusher
 from lollo_vault.service import Service
 from lollo_vault.vault import Vault, build_fields
 
@@ -43,9 +45,6 @@ def settings() -> Settings:
         issuer="https://team1.cloudflareaccess.com",
         allowed_users=frozenset({EMAIL}),
         public_origin=ORIGIN,
-        vapid_public_key="BPublicKeyForTests",
-        vapid_private_key="private-key-for-tests",
-        vapid_contact="ops@example.com",
         db_path=":memory:",
     )
 
@@ -108,28 +107,59 @@ def add_card(vault: Vault) -> str:
     return vault.add_secret("card", "Visa", "", fields)
 
 
-class FakeSender:
-    def __init__(self, fail_status: int | None = None):
-        self.calls: list[dict[str, Any]] = []
-        self.fail_status = fail_status
-
-    def __call__(self, **kw: Any) -> None:
-        self.calls.append(kw)
-        if self.fail_status:
-            from pywebpush import WebPushException
-
-            class Resp:
-                status_code = self.fail_status
-
-            raise WebPushException("push failed", response=Resp())
+NOTIFY_TOKEN = "ab" * 32
 
 
-def make_service(settings: Settings, vault: Vault, sender: FakeSender | None = None) -> Service:
-    return Service(vault, Pusher(settings, vault, sender or FakeSender()), settings.public_origin)
+class FakeTransport:
+    """Stands in for the notifications service behind a real Notifier, so every
+    payload passes the client's checks (tags, links) before it gets here.
+    `up` says whether the service takes a notice (202); down, the connection is
+    refused. It may be a function, asked on every try."""
+
+    def __init__(self, up: bool | Callable[[], bool] = True):
+        self.up = up
+        self.tried: list[dict[str, str]] = []  # every payload handed over, taken or not
+        self.taken: list[dict[str, str]] = []  # the ones the service took
+
+    async def __call__(self, url: str, body: bytes, headers: Mapping[str, str], timeout: float) -> int:
+        assert headers["authorization"] == f"Bearer {NOTIFY_TOKEN}"
+        payload = json.loads(body)
+        self.tried.append(payload)
+        if not (self.up() if callable(self.up) else self.up):
+            raise ConnectionRefusedError("lollo-notifications is not running")
+        self.taken.append(payload)
+        return 202
+
+    def sent(self) -> str:
+        """Everything that left the vault, to look for values in."""
+        return json.dumps(self.tried)
+
+
+class Sleeper:
+    """Stands in for anyio.sleep between a notice's tries: advances the fake clock."""
+
+    def __init__(self, clock: Clock):
+        self.clock = clock
+        self.waits: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+        self.clock.t += seconds
+        await anyio.sleep(0)
+
+
+def make_service(
+    settings: Settings,
+    vault: Vault,
+    transport: FakeTransport | None = None,
+    sleep: Callable[[float], Any] | None = None,
+) -> Service:
+    notifier = Notifier("vault", NOTIFY_TOKEN, transport=transport or FakeTransport())
+    return Service(vault, notifier, settings.public_origin, **({"sleep": sleep} if sleep else {}))
 
 
 async def with_service(service: Service, fn):
-    """Runs fn, then waits for every push it queued: leaving the task group waits
+    """Runs fn, then waits for every notice it queued: leaving the task group waits
     for them, where a fixed sleep could cut one short."""
     async with anyio.create_task_group() as tg:
         service.bind_task_group(tg)

@@ -517,6 +517,7 @@ compose_env() {
     -f "$LOLLO_HOME/compose/pipelock.yml" \
     -f "$LOLLO_HOME/compose/code-server.yml" \
     -f "$LOLLO_HOME/compose/browser.yml" \
+    -f "$LOLLO_HOME/compose/notifications.yml" \
     -f "$LOLLO_HOME/compose/landing.yml" \
     "${extra[@]}" \
     --env-file "$env_file" \
@@ -651,18 +652,18 @@ push_contact() {
   printf '%s' "$contact"
 }
 
-# push_env_lines -> the stack.env lines of a new stack's push notifications: the
-# contact address and a VAPID keypair each for the BFF (PUSH_) and the vault
-# (VAULT_), so neither holds the other's private key. Nothing makes them again:
-# a new keypair would invalidate every browser subscription.
+# push_env_lines -> the stack.env lines of a new stack's push notifications from
+# Lettuce's BFF: the contact address and the BFF's own VAPID keypair (PUSH_).
+# The lollo's pair is the notifications service's (ensure_notify_secrets).
+# Nothing makes them again: a new keypair would invalidate every browser
+# subscription.
 push_env_lines() {
-  local contact push vault
+  local contact push
   # Run inside $(...), where errexit is off: each failure ends it by hand.
   contact=$(push_contact) || exit 1
   push=$(vapid_keypair) || exit 1
-  vault=$(vapid_keypair) || exit 1
-  printf 'PUSH_VAPID_CONTACT_EMAIL=%s\nPUSH_VAPID_PUBLIC_KEY=%s\nPUSH_VAPID_PRIVATE_KEY=%s\nVAULT_VAPID_PUBLIC_KEY=%s\nVAULT_VAPID_PRIVATE_KEY=%s\n' \
-    "$contact" "${push% *}" "${push#* }" "${vault% *}" "${vault#* }"
+  printf 'PUSH_VAPID_CONTACT_EMAIL=%s\nPUSH_VAPID_PUBLIC_KEY=%s\nPUSH_VAPID_PRIVATE_KEY=%s\n' \
+    "$contact" "${push% *}" "${push#* }"
 }
 
 # sync_push_contact NAME -> the stack's PUSH_VAPID_CONTACT_EMAIL follows config.env
@@ -684,25 +685,57 @@ ensure_executor_token() {
     env_set "$f" LOLLO_EXECUTOR_TOKEN "$(openssl rand -hex 32)"
 }
 
+# NOTIFY_SOURCES: the senders of the notifications service, "<SOURCE> <service>":
+# each has its own token, stack.env's NOTIFY_TOKEN_<SOURCE>, which only that
+# Compose service and NOTIFY_SERVICE get.
+NOTIFY_SOURCES=('VAULT lollo-vault' 'BROWSER lollo-browser')
+# The notifications service: the only one with the lollo's VAPID private key and
+# every sender's token. Compose runs it whenever a sender's profile is on.
+NOTIFY_SERVICE='lollo-notifications'
+
+# notify_keypair_missing NAME -> success when the stack has no lollo VAPID
+# keypair yet: ensure_notify_secrets would make it, the first time it runs there
+notify_keypair_missing() {
+  local f
+  f=$(stack_env "$1")
+  [[ -z $(env_get "$f" LOLLO_VAPID_PUBLIC_KEY) || -z $(env_get "$f" LOLLO_VAPID_PRIVATE_KEY) ]]
+}
+
+# ensure_notify_secrets NAME -> gives the stack, once, what the notifications
+# service needs: the lollo's VAPID keypair (LOLLO_VAPID_*, which only that
+# service gets) and a token per sender (NOTIFY_TOKEN_<SOURCE>, which only it and
+# that sender get), whatever the profiles, so a sender turned on later finds
+# its token. Each is made only when missing; the values go into stack.env, never
+# argv. The keypair is never rotated: a new one invalidates every device's
+# subscription. A token may be replaced: delete its line and run `lolloctl up`.
+ensure_notify_secrets() {
+  local f pair e src
+  f=$(stack_env "$1")
+  if notify_keypair_missing "$1"; then
+    pair=$(vapid_keypair) || exit 1
+    env_set "$f" LOLLO_VAPID_PUBLIC_KEY "${pair% *}"
+    env_set "$f" LOLLO_VAPID_PRIVATE_KEY "${pair#* }"
+  fi
+  for e in "${NOTIFY_SOURCES[@]}"; do
+    src=${e%% *}
+    [[ -n $(env_get "$f" "NOTIFY_TOKEN_$src") ]] ||
+      env_set "$f" "NOTIFY_TOKEN_$src" "$(openssl rand -hex 32)"
+  done
+}
+
 # BROWSER_SECRET_RE: the engine's secret, base64url. It is the path of the
 # engine's control WebSocket, and its first 8 characters the display's password.
 BROWSER_SECRET_RE='^[A-Za-z0-9_-]{43,}$'
 
-# ensure_browser_secrets NAME -> gives the stack, once, the browser's VAPID
-# keypair (BROWSER_VAPID_*, its own, like the vault's) and the secret only the
+# ensure_browser_secrets NAME -> gives the stack, once, the secret only the
 # engine and lollo-browser know (BROWSER_ENGINE_SECRET), whatever the profiles,
-# so a stack that turns the browser on later has them. Each is made only when
-# missing and never rotated: a new keypair invalidates every device's push
-# subscription. To replace one, delete its line(s) from stack.env and run
-# `lolloctl up`.
+# so a stack that turns the browser on later has it. Made only when missing and
+# never rotated by lolloctl; to replace it, delete its line from stack.env and
+# run `lolloctl up`. The browser's notifications go through the notifications
+# service (ensure_notify_secrets).
 ensure_browser_secrets() {
-  local f pair secret
+  local f secret
   f=$(stack_env "$1")
-  if [[ -z $(env_get "$f" BROWSER_VAPID_PUBLIC_KEY) || -z $(env_get "$f" BROWSER_VAPID_PRIVATE_KEY) ]]; then
-    pair=$(vapid_keypair) || exit 1
-    env_set "$f" BROWSER_VAPID_PUBLIC_KEY "${pair% *}"
-    env_set "$f" BROWSER_VAPID_PRIVATE_KEY "${pair#* }"
-  fi
   if [[ -z $(env_get "$f" BROWSER_ENGINE_SECRET) ]]; then
     secret=$(openssl rand 32 | base64url) || die "openssl could not generate the browser's engine secret"
     [[ $secret =~ $BROWSER_SECRET_RE ]] || die "openssl produced a malformed browser engine secret"
@@ -773,9 +806,12 @@ check_stack() {
   fi
   for k in SESSION_SECRET LETTA_STATE_DIR PUBLIC_ORIGIN ALLOWED_USERS COMPOSE_PROFILES \
     CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD CLOUDFLARE_TUNNEL_TOKEN \
-    PUSH_VAPID_PUBLIC_KEY PUSH_VAPID_PRIVATE_KEY PUSH_VAPID_CONTACT_EMAIL \
-    VAULT_VAPID_PUBLIC_KEY VAULT_VAPID_PRIVATE_KEY; do
+    PUSH_VAPID_PUBLIC_KEY PUSH_VAPID_PRIVATE_KEY PUSH_VAPID_CONTACT_EMAIL; do
     [[ -n $(env_get "$f" "$k") ]] || die "$name: $k is empty"
+  done
+  # Made by up (ensure_notify_secrets), so a stack from before them passes once it ran.
+  for k in LOLLO_VAPID_PUBLIC_KEY LOLLO_VAPID_PRIVATE_KEY; do
+    [[ -n $(env_get "$f" "$k") ]] || die "$name: $k is empty (run: lolloctl up $name, which makes it once)"
   done
   k=$(env_get "$f" SESSION_SECRET)
   ((${#k} >= 32)) || die "$name: SESSION_SECRET is shorter than 32 characters"
@@ -824,12 +860,13 @@ check_stack() {
   k=$(jq -r '([.services | to_entries[]
       | select([(.value.volumes // [])[] | select(.source == "google-creds" or .source == "vault-data"
         or .source == "pipelock-data" or .source == "code-server-data" or .source == "code-exec-keys"
-        or .source == "code-server-sock" or .source == "news-radar-data" or .source == "browser-data")] | length > 0)
-      | .key] + ["lollo-gmail-triggers", "lollo-vault", "lollo-pipelock", "lollo-news-radar", "lollo-code-server", "lollo-code-server-editor", "lollo-code-server-exec", "lollo-browser"]) as $held
+        or .source == "code-server-sock" or .source == "news-radar-data" or .source == "browser-data"
+        or .source == "notifications-data")] | length > 0)
+      | .key] + ["lollo-gmail-triggers", "lollo-vault", "lollo-pipelock", "lollo-news-radar", "lollo-code-server", "lollo-code-server-editor", "lollo-code-server-exec", "lollo-browser", "lollo-notifications"]) as $held
     | [.services | to_entries[] | .key as $k | (.value.volumes_from // [])[]
       | sub("^service:"; "") | sub(":(ro|rw)$"; "") | select(. as $t | $held | index($t)) | "\($k) from \(.)"]
     | join(", ")' <<<"$rendered")
-  [[ -z $k ]] || die "$name: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data or the code editor ($k)"
+  [[ -z $k ]] || die "$name: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data, the notification subscriptions or the code editor ($k)"
   # Both volumes outlive their profile, so these hold whatever the profiles.
   k=$(volume_users "$rendered" vault-data lollo-vault)
   [[ -z $k ]] || die "$name: $k mount(s) the vault's volume; only the vault service may"
@@ -839,6 +876,8 @@ check_stack() {
   [[ -z $k ]] || die "$name: $k mount(s) News Radar's volume; only lollo-news-radar may"
   k=$(volume_users "$rendered" browser-data lollo-browser)
   [[ -z $k ]] || die "$name: $k mount(s) the browser's volume (its kept sign-ins, settings and audit log); only lollo-browser may"
+  k=$(volume_users "$rendered" notifications-data "$NOTIFY_SERVICE")
+  [[ -z $k ]] || die "$name: $k mount(s) the notifications service's volume (every device's subscription); only $NOTIFY_SERVICE may"
   k=$(volume_users "$rendered" code-server-data lollo-code-server-editor)
   [[ -z $k ]] || die "$name: $k mount(s) the code editor's volume (its state and SSH key); only lollo-code-server-editor may"
   k=$(volume_users "$rendered" code-exec-keys lollo-code-server-editor lollo-code-server-exec)
@@ -864,6 +903,9 @@ check_stack() {
   k=$(browser_network_members "$name" "$rendered" | awk '!/^lollo-(browser(-engine)?|pipelock)$/' | paste -sd, - | sed 's/,/, /g')
   [[ -z $k ]] || die "$name: $k join(s) the browser's network; only lollo-browser-engine, lollo-browser and lollo-pipelock may (compose/browser.yml)"
   check_images "$name" "$rendered"
+  # Whatever the profiles: the tokens are made either way, and a sender turned
+  # on later must find its own the only one it holds.
+  check_notify_secrets "$name" "$rendered" "$f"
   if has_profile "$profiles" lollo-vault; then
     check_sidecar "$name" "$rendered" lollo-vault lollo-vault compose/vault.yml
   fi
@@ -880,12 +922,13 @@ check_stack() {
     check_news_radar "$name" "$rendered"
   fi
   if has_profile "$profiles" lollo-browser; then
-    for p in BROWSER_VAPID_PUBLIC_KEY BROWSER_VAPID_PRIVATE_KEY; do
-      [[ -n $(env_get "$f" "$p") ]] || die "$name: $p is empty"
-    done
     [[ $(env_get "$f" BROWSER_ENGINE_SECRET) =~ $BROWSER_SECRET_RE ]] ||
       die "$name: BROWSER_ENGINE_SECRET must be at least 43 base64url characters (delete the line and run: lolloctl up $name)"
     check_browser "$name" "$rendered"
+  fi
+  k=$(notify_profiles "$profiles")
+  if [[ -n $k ]]; then
+    check_notifications "$name" "$rendered" "${k%%,*}"
   fi
   k=$(lollo_profiles "$profiles")
   if [[ -n $k ]]; then
@@ -1095,6 +1138,88 @@ check_lollo_audience() {
     [[ $origin == "$(env_get "$f" LOLLO_ORIGIN)" ]] ||
       die "$name: $s must have PUBLIC_ORIGIN = LOLLO_ORIGIN, the lollo's own host"
   done
+}
+
+# notify_profiles PROFILES -> the senders' profiles in PROFILES, comma-separated:
+# with any of them on, Compose runs the notifications service
+notify_profiles() {
+  local e list=''
+  for e in "${NOTIFY_SOURCES[@]}"; do
+    has_profile "$1" "${e#* }" && list+=${list:+,}${e#* }
+  done
+  printf '%s\n' "$list"
+}
+
+# check_notify_secrets NAME RENDERED ENV_FILE -> whatever the profiles, each
+# sender's token (NOTIFY_TOKEN_<SOURCE>) is 64 lowercase hex characters, unlike
+# every other token and LOLLO_EXECUTOR_TOKEN (which agents can read); and no
+# service but NOTIFY_SERVICE and that sender holds a token's value, nor any
+# service but NOTIFY_SERVICE the lollo's VAPID private key, anywhere in its
+# rendered config (its environment, command, labels...). A token in the
+# app-server would let agents send as that sender.
+check_notify_secrets() {
+  local name=$1 rendered=$2 f=$3 e src svc v k seen=()
+  for e in "${NOTIFY_SOURCES[@]}"; do
+    src=${e%% *}
+    v=$(env_get "$f" "NOTIFY_TOKEN_$src")
+    [[ $v =~ ^[0-9a-f]{64}$ ]] ||
+      die "$name: NOTIFY_TOKEN_$src must be 64 lowercase hex characters (delete the line and run: lolloctl up $name)"
+    [[ $v != "$(env_get "$f" LOLLO_EXECUTOR_TOKEN)" ]] ||
+      die "$name: NOTIFY_TOKEN_$src must differ from LOLLO_EXECUTOR_TOKEN, which agents can read (delete the line and run: lolloctl up $name)"
+    for k in "${seen[@]}"; do
+      [[ $v != "${k#* }" ]] ||
+        die "$name: NOTIFY_TOKEN_$src and NOTIFY_TOKEN_${k%% *} are equal; each sender needs its own (delete one line and run: lolloctl up $name)"
+    done
+    seen+=("$src $v")
+  done
+  for e in "${seen[@]}"; do
+    src=${e%% *} v=${e#* }
+    svc=$(printf '%s\n' "${NOTIFY_SOURCES[@]}" | awk -v s="$src" '$1 == s { print $2 }')
+    k=$(holders "$rendered" "$v" "$NOTIFY_SERVICE" "$svc")
+    [[ -z $k ]] || die "$name: $k hold(s) NOTIFY_TOKEN_$src; only $NOTIFY_SERVICE and $svc may (compose/notifications.yml)"
+  done
+  v=$(env_get "$f" LOLLO_VAPID_PRIVATE_KEY)
+  k=$(holders "$rendered" "$v" "$NOTIFY_SERVICE")
+  [[ -z $k ]] || die "$name: $k hold(s) LOLLO_VAPID_PRIVATE_KEY; only $NOTIFY_SERVICE may (compose/notifications.yml)"
+}
+
+# holders RENDERED VALUE SERVICE... -> the services, other than these, whose
+# rendered config holds VALUE anywhere, comma-separated; nothing for an empty VALUE.
+# VALUE is a secret, so it reaches jq through its environment, which only this
+# user can read, never through argv (--arg), which every local user can.
+holders() {
+  local rendered=$1 value=$2
+  shift 2
+  [[ -n $value ]] || return 0
+  HOLDERS_VALUE=$value jq -r '[.services | to_entries[] | select(.key as $k | $ARGS.positional | index($k) | not)
+    | select(.value | tojson | contains($ENV.HOLDERS_VALUE)) | .key] | join(", ")' --args "$@" <<<"$rendered"
+}
+
+# check_notifications NAME RENDERED PROFILE -> the notifications service, on
+# while PROFILE (or another sender's) is, keeps what compose/notifications.yml
+# gives it: a hardened sidecar (check_sidecar) with no-new-privileges and memory
+# and process limits, on the default network only, mounting only its own
+# volume, notifications-data, at /data, never given the profile lists (a profile
+# change would recreate it, and the vault would refuse erases meanwhile) nor a
+# token for a sender named after itself.
+check_notifications() {
+  local name=$1 rendered=$2 s=$NOTIFY_SERVICE svc
+  check_sidecar "$name" "$rendered" "$3" "$s" compose/notifications.yml
+  svc=$(jq -c --arg s "$s" '.services[$s]' <<<"$rendered")
+  jq -e '(.security_opt // []) | any(. == "no-new-privileges:true" or . == "no-new-privileges" or . == "no-new-privileges=true")' <<<"$svc" >/dev/null ||
+    die "$name: $s must have no-new-privileges (compose/notifications.yml)"
+  jq -e '((.mem_limit // "0") | tostring | . != "0" and . != "") and ((.pids_limit // 0) | tonumber > 0)' <<<"$svc" >/dev/null ||
+    die "$name: $s must have a mem_limit and a pids_limit (compose/notifications.yml)"
+  jq -e '(.networks // {"default": null} | keys) == ["default"]' <<<"$svc" >/dev/null ||
+    die "$name: $s must be on the default network only (compose/notifications.yml)"
+  jq -e '[(.volumes // [])[] | select(.type != "tmpfs") | {type, source, target}]
+    == [{"type": "volume", "source": "notifications-data", "target": "/data"}]' <<<"$svc" >/dev/null ||
+    die "$name: $s may mount only its volume notifications-data, at /data (compose/notifications.yml)"
+  jq -e '(.environment // {}) | has("COMPOSE_PROFILES") or has("LOLLO_PROFILES") | not' <<<"$svc" >/dev/null ||
+    die "$name: $s must not get COMPOSE_PROFILES or LOLLO_PROFILES; a profile change would recreate it (compose/notifications.yml)"
+  # The service takes each NOTIFY_TOKEN_<SOURCE> as a sender; its own name is reserved.
+  jq -e '(.environment // {}) | has("NOTIFY_TOKEN_NOTIFICATIONS") | not' <<<"$svc" >/dev/null ||
+    die "$name: $s must not get NOTIFY_TOKEN_NOTIFICATIONS; no sender may be named after the service (compose/notifications.yml)"
 }
 
 # check_news_radar NAME RENDERED -> the News Radar service keeps what

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
+from lollo_common.notify import NoNotifier
 from playwright.async_api import (
     Browser,
     BrowserContext,
@@ -57,7 +58,6 @@ from .config import (
 )
 from .engine import Engine
 from .handoffs import APPROVED, DONE, PENDING, Handoff, HandoffError, Handoffs
-from .push import NoPusher
 from .scrub import SCRUBBER, Scrubber
 from .sessions import Sessions
 from .sites import PAYMENT_FRAME_SITES, UrlRefused, check_web_url, host_of, same_site_https, site_of
@@ -217,7 +217,7 @@ class BrowserService:
         scrubber: Scrubber = SCRUBBER,
         clock: Callable[[], float] = time.monotonic,
         on_connected: Callable[[], None] | None = None,
-        pusher: Any = None,
+        notifier: Any = None,
     ) -> None:
         self.engine = engine
         self.sessions = sessions
@@ -227,7 +227,8 @@ class BrowserService:
         self.scrubber = scrubber
         self.clock = clock
         self._on_connected = on_connected
-        self.pusher = pusher or NoPusher()
+        # The notifications service's client (lollo_common.notify.Notifier).
+        self.notifier = notifier or NoNotifier()
         self._pw: Playwright | None = None
         self._pw_cm: Any = None
         self._browser: Browser | None = None
@@ -757,7 +758,7 @@ class BrowserService:
                 "title": "Checkout submitted",
                 "body": f"{who} submitted a checkout on {site or 'a site'} (task: {task.purpose}).",
                 "url": f"{PREFIX}/audit?task={task.id}",
-                "tag": f"checkout-{task.id}-{tab.id}",
+                "tag": f"browser-checkout-{task.id}-{tab.id}",
             }
         )
 
@@ -772,13 +773,16 @@ class BrowserService:
             self._checkout_submitted(task, tab, by="person", url=page_url)
 
     def _notify(self, payload: dict[str, str]) -> None:
-        self._spawn(self._push(payload))
+        """Hands a notice to the notifications service in the background: its
+        outcome decides nothing (a hand-off just waits). Values are scrubbed
+        first; the service cannot know what a value is."""
+        self._spawn(self._send_notice(payload))
 
-    async def _push(self, payload: dict[str, str]) -> None:
+    async def _send_notice(self, payload: dict[str, str]) -> None:
         try:
-            await self.pusher.send(self.scrubber.deep(payload))
+            await self.notifier.send(self.scrubber.deep(payload))
         except Exception as e:
-            log.warning("push failed: %s", type(e).__name__)
+            log.warning("notification failed: %s", type(e).__name__)
 
     def _new_handoff(self, task: Task, tab: Tab, summary: str, kind: str = "request") -> Handoff:
         url = tab.page.url
@@ -786,10 +790,10 @@ class BrowserService:
         self.audit.record("handoff_requested", task, tab=tab.id, handoff=h.id, summary=h.summary, url=url, kind=kind)
         self._notify(
             {
-                "title": "Checkout for you" if kind == "checkout" else "Your turn in the browser",
+                "title": "Checkout for you" if kind == "checkout" else "Your turn",
                 "body": f"{h.summary} ({h.site or 'no site'}, task: {task.purpose})",
                 "url": f"{PREFIX}/h/{h.id}",
-                "tag": f"handoff-{h.id}",
+                "tag": f"browser-handoff-{h.id}",
             }
         )
         return h

@@ -28,8 +28,17 @@ AUTO_LOCK_SECONDS = 12 * 3600
 # long later, unless someone unlocks the vault or cancels it first.
 ERASE_DELAY_SECONDS = 24 * 3600
 # After a restart, an erase that came due while the server was down waits this
-# long, and every device is told, so the owner still gets a chance to stop it.
+# long once the notifications service has taken its notice, so the owner still
+# gets a chance to stop it.
 ERASE_GRACE_SECONDS = 3600
+# A notice the notifications service did not take is tried again after this
+# long, doubling up to the longest wait.
+NOTICE_RETRY_FIRST_SECONDS = 5
+NOTICE_RETRY_MAX_SECONDS = 60
+# The "erase cancelled" and "vault erased" notices are tried for this long, then
+# dropped (they hold nothing up). The "erase in 1 hour" one after a restart is
+# tried until it is taken: the erase waits for it.
+NOTICE_RETRY_FOR_SECONDS = 3600
 # Erase requests per signed-in person per hour; each one notifies every device.
 ERASE_REQUESTS_PER_HOUR = 3
 MIN_PASSPHRASE_LENGTH = 12
@@ -50,9 +59,6 @@ class Settings:
     issuer: str
     allowed_users: frozenset[str]
     public_origin: str
-    vapid_public_key: str
-    vapid_private_key: str
-    vapid_contact: str
     db_path: str
 
     @classmethod
@@ -76,8 +82,5 @@ class Settings:
             issuer=env.get("CF_ACCESS_ISSUER", "").strip() or f"https://{team}.cloudflareaccess.com",
             allowed_users=users,
             public_origin=origin,
-            vapid_public_key=required("VAULT_VAPID_PUBLIC_KEY"),
-            vapid_private_key=required("VAULT_VAPID_PRIVATE_KEY"),
-            vapid_contact=required("PUSH_VAPID_CONTACT_EMAIL"),
             db_path=env.get("VAULT_DB_PATH", "/data/vault.db"),
         )

@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+import json
+
 import anyio
 import pytest
+from lollo_common.notify import check_payload
 
 from lollo_browser import checkout
 from lollo_browser.checkout import Features, recognise
 from lollo_browser.tasks import BrowserError
 
+from .conftest import NOTIFY_TOKEN, SECRET, ref_of, wait_for
 from .conftest import PAGES as SITE_PAGES
-from .conftest import ref_of, wait_for
+
+
+def sendable(notice: dict[str, str]) -> dict[str, str]:
+    """A notice as the notifications service takes it from the browser: its
+    own prefix and tag, and nothing the checks would cut."""
+    assert check_payload("browser", notice) == notice
+    assert notice["url"].startswith("/browser/") and notice["tag"].startswith("browser-")
+    return notice
+
 
 # ── recognition alone ────────────────────────────────────────────────────────
 
@@ -161,8 +173,12 @@ async def test_checkout_on_a_site_not_allowed_becomes_a_hand_off(env, sites, pat
     entries = [e for e in env.audit() if e["event"] == "checkout_handed_off"]
     assert entries and entries[0]["site"] == "example.com" and entries[0]["purpose"] == "buy a kettle"
     await wait_for(lambda: env.sender.calls)
-    push = env.sender.payloads()[0]
+    push = sendable(env.sender.payloads()[0])
     assert push["url"] == f"/browser/h/{h.id}" and "example.com" in push["body"]
+    assert push["tag"] == f"browser-handoff-{h.id}" and push["title"] == "Checkout for you"
+    call = env.sender.calls[0]
+    assert call["url"] == "http://lollo-notifications:8000/notify/v1/send"
+    assert call["headers"]["authorization"] == f"Bearer {NOTIFY_TOKEN}"
 
 
 @pytest.mark.anyio
@@ -278,7 +294,9 @@ async def test_checkout_on_an_allowed_site_is_performed_notified_and_audited(env
     assert entry["by"] == "agent" and entry["site"] == "example.com" and entry["url"].endswith("/checkout/review")
     assert entry["task"] == task and "ts" in entry
     await wait_for(lambda: env.sender.calls)
-    assert env.sender.payloads()[0]["title"] == "Checkout submitted"
+    push = sendable(env.sender.payloads()[0])
+    assert push["title"] == "Checkout submitted" and push["tag"] == f"browser-checkout-{task}-{tab}"
+    assert push["url"] == f"/browser/audit?task={task}"
     # Another site stays not allowed.
     tab2 = await env.tab(task, sites.https("other.test", "/checkout/review"))
     snap2 = await env.snap(task, tab2)
@@ -322,6 +340,8 @@ async def test_person_submitting_a_checkout_during_take_over_is_notified_and_aud
     entry = next(e for e in env.audit() if e["event"] == "checkout_submitted")
     assert entry["by"] == "person" and entry["site"] == "example.com"
     await wait_for(lambda: any(p["title"] == "Checkout submitted" for p in env.sender.payloads()))
+    push = sendable(next(p for p in env.sender.payloads() if p["title"] == "Checkout submitted"))
+    assert push["tag"] == f"browser-checkout-{task}-{tab}" and push["body"].startswith("You submitted")
 
 
 @pytest.mark.anyio
@@ -346,6 +366,23 @@ async def test_a_pages_own_posts_during_take_over_are_not_checkouts(env, sites):
     assert not env.sender.calls
 
 
+@pytest.mark.anyio
+async def test_notices_are_scrubbed_before_they_are_sent(env, sites):
+    """The notifications service cannot know what a value is: a typed value is
+    cut out of a notice before it leaves the browser, wherever it appears."""
+    task = await env.task(f"sign in with {SECRET}")
+    tab = await env.tab(task, sites.https("shop.example.com", "/echo"))
+    snap = await env.snap(task, tab)
+    args = {"task": task, "tab": tab, "ref": ref_of(snap, "Password"), "text": SECRET}
+    await env.call("type_secret", {**args, "expect_site": "https://shop.example.com"})
+    h = await env.call("request_handoff", {"task": task, "tab": tab, "summary": f"the code is {SECRET}"})
+    await wait_for(lambda: env.sender.calls)
+    push = sendable(env.sender.payloads()[0])
+    assert push["url"] == f"/browser/h/{h['handoff']}"
+    assert SECRET not in json.dumps(env.sender.payloads()) and "[masked]" in push["body"]
+    assert SECRET.encode() not in env.sender.calls[0]["body"]
+
+
 # ── hand-offs ────────────────────────────────────────────────────────────────
 
 
@@ -356,8 +393,9 @@ async def test_handoff_done_declined_and_no_answer(env, sites):
     summary = "2 items, 34.90 EUR, delivery Tuesday"
     h = await env.call("request_handoff", {"task": task, "tab": tab, "summary": summary})
     await wait_for(lambda: env.sender.calls)
-    push = env.sender.payloads()[0]
+    push = sendable(env.sender.payloads()[0])
     assert summary in push["body"] and push["url"] == f"/browser/h/{h['handoff']}"
+    assert push["tag"] == f"browser-handoff-{h['handoff']}" and push["title"] == "Your turn"
     env.service.handoffs.answer(h["handoff"], done=True, by="alfred@gmail.com")
     assert (await env.call("wait_handoff", {"task": task, "handoff": h["handoff"]}))["status"] == "done"
 
@@ -497,5 +535,5 @@ async def test_only_a_held_checkout_can_be_approved_and_never_from_a_notificatio
         await env.service.approve_checkout(h["handoff"], EMAIL)
     _, _, hid = await held_checkout(env, sites)
     await wait_for(lambda: any(p["url"] == f"/browser/h/{hid}" for p in env.sender.payloads()))
-    push = next(p for p in env.sender.payloads() if p["url"] == f"/browser/h/{hid}")
+    push = sendable(next(p for p in env.sender.payloads() if p["url"] == f"/browser/h/{hid}"))
     assert set(push) == {"title", "body", "url", "tag"}  # it opens the page; no action of its own

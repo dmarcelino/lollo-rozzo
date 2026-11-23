@@ -192,6 +192,25 @@ def test_pages_carry_the_security_headers_and_no_script(client, env):
     assert icon.headers["content-type"] == "image/png" and icon.content.startswith(b"\x89PNG")
 
 
+CSP = (
+    "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; "
+    "frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'"
+)
+MANIFEST = '<link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">'
+TOUCH_ICON = '<link rel="apple-touch-icon" href="/assets/icon-192.png">'
+
+
+def test_pages_and_refusals_link_the_lollo_home_screen_app(client):
+    """One Home Screen app for the lollo host: its manifest and icon are the landing page's."""
+    page = client.get(f"{B}/")
+    refusal = client.get(f"{B}/", headers=SCRIPT)
+    assert page.status_code == 200 and refusal.status_code == 403
+    for r in (page, refusal):
+        assert MANIFEST in r.text and TOUCH_ICON in r.text
+        assert f'<link rel="icon" href="{B}/icon-192.png">' in r.text
+        assert r.headers["content-security-policy"] == CSP
+
+
 # -- rules --------------------------------------------------------------------
 
 

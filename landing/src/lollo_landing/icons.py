@@ -1,6 +1,7 @@
-"""The landing page's icon, drawn on first use so the repo carries no binary
-files: the lollo pages' look (an #7aa2f7 square) with an #0b1020 sprout, two
-leaves on a stem (full-bleed, so it also works as maskable)."""
+"""The landing page's icon, also the Lollo Home Screen app's (192 and 512 px),
+drawn on first use so the repo carries no binary files: the lollo pages' look
+(an #7aa2f7 square) with an #0b1020 sprout, two leaves on a stem (full-bleed,
+so it also works as maskable)."""
 
 from __future__ import annotations
 

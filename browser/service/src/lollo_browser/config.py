@@ -45,8 +45,6 @@ ENGINE_SECRET = re.compile(r"[A-Za-z0-9_-]{16,256}")
 PREFIX = "/browser"
 # A live-view ticket is good once, for this long.
 TICKET_TTL_SECONDS = 30
-# Pushes: how long a push service keeps one for an offline device.
-PUSH_TTL_SECONDS = 600
 # Two recognised checkout submits on one tab closer than this are one.
 CHECKOUT_DEDUPE_SECONDS = 10
 
@@ -57,16 +55,13 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class PageSettings:
-    """The lollo page's settings (lollo_common.auth.AccessSettings), push keys and the display."""
+    """The lollo page's settings (lollo_common.auth.AccessSettings) and the display."""
 
     team_domain: str
     audience: str
     issuer: str
     allowed_users: frozenset[str]
     public_origin: str
-    vapid_public_key: str
-    vapid_private_key: str
-    vapid_contact: str
     # host:port of the engine's VNC server, and its password (the engine
     # secret's first 8 characters: VNC authentication uses at most 8).
     vnc_host: str
@@ -145,9 +140,6 @@ def _page(env: dict[str, str], secret: str) -> PageSettings:
         issuer=env.get("CF_ACCESS_ISSUER", "").strip() or f"https://{team}.cloudflareaccess.com",
         allowed_users=users,
         public_origin=origin,
-        vapid_public_key=required("BROWSER_VAPID_PUBLIC_KEY"),
-        vapid_private_key=required("BROWSER_VAPID_PRIVATE_KEY"),
-        vapid_contact=required("PUSH_VAPID_CONTACT_EMAIL"),
         vnc_host=m.group(1),
         vnc_port=int(m.group(2)),
         vnc_password=secret[:8],

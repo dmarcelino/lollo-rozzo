@@ -63,5 +63,5 @@ def setup() -> None:
     root.handlers[:] = [handler]
     root.setLevel(logging.INFO)
     # Libraries that could log request or response details at DEBUG stay quiet.
-    for name in ("httpcore", "httpx", "urllib3", "jwt", "pywebpush", "mcp", "uvicorn.access"):
+    for name in ("httpcore", "httpx", "urllib3", "jwt", "mcp", "uvicorn.access"):
         logging.getLogger(name).setLevel(logging.WARNING)

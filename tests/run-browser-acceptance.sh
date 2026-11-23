@@ -81,7 +81,10 @@ BROWSER_ENGINE_SECRET=$(rand 48 40)
 ACC_SECRET="Pw-$(rand 24 16)!"
 ACC_CARD="4$(head -c 64 /dev/urandom | od -An -tu1 | LC_ALL=C tr -dc '0-9' | head -c 15)"
 ACC_TOTP_KEY=$(head -c 400 /dev/urandom | LC_ALL=C tr -dc 'A-Z2-7' | head -c 32)
-export BROWSER_ENGINE_SECRET ACC_SECRET ACC_CARD ACC_TOTP_KEY
+# The browser's token for the notifications service, which is not started here:
+# a notice it sends fails and decides nothing, as a hand-off just waits.
+NOTIFY_TOKEN=$(head -c 32 /dev/urandom | od -An -tx1 | LC_ALL=C tr -dc '0-9a-f' | head -c 64)
+export BROWSER_ENGINE_SECRET ACC_SECRET ACC_CARD ACC_TOTP_KEY NOTIFY_TOKEN
 
 docker network create --internal "$id-default" >/dev/null && networks+=("$id-default")
 docker network create --internal "$id-browser" >/dev/null && networks+=("$id-browser")
@@ -164,8 +167,7 @@ docker create --name "$id-service" --network "$id-default" --network-alias lollo
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true --memory 512m --pids-limit 128 \
   -v "$id-data:/data" \
   -e BROWSER_ENGINE_URL=ws://lollo-browser-engine:3000 -e BROWSER_ENGINE_SECRET \
-  -e BROWSER_VNC=lollo-browser-engine:5900 -e BROWSER_VAPID_PUBLIC_KEY=acceptance-public \
-  -e BROWSER_VAPID_PRIVATE_KEY=acceptance-private -e PUSH_VAPID_CONTACT_EMAIL=alfred@gmail.com \
+  -e BROWSER_VNC=lollo-browser-engine:5900 -e NOTIFY_TOKEN \
   -e CF_ACCESS_TEAM_DOMAIN=team1 -e CF_ACCESS_AUD=aud2 -e ALLOWED_USERS=alfred@gmail.com \
   -e PUBLIC_ORIGIN=https://alfred-lollo.example.com -e TZ=UTC \
   "$SERVICE" >/dev/null

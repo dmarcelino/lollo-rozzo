@@ -133,7 +133,7 @@ class Page:
         return self.client.get(path, headers={**NAVIGATE, "cf-access-jwt-assertion": self.token, **headers})
 
     def csrf(self) -> str:
-        return re.search(r'name="csrf" content="([0-9a-f]+)"', self.get("/browser/notifications").text).group(1)
+        return re.search(r'name="csrf" content="([0-9a-f]+)"', self.get("/browser/sites").text).group(1)
 
     def post(self, path: str, data: dict[str, Any] | None = None, **headers: str):
         form = {"csrf": self.csrf(), **(data or {})}
@@ -202,7 +202,7 @@ def test_not_signed_in_or_wrong_application_is_refused(page, signing_key):
 
 
 def test_every_response_sets_coop_and_csp(page):
-    for path in ("/browser/", "/browser/sites", "/browser/audit", "/browser/live", "/browser/notifications"):
+    for path in ("/browser/", "/browser/sites", "/browser/audit", "/browser/live"):
         r = page.get(path)
         assert r.status_code == 200, path
         assert r.headers["cross-origin-opener-policy"] == "same-origin"
@@ -414,14 +414,34 @@ def test_audit_page_names_a_payment_provider(page, sites):
     assert "in stripe.com's frame" in html and SECRET not in html
 
 
-def test_push_subscriptions_and_test(page):
-    sub = {"endpoint": "https://push.example/device-2", "keys": {"p256dh": "k", "auth": "a"}}
-    assert page.post_json("/browser/push/subscribe", sub).json() == {"ok": True}
-    assert any(s["endpoint"] == sub["endpoint"] for s in page.parts.service.pusher.subscriptions.all())
-    assert page.post_json("/browser/push/subscribe", {"endpoint": "http://x", "keys": {}}).status_code == 400
-    assert page.post_json("/browser/push/test", {}).json() == {"delivered": 2}
-    page.post_json("/browser/push/unsubscribe", {"endpoint": sub["endpoint"]})
-    assert len(page.parts.service.pusher.subscriptions.all()) == 1
+def test_notifications_are_the_lollos_own_page(page):
+    """The browser holds no subscriptions and no switch: its pages link the
+    lollo's notifications page and manifest, and register no service worker."""
+    for path in ("/browser/notifications", "/browser/manifest.webmanifest", "/browser/icon-512.png"):
+        assert page.get(path).status_code == 404, path
+    for path in ("/browser/push/subscribe", "/browser/push/unsubscribe", "/browser/push/test"):
+        assert page.post_json(path, {}).status_code in (404, 405), path
+    html = page.get("/browser/").text
+    assert '<a href="/notifications/">Notifications</a>' in html
+    assert '<link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">' in html
+    assert '<link rel="apple-touch-icon" href="/assets/icon-192.png">' in html
+    assert 'name="vapid"' not in html
+    # The icon the page itself shows stays.
+    assert page.get("/browser/icon-192.png").headers["content-type"] == "image/png"
+    app_js = page.get("/browser/app.js").text
+    assert "serviceWorker" not in app_js and "pushManager" not in app_js
+    csp = page.get("/browser/").headers["content-security-policy"]
+    assert "manifest-src 'self'" in csp and "worker-src" not in csp
+
+
+def test_sw_js_only_unregisters_itself(page):
+    """An installed worker is removed by a changed script, not by a 404."""
+    r = page.get("/browser/sw.js")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
+    code = "\n".join(line for line in r.text.splitlines() if not line.startswith("//"))
+    assert "skipWaiting()" in code and "self.registration.unregister()" in code
+    for gone in ("push", "showNotification", "notificationclick", "fetch", "clients"):
+        assert gone not in code, gone
 
 
 # ── the live view ────────────────────────────────────────────────────────────

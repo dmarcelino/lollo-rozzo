@@ -1,6 +1,7 @@
 """The person's page at /browser/ on the lollo host (specs/browser/live-view):
 hand-offs, tasks with take-over and give-back, the live view, per-site
-settings and kept sign-ins, the audit log and notifications.
+settings and kept sign-ins, and the audit log. Notifications are the lollo's
+own page, /notifications/ (the notifications service), linked from every page.
 
 Every route needs a verified Access JWT for the lollo's own application
 (lollo_common.auth), passes the Fetch Metadata check, and every change needs
@@ -37,7 +38,6 @@ from . import icons, vnc
 from .audit import AuditLog
 from .config import PREFIX, TICKET_TTL_SECONDS, PageSettings
 from .handoffs import HandoffError, Handoffs
-from .push import Pusher
 from .sessions import Sessions, SiteError
 from .tasks import BrowserError, BrowserService
 
@@ -56,7 +56,7 @@ def security_headers(origin: str) -> dict[str, str]:
         # noVNC draws PNG and JPEG rectangles through data: images, and talks
         # to the relay over this host's WebSocket.
         "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; "
-        f"img-src 'self' data: blob:; connect-src 'self' wss://{host}; manifest-src 'self'; worker-src 'self'; "
+        f"img-src 'self' data: blob:; connect-src 'self' wss://{host}; manifest-src 'self'; "
         "frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'",
         "x-content-type-options": "nosniff",
         # same-origin, not no-referrer: with no-referrer browsers send `Origin: null`
@@ -116,7 +116,6 @@ def page_routes(
     service: BrowserService,
     settings: PageSettings,
     authenticator: Authenticator,
-    pusher: Pusher,
     tickets: Tickets | None = None,
     connect_vnc: Callable[[], Awaitable[Any]] | None = None,
 ) -> list[BaseRoute]:
@@ -140,7 +139,6 @@ def page_routes(
         html = env.get_template(name).render(
             email=email,
             csrf=authenticator.csrf_token(email) if email else "",
-            vapid_public_key=settings.vapid_public_key,
             pending_count=len(handoffs.pending()) if email else 0,
             **ctx,
         )
@@ -153,7 +151,7 @@ def page_routes(
         return RedirectResponse(PREFIX + path, status_code=303, headers=headers)
 
     def page(handler: Handler, post: bool = False, asset: bool = False) -> Callable[[Request], Awaitable[Response]]:
-        """`asset`: a script, stylesheet, icon or manifest; it holds nothing to protect."""
+        """`asset`: a script, stylesheet or icon; it holds nothing to protect."""
 
         async def endpoint(request: Request) -> Response:
             is_json = request.headers.get("content-type", "").startswith("application/json")
@@ -375,49 +373,6 @@ def page_routes(
         entries = audit.read(limit=500, task=task, site=site)
         return render("audit.html", email, entries=entries, task=task or "", site=site or "")
 
-    # ── notifications ────────────────────────────────────────────────────
-
-    async def notifications(request: Request, email: str) -> Response:
-        mine = [s for s in pusher.subscriptions.all() if s.get("email") == email]
-        return render("notifications.html", email, devices=len(mine))
-
-    def bad(message: str) -> JSONResponse:
-        return JSONResponse({"error": message}, status_code=400, headers=headers)
-
-    async def push_subscribe(request: Request, email: str) -> Response:
-        try:
-            data = json.loads(await request.body())
-            endpoint, keys = data["endpoint"], data["keys"]
-            p256dh, auth_key = keys["p256dh"], keys["auth"]
-        except ValueError, KeyError, TypeError:
-            return bad("invalid subscription")
-        if not (isinstance(endpoint, str) and endpoint.startswith("https://") and len(endpoint) < 2048):
-            return bad("invalid endpoint")
-        if not (isinstance(p256dh, str) and isinstance(auth_key, str) and len(p256dh) < 256 and len(auth_key) < 64):
-            return bad("invalid keys")
-        pusher.subscriptions.add(endpoint, p256dh, auth_key, email)
-        return JSONResponse({"ok": True}, headers=headers)
-
-    async def push_unsubscribe(request: Request, email: str) -> Response:
-        try:
-            endpoint = json.loads(await request.body())["endpoint"]
-        except ValueError, KeyError, TypeError:
-            return bad("invalid request")
-        if isinstance(endpoint, str):
-            pusher.subscriptions.remove(endpoint)
-        return JSONResponse({"ok": True}, headers=headers)
-
-    async def push_test(request: Request, email: str) -> Response:
-        sent = await pusher.send(
-            {
-                "title": "Test notification",
-                "body": "Hand-offs and checkouts will arrive like this.",
-                "url": PREFIX + "/",
-                "tag": "test",
-            }
-        )
-        return JSONResponse({"delivered": sent}, headers=headers)
-
     # ── static: behind Access too (fetched with the Access cookie) ───────
 
     def static_bytes(body: bytes, media_type: str) -> Handler:
@@ -471,20 +426,11 @@ def page_routes(
         Route(p + "/sites/forget", page(site_forget, post=True), methods=["POST"]),
         Route(p + "/sites/forget-all", page(forget_all, post=True), methods=["POST"]),
         Route(p + "/audit", page(audit_page)),
-        Route(p + "/notifications", page(notifications)),
-        Route(p + "/push/subscribe", page(push_subscribe, post=True), methods=["POST"]),
-        Route(p + "/push/unsubscribe", page(push_unsubscribe, post=True), methods=["POST"]),
-        Route(p + "/push/test", page(push_test, post=True), methods=["POST"]),
         Route(p + "/sw.js", page(static_file("sw.js", "text/javascript"), **asset)),
         Route(p + "/app.js", page(static_file("app.js", "text/javascript"), **asset)),
         Route(p + "/live.js", page(static_file("live.js", "text/javascript"), **asset)),
         Route(p + "/lollo.css", page(static_bytes(stylesheet(), "text/css"), **asset)),
         Route(p + "/app.css", page(static_file("app.css", "text/css"), **asset)),
-        Route(
-            p + "/manifest.webmanifest",
-            page(static_file("manifest.webmanifest", "application/manifest+json"), **asset),
-        ),
         Route(p + "/icon-192.png", page(icon(192), **asset)),
-        Route(p + "/icon-512.png", page(icon(512), **asset)),
         Route(p + "/novnc/{path:path}", page(novnc, **asset)),
     ]

@@ -41,7 +41,8 @@ Operation (<target> is a stack name or "all")
                                 (lollo-vault), News Radar (lollo-news-radar) and the browser (lollo-browser)
                                 to Settings -> MCP, once per stack
                                 (--force: again, also where the person removed them)
-  backup <target> <dir> [opts]  copy agents, memory, workspaces, tools, vault, News Radar and receipts to <dir>/<name>/
+  backup <target> <dir> [opts]  copy agents, memory, workspaces, tools, vault, News Radar, notification
+                                subscriptions and receipts to <dir>/<name>/
                                 (--compress: a tar.gz instead; --no-tools; --with-google: Lettuce's Google
                                 tokens too; --pause|--live; --keep N)
   restore <name> <backup>       put a stack back from one backup (a snapshot directory or a .tar.gz), here or
@@ -409,8 +410,15 @@ executor_out_of_step() {
 
 # up_stack NAME -> checks one stack, then builds and starts it
 up_stack() {
+  local routed=1
   sync_push_contact "$1"
   ensure_executor_token "$1"
+  # No keypair yet: a stack from before the notifications service, whose tunnel
+  # has no /notifications/ route. `up` makes no Cloudflare call; `profiles`
+  # applies the routes (`add` and `profiles` make the keypair first themselves).
+  notify_keypair_missing "$1" && routed=0
+  ensure_notify_secrets "$1"
+  ((routed)) || notify_route_reminder "$1"
   ensure_browser_secrets "$1"
   sync_lollo_profiles "$1"
   sync_news_radar_settings "$1"
@@ -429,6 +437,16 @@ up_stack() {
   # instead of building from a context the released image does not carry. An
   # image already on the host is not pulled again.
   compose "$1" up -d --no-build --pull missing --remove-orphans
+}
+
+# notify_route_reminder NAME -> with a sender on, says to run `profiles` once
+# (with the current list, which changes and restarts nothing), so the tunnel
+# routes the stack's /notifications/
+notify_route_reminder() {
+  local f
+  f=$(stack_env "$1")
+  [[ -n $(notify_profiles "$(env_get "$f" COMPOSE_PROFILES)") ]] || return 0
+  warn "$1: the tunnel does not route https://$(env_get "$f" LOLLO_HOSTNAME)/notifications/ yet, and up makes no Cloudflare call; run once: lolloctl profiles $(cfg PROFILES) (the current list: it routes every stack and restarts none)"
 }
 
 # The line the browser's engine logs, before it exits 3, when Chromium's
@@ -921,6 +939,9 @@ cmd_add() {
   conf_set "$name" "$emails" || die "could not write $(stacks_conf)"
   local hint="Cloudflare setup of '$name' stopped part-way; what exists is recorded in stacks/$name/stack.env. Fix the cause, then re-run: lolloctl add $name $emails"
   lollo=$(env_get "$f" LOLLO_HOSTNAME)
+  # Before the tunnel's routes, which include /notifications/, so the up below
+  # finds the keypair and has no route to remind of (notify_route_reminder).
+  ensure_notify_secrets "$name"
 
   if [[ -z $(env_get "$f" CF_ACCESS_POLICY_ID) ]]; then
     id=$(cf_policy_create "$acc" "lollo-$name" "$emails") || die "$hint"
@@ -1113,6 +1134,9 @@ cmd_remove() {
   if has_volume "$name" browser-data; then
     info "Its browser's kept sign-ins, settings and audit log are deleted too: their volume goes with the stack (no backup holds them)."
   fi
+  if has_volume "$name" notifications-data; then
+    info "Its notification subscriptions (every device enrolled for the lollo's notifications) are deleted too: their volume goes with the stack."
+  fi
   state=$(env_get "$f" LETTA_STATE_DIR)
   if has_profile "$(env_get "$f" COMPOSE_PROFILES)" lollo-gmail-triggers || [[ -n $state && -d $state/lollo/gmail-triggers ]]; then
     info "Its Gmail triggers stop with it; their rules are in its state, so they go only with --purge."
@@ -1245,10 +1269,12 @@ cmd_profiles() {
 
   # Every run syncs the executor on running stacks, so each needs its token,
   # also when the list is unchanged (a deleted token is made again).
-  # The browser's keys and secret likewise, so a list that turns it on passes
-  # check_stack on a stack made before it existed.
+  # The notifications service's keys and tokens, and the browser's secret,
+  # likewise, so a list that turns a sender on passes check_stack on a stack
+  # made before them.
   for n in "${stacks[@]}"; do
     ensure_executor_token "$n"
+    ensure_notify_secrets "$n"
     ensure_browser_secrets "$n"
   done
 
@@ -1893,6 +1919,7 @@ BACKUP_VOLUMES=(
   "vault vault-data 10001:10001 700 always"
   "pipelock pipelock-data 65532:65532 700 always"
   "news-radar news-radar-data 10002:10002 700 always"
+  "notifications notifications-data 10005:10005 700 always"
   "google-policy google-policy 0:0 755 google"
   "google-creds google-creds 0:0 755 google"
 )
