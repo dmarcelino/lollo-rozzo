@@ -11,4 +11,6 @@ news-radar          news-radar          lollo-common  lollo-news-radar
 pipelock            pipelock            -              lollo-pipelock
 code-server         code-server         lollo-common  lollo-code-server
 code-server-editor  code-server/editor  -              lollo-code-server-editor
+browser             browser/service     lollo-common  lollo-browser
+browser-engine      browser/engine      -              lollo-browser-engine
 backup              backup              -              -

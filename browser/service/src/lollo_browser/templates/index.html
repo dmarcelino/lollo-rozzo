@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Tasks{% endblock %}
+{% block content %}
+<h1>Browser</h1>
+{% if not connected %}
+<div class="banner warn" role="status"><p>The browser engine is not connected right now; agents can't browse until it is back.</p></div>
+{% endif %}
+
+<h2>Waiting for you</h2>
+{% if handoffs %}
+<div class="stack">
+  {% for h in handoffs %}
+  <section class="panel pending" id="h-{{ h.id }}">
+    <div class="row-between">
+      <strong>{% if h.kind == "checkout" %}Checkout{% else %}Hand-off{% endif %}</strong>
+      <span class="muted small">{{ h.created|time }}</span>
+    </div>
+    <blockquote>{{ h.summary }}</blockquote>
+    <p class="small">Task: {{ purposes.get(h.task_id, h.task_id) }}<br>Site: {{ h.site or "none" }}<br>
+      <span class="url">Page: {{ h.url }}</span></p>
+    <div class="form-actions">
+      <a class="button" href="{{ base }}/h/{{ h.id }}">Open</a>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty"><p class="muted">Nothing is waiting for you.</p></div>
+{% endif %}
+
+<h2>Open tasks</h2>
+{% if tasks %}
+<div class="stack">
+  {% for t in tasks %}
+  <section class="panel">
+    <div class="row-between">
+      <strong>{{ t.purpose }}</strong>
+      <span class="muted small">{{ t.task }}, started {{ t.age|age }} ago</span>
+    </div>
+    {% if t.tabs %}
+    <ul class="tabs-list">
+      {% for tab in t.tabs %}
+      <li>
+        <span class="url">{{ tab.tab }}: {{ tab.url }}</span>
+        {% if tab.controlled %}<span class="pill warn">you have control</span>{% endif %}
+        <span class="tab-actions">
+          <a href="{{ base }}/live?task={{ t.task }}&amp;tab={{ tab.tab }}">Watch</a>
+          {% if tab.controlled %}
+          <form method="post" action="{{ base }}/tasks/{{ t.task }}/tabs/{{ tab.tab }}/give" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><button class="button ghost">Give back</button>
+          </form>
+          {% else %}
+          <form method="post" action="{{ base }}/tasks/{{ t.task }}/tabs/{{ tab.tab }}/take" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><button class="button ghost">Take over</button>
+          </form>
+          {% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted small">No tabs open.</p>{% endif %}
+    <form method="post" action="{{ base }}/tasks/{{ t.task }}/end" data-confirm="End this task and close its tabs?">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button danger outline">End task</button>
+    </form>
+  </section>
+  {% endfor %}
+  <form method="post" action="{{ base }}/tasks/end-all" data-confirm="End every task and close every tab?">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button danger">End all tasks</button>
+  </form>
+</div>
+{% else %}
+<div class="empty"><p class="muted">No agent is browsing.</p></div>
+{% endif %}
+{% include "_checkout_note.html" %}
+{% endblock %}

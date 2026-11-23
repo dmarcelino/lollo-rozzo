@@ -211,6 +211,16 @@ case $args in
     done
     exit "${STUB_VOLUME_RC:-0}"
     ;;
+  # Starting the browser's engine alone (start_browser_engine) exits with
+  # STUB_ENGINE_UP_RC, or 1 for the projects in STUB_ENGINE_UP_FAIL (lollo-NAME,
+  # space-separated); its logs are engine-logs.
+  *" up -d "*" lollo-browser-engine ")
+    project=${args#* -p }
+    project=${project%% *}
+    [[ " ${STUB_ENGINE_UP_FAIL:-} " != *" $project "* ]] || exit 1
+    exit "${STUB_ENGINE_UP_RC:-0}"
+    ;;
+  *" logs "*" lollo-browser-engine ") cat "$STUB_ROOT/engine-logs" 2>/dev/null ;;
   *" pause ") exit "${STUB_PAUSE_RC:-0}" ;;
   *" restart --no-deps bff ") exit "${STUB_RESTART_RC:-0}" ;;
   *" ps --status running --services "*)
@@ -324,6 +334,7 @@ case $args in
         lollo-news-radar) echo lollo-news-radar ;;
         lollo-pipelock) echo lollo-pipelock ;;
         lollo-code-server) printf '%s\n' lollo-code-server lollo-code-server-editor lollo-code-server-exec ;;
+        lollo-browser) printf '%s\n' lollo-browser-engine lollo-browser ;;
         lollo-doc-tools) ;;
       esac
     done

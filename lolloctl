@@ -38,7 +38,8 @@ Operation (<target> is a stack name or "all")
   check <target>                refuse unsafe or inconsistent configuration
   skills <target>               install agent-skills/ into running stacks (every agent of the stack)
   mcp <target> [--force]        add the document tools (office, pdf; lollo-doc-tools profile), the vault
-                                (lollo-vault) and News Radar (lollo-news-radar) to Settings -> MCP, once per stack
+                                (lollo-vault), News Radar (lollo-news-radar) and the browser (lollo-browser)
+                                to Settings -> MCP, once per stack
                                 (--force: again, also where the person removed them)
   backup <target> <dir> [opts]  copy agents, memory, workspaces, tools, vault, News Radar and receipts to <dir>/<name>/
                                 (--compress: a tar.gz instead; --no-tools; --with-google: Lettuce's Google
@@ -410,6 +411,7 @@ executor_out_of_step() {
 up_stack() {
   sync_push_contact "$1"
   ensure_executor_token "$1"
+  ensure_browser_secrets "$1"
   sync_lollo_profiles "$1"
   sync_news_radar_settings "$1"
   check_stack "$1"
@@ -420,10 +422,34 @@ up_stack() {
   fi
   info "starting $1"
   build_local_images "$1"
+  if has_profile "$(env_get "$(stack_env "$1")" COMPOSE_PROFILES)" lollo-browser; then
+    start_browser_engine "$1"
+  fi
   # Never a build here: an image that should be published but is missing fails
   # instead of building from a context the released image does not carry. An
   # image already on the host is not pulled again.
   compose "$1" up -d --no-build --pull missing --remove-orphans
+}
+
+# The line the browser's engine logs, before it exits 3, when Chromium's
+# sandbox cannot start (browser/engine/).
+BROWSER_SANDBOX_FAILED="lollo-browser-engine: Chromium's sandbox failed"
+
+# start_browser_engine NAME -> starts the browser's engine alone, before the
+# rest of the stack, and waits until it is healthy. When Chromium's sandbox
+# cannot start on this host, it stops the engine and dies, naming the host
+# settings: the browser never runs without the sandbox, and nothing here
+# retries it any other way.
+start_browser_engine() {
+  local logs
+  compose "$1" up -d --no-build --pull missing --wait --wait-timeout 180 lollo-browser-engine && return 0
+  logs=$(compose "$1" logs --no-color --tail 200 lollo-browser-engine 2>&1) || logs=""
+  # Its restart policy would start it again and again.
+  compose "$1" stop lollo-browser-engine >/dev/null 2>&1 || warn "$1: could not stop lollo-browser-engine"
+  if grep -qF -- "$BROWSER_SANDBOX_FAILED" <<<"$logs"; then
+    die "$1: Chromium's sandbox cannot start on this host, so the browser does not run (it never runs without its sandbox). Allow unprivileged user namespaces (sysctl user.max_user_namespaces above 0, and on Debian kernels kernel.unprivileged_userns_clone=1) and keep Docker's default AppArmor profile, then run: lolloctl up $1 (docs/browser.md, \"Running it\"); or turn the lollo-browser profile off"
+  fi
+  die "$1: the browser's engine did not become healthy; see: lolloctl compose $1 logs lollo-browser-engine (docs/browser.md, \"Running it\")"
 }
 
 # build_local_images NAME -> builds the stack's images that are built on this
@@ -632,19 +658,20 @@ sync_doc_tools() {
 # ── lolloctl's servers in Settings -> MCP ──────────────────────────────────
 # Lettuce's shared MCP list belongs to its BFF. lib/mcp-servers.mjs adds or
 # removes only one group's own entries (the document tools: those that run one;
-# the vault: its exact HTTP entry), and refuses a file of any other shape; see
+# the vault, News Radar and the browser: their exact HTTP entry), and refuses a file of any other shape; see
 # it for why that is safe next to the BFF's own writes. Registering is once per
 # stack and group (the group's marker in stack.env), so a server the person
 # removed stays removed; with the group's profile off, its servers are taken
 # out again, since a server that cannot start or answer makes every
 # `letta mcp tools` call fail, the other servers' included.
 MCP_SETTINGS=/root/.letta/mcp-home/.letta/settings.json
-MCP_GROUPS=(doc-tools vault news-radar)
-declare -A MCP_PROFILE=([doc-tools]=lollo-doc-tools [vault]=lollo-vault [news-radar]=lollo-news-radar)
-declare -A MCP_MARKER=([doc-tools]=DOC_TOOLS_MCP_REGISTERED [vault]=VAULT_MCP_REGISTERED [news-radar]=NEWS_RADAR_MCP_REGISTERED)
-declare -A MCP_LABEL=([doc-tools]="the document tools" [vault]="the vault" [news-radar]="News Radar")
+MCP_GROUPS=(doc-tools vault news-radar browser)
+declare -A MCP_PROFILE=([doc-tools]=lollo-doc-tools [vault]=lollo-vault [news-radar]=lollo-news-radar [browser]=lollo-browser)
+declare -A MCP_MARKER=([doc-tools]=DOC_TOOLS_MCP_REGISTERED [vault]=VAULT_MCP_REGISTERED [news-radar]=NEWS_RADAR_MCP_REGISTERED
+  [browser]=BROWSER_MCP_REGISTERED)
+declare -A MCP_LABEL=([doc-tools]="the document tools" [vault]="the vault" [news-radar]="News Radar" [browser]="the browser")
 # What a same-named server of the person's differs in.
-declare -A MCP_KIND=([doc-tools]=command [vault]=URL [news-radar]=URL)
+declare -A MCP_KIND=([doc-tools]=command [vault]=URL [news-radar]=URL [browser]=URL)
 # Set by register_mcp_group and drop_mcp_group when they changed the list.
 MCP_CHANGED=0
 
@@ -669,6 +696,7 @@ mcp_reminder() {
         doc-tools) info "Documents: office and pdf are in $url Settings -> MCP (docs/doc-tools.md)" ;;
         vault) info "Vault: vault is in $url Settings -> MCP (docs/vault.md)" ;;
         news-radar) info "News Radar: news-radar is in $url Settings -> MCP (docs/news-radar.md)" ;;
+        browser) info "Browser: browser is in $url Settings -> MCP (docs/browser.md)" ;;
       esac
       continue
     fi
@@ -685,6 +713,10 @@ mcp_reminder() {
       news-radar)
         info "News Radar: in $url Settings -> MCP, add an HTTP server:"
         info "  news-radar -> http://lollo-news-radar:8000/mcp (docs/news-radar.md)"
+        ;;
+      browser)
+        info "Browser: in $url Settings -> MCP, add an HTTP server:"
+        info "  browser -> http://lollo-browser:8000/mcp (docs/browser.md)"
         ;;
     esac
   done
@@ -1078,6 +1110,9 @@ cmd_remove() {
   if has_news_radar "$name"; then
     info "Its monitors, their sources and what they found are deleted too: their volume goes with the stack."
   fi
+  if has_volume "$name" browser-data; then
+    info "Its browser's kept sign-ins, settings and audit log are deleted too: their volume goes with the stack (no backup holds them)."
+  fi
   state=$(env_get "$f" LETTA_STATE_DIR)
   if has_profile "$(env_get "$f" COMPOSE_PROFILES)" lollo-gmail-triggers || [[ -n $state && -d $state/lollo/gmail-triggers ]]; then
     info "Its Gmail triggers stop with it; their rules are in its state, so they go only with --purge."
@@ -1190,8 +1225,8 @@ cmd_remove() {
 
 cmd_profiles() {
   (($# <= 1)) || die "usage: lolloctl profiles [<profile>,<profile>...]"
-  local new n changed="" stale running docs=1
-  local -a stacks gone failed=() unrouted=() executors=() undropped=()
+  local new n changed="" stale running docs=1 rc kept=0
+  local -a stacks gone failed=() unrouted=() executors=() undropped=() unstarted=()
   mapfile -t stacks < <(list_stacks)
   if (($# == 0)); then
     require_config
@@ -1210,8 +1245,11 @@ cmd_profiles() {
 
   # Every run syncs the executor on running stacks, so each needs its token,
   # also when the list is unchanged (a deleted token is made again).
+  # The browser's keys and secret likewise, so a list that turns it on passes
+  # check_stack on a stack made before it existed.
   for n in "${stacks[@]}"; do
     ensure_executor_token "$n"
+    ensure_browser_secrets "$n"
   done
 
   if [[ -n $changed ]]; then
@@ -1236,9 +1274,21 @@ cmd_profiles() {
     route_stack "$n" || unrouted+=("$n")
   done
 
+  # One stack that does not start (the browser's sandbox refused by the host,
+  # a failed build) must not keep the others from starting: the lists are
+  # written already, so a re-run would find nothing to change. Each failure is
+  # reported at the end, with the `up` that starts it. Not `(up_stack) ||`,
+  # which would turn errexit off inside it.
   if [[ -n $changed ]]; then
     for n in "${stacks[@]}"; do
-      up_stack "$n"
+      set +e
+      (
+        set -e
+        up_stack "$n"
+      )
+      rc=$?
+      set -e
+      ((rc == 0)) || unstarted+=("$n")
     done
   else
     info "profiles are already $new everywhere; nothing to change"
@@ -1247,17 +1297,28 @@ cmd_profiles() {
   # Compose leaves the containers of a dropped profile running. This looks at
   # what exists rather than at what changed, so a re-run also clears what an
   # interrupted run left behind.
+  # A stack that did not start keeps them: its old app-server still runs, with
+  # their servers in Settings -> MCP and its executor, which its `up` syncs;
+  # removing them first would fail every `letta mcp tools` call until then.
+  # The same command, run again after that `up`, removes them.
   for n in "${stacks[@]}"; do
     stale=$(stale_services "$n")
     [[ -n $stale ]] || continue
     mapfile -t gone <<<"$stale"
+    if [[ " ${unstarted[*]} " == *" $n "* ]]; then
+      info "$n: keeping ${gone[*]} (their profile is off) until it starts"
+      kept=1
+      continue
+    fi
     info "$n: removing ${gone[*]} (their profile is off)"
     compose "$n" rm -sf "${gone[@]}" || failed+=("$n")
   done
   # The executor follows the profile on every running stack, on every run, so a
   # re-run repairs a failed install or removal; a stopped stack gets it right
   # at its next `up`.
+  # A stack that did not start gets both at its `up`.
   for n in "${stacks[@]}"; do
+    [[ " ${unstarted[*]} " != *" $n "* ]] || continue
     if ! executor_wanted "$new" && ! executor_installed "$n"; then
       continue
     fi
@@ -1279,6 +1340,7 @@ cmd_profiles() {
   # the servers registered in Settings -> MCP.
   sync_doc_tools || docs=0
   for n in "${stacks[@]}"; do
+    [[ " ${unstarted[*]} " != *" $n "* ]] || continue
     drop_mcp_servers "$n" || undropped+=("$n")
   done
 
@@ -1297,6 +1359,15 @@ cmd_profiles() {
   ((${#executors[@]} == 0)) || warn "could not sync the lollo executor of: ${executors[*]}"
   ((docs)) || warn "could not sync the document tools (shared Gotenberg, networks)"
   ((${#undropped[@]} == 0)) || warn "could not remove servers whose profile is off from Settings -> MCP in: ${undropped[*]}"
+  if ((${#unstarted[@]})); then
+    # `up` takes one stack or all of them.
+    n=all
+    ((${#unstarted[@]} > 1)) || n=${unstarted[0]}
+    warn "the profiles are set, but these stacks did not start: ${unstarted[*]} (see the messages above)"
+    ((kept + ${#unrouted[@]} + ${#failed[@]} + ${#executors[@]} + ${#undropped[@]} == 0 && docs)) ||
+      die "fix the cause, then run: lolloctl up $n, then the same command again"
+    die "fix the cause, then run: lolloctl up $n"
+  fi
   ((${#unrouted[@]} + ${#failed[@]} + ${#executors[@]} + ${#undropped[@]} == 0 && docs)) || die "run the same command again"
 }
 
@@ -1814,6 +1885,10 @@ backup_prune() {
 # image's owner; one restore creates would be root's). <only> google: only with
 # --with-google, as Lettuce's Google client and tokens are; a refresh token
 # opens the person's mail and Drive, and reconnecting costs them a minute.
+# Not browser-data, on purpose: it holds the browser's kept sign-ins (live
+# session cookies for the sites people chose), which a backup would copy to
+# wherever backups go, readable by whoever holds them. People sign in again and
+# set the browser up again after a restore (docs/browser.md).
 BACKUP_VOLUMES=(
   "vault vault-data 10001:10001 700 always"
   "pipelock pipelock-data 65532:65532 700 always"
@@ -2323,7 +2398,7 @@ cmd_mcp() {
   require_initialised
   mapfile -t groups < <(mcp_groups "$(cfg PROFILES)")
   ((${#groups[@]})) ||
-    die "the lollo-doc-tools, lollo-vault and lollo-news-radar profiles are all off; turn one on first, e.g.: lolloctl profiles $(cfg PROFILES),lollo-doc-tools"
+    die "the lollo-doc-tools, lollo-vault, lollo-news-radar and lollo-browser profiles are all off; turn one on first, e.g.: lolloctl profiles $(cfg PROFILES),lollo-doc-tools"
   targets=$(expand_targets "$1")
   for n in $targets; do
     register_mcp "$n" "${2:-}" "${groups[@]}" || failed+=("$n")

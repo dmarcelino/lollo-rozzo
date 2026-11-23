@@ -52,6 +52,7 @@ LABELS = {
     "lollo-gmail-triggers": ("Gmail triggers", "Ask an agent to act when mail arrives"),
     "lollo-news-radar": ("News Radar", "What your agents keep an eye on, and when they report"),
     "lollo-code-server": ("Code editor", "Your agents' files in VS Code"),
+    "lollo-browser": ("Browser", "Watch, take over and limit what your agents do on the web"),
 }
 
 Handler = Callable[[Request, str], Awaitable[Response]]
