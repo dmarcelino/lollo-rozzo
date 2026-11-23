@@ -186,14 +186,14 @@ tests/run-sidecar.sh browser           # the browser's service (pytest in its im
 - **Before changing docs:** `node scripts/check-doc-links.mjs`.
 - **End to end**, against real images (Docker, and the internet for the first build; throwaway containers only): `scripts/doc-tools-e2e.sh`, and `scripts/code-server-e2e.sh --browser` before keeping a new code editor extension or setting.
 
-CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release or dev build (`publish.yml` calls it, on the commit it publishes). A new test script or linted file goes there too, and in both copies of the block above.
+CI (`.github/workflows/ci.yml`) runs all of these but the end-to-end scripts on every branch push, by hand from Actions ("Run workflow"), and before every release or dev build (`publish.yml` calls it, on the commit it publishes). A new test script or linted file goes there too, and in both copies of the block above. A new job also goes in the `needs` of `ci-passed`, the job that passes only when every other one did: it is the one check the `Main branch` ruleset requires, so a job missing from it would not hold back a merge. `test_ci_gate_needs_every_job` (`scripts/check-ci-gate.sh`) fails when one is missing.
 
 ## Dependency updates
 Renovate keeps the pinned versions current. It runs from `.github/workflows/renovate.yml` as a GitHub App, reads `.github/renovate.json5`, and opens a PR per update (one per package across the `pyproject.toml` files). CI runs on each, as on any branch.
 
 - **What it updates.** The Actions in `.github/workflows/`; the base images of every Dockerfile and the Gotenberg image in `compose/shared/gotenberg.yml`; the packages of each `pyproject.toml`; and, through its own regex rules, the pins no built-in manager reads: `config.env.example`'s `LETTUCE_REF`, `SHELLCHECK_VERSION`, `PIPELOCK_VERSION`, `CODE_SERVER_VERSION`, `OFFICEAGENT_VERSION`, doc-tools' `PYTHON_VERSION`, the images and pip pins of the test and end-to-end scripts, and Renovate's own version. A new pin uses one of those forms, or gets its own rule in `renovate.json5`.
 - **When.** Tuesdays and Fridays at 16:17 UTC, Saturdays and Sundays at 07:17 UTC: `renovate.yml`'s cron, the only schedule. GitHub may start a run hours late or skip one, so `renovate.json5` has no `schedule` of its own: with one, a late run would create and update nothing. "Run workflow" runs it now.
-- **What merges on its own.** Patch, minor and digest updates three days after their release (Lettuce's one day), once CI passes: Renovate turns on GitHub's auto-merge, and the `Main branch` ruleset requires CI's jobs. Never a major update, and not these, whose PRs name what to do first:
+- **What merges on its own.** Patch, minor and digest updates three days after their release (Lettuce's one day), once CI passes: Renovate turns on GitHub's auto-merge, and the `Main branch` ruleset requires CI's `ci-passed` job, which passes only when every other CI job passed. Never a major update, and not these, whose PRs name what to do first:
   - Lettuce, code-server and Gotenberg minor updates. Their upgrades have steps CI does not run ([the checklist above](#upgrading-lettuce_ref), [code-server's](code-server/README.md#maintaining), [Gotenberg's](doc-tools/README.md#maintaining)), so only their patch updates merge on their own.
   - A Lettuce tag that moves letta-code, even a patch one: it moves the app-server.
   - A new Python minor, which changes every sidecar's interpreter.
@@ -208,7 +208,7 @@ Renovate keeps the pinned versions current. It runs from `.github/workflows/reno
   1. A GitHub App with no webhook, with read and write on Contents, Pull requests, Issues (Renovate's dashboard issue), Workflows, Commit statuses (Renovate's own checks; without it a run stops after its first branch) and Checks, and read on Metadata, installed on this repository only.
   2. Its Client ID (on the App's settings page, under "About") as the repository variable `RENOVATE_CLIENT_ID`, and its private key as the secret `RENOVATE_APP_PRIVATE_KEY`.
   3. "Allow auto-merge" on in the repository's settings.
-  4. The `Main branch` ruleset requiring CI's jobs (`shellcheck`, `cli`, each `sidecar (<dir>)`, `pipelock`, `browser-acceptance`, `docs`), with repository admins allowed to bypass it so pushes to `main` still work. Without the required checks, GitHub's auto-merge would merge before CI ends.
+  4. The `Main branch` ruleset requiring the status check `ci-passed` (from GitHub Actions) and nothing else, with repository admins allowed to bypass it so pushes to `main` still work. That job waits for every other CI job and fails unless all passed, so a new job needs no ruleset change. Without the required check, GitHub's auto-merge would merge before CI ends.
 
 ## Writing docs
 Each audience has its own place:

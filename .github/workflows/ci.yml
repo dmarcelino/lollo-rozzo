@@ -1,7 +1,8 @@
 # The checks of CONTRIBUTING.md "Building and testing" (and AGENTS.md
 # "Commands"), run as an operator would run them, on every branch push, by
 # hand, and by publish.yml before it publishes anything (workflow_call). A new
-# test script or linted file goes here too, and in both docs.
+# test script or linted file goes here too, and in both docs; a new job goes in
+# ci-passed's needs too (scripts/check-ci-gate.sh, run by tests/run.sh).
 # A push that changes only release/NOTES.md (the release skill's commit, just
 # before its tag) runs nothing: publish.yml runs these checks on the tag.
 name: CI
@@ -127,3 +128,20 @@ jobs:
           node-version: 24
       - run: |
           npx --yes --package "renovate@$(sed -n 's/^ *RENOVATE_VERSION: //p' .github/workflows/renovate.yml)" renovate-config-validator --strict
+
+  # The one check the Main branch ruleset requires (CONTRIBUTING.md, "Dependency
+  # updates"): it passes only when every job above passed, so a new job is
+  # required once it is in `needs`. Without `if: always()` it would be skipped
+  # when a job fails, and a skipped required check counts as passed.
+  ci-passed:
+    if: always()
+    needs: [shellcheck, cli, sidecar, doc-tools-arm64, pipelock, browser-acceptance, docs]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          jq -e 'all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null

@@ -7171,6 +7171,41 @@ test_doc_tools_lock_check_sees_a_pin_the_lock_lacks() {
     fail "expected mcp and pypdf reported, got: $(lock_lacks "$H/doc-tools/pyproject.toml" "$H/doc-tools/requirements.lock")"
 }
 
+# ── the CI gate ──────────────────────────────────────────────────────────────
+# The Main branch ruleset requires ci-passed alone: a job missing from its
+# needs is not required (scripts/check-ci-gate.sh).
+ci_gate() {
+  RC=0
+  "$ROOT/scripts/check-ci-gate.sh" "$@" >"$OUT" 2>&1 || RC=$?
+}
+
+test_ci_gate_needs_every_job() {
+  ci_gate "$ROOT/.github/workflows/ci.yml"
+  ok_rc
+  out_has "ci-passed needs every job"
+}
+
+test_ci_gate_names_a_job_missing_from_needs() {
+  sed 's/^\(    needs: \[.*\), docs\]$/\1]/' "$ROOT/.github/workflows/ci.yml" >"$T/ci.yml"
+  ci_gate "$T/ci.yml"
+  bad_rc
+  out_has "job docs is not in ci-passed's needs"
+}
+
+test_ci_gate_names_a_need_that_is_no_job() {
+  sed 's/^\(    needs: \[.*\)\]$/\1, gone]/' "$ROOT/.github/workflows/ci.yml" >"$T/ci.yml"
+  ci_gate "$T/ci.yml"
+  bad_rc
+  out_has "ci-passed needs gone, which is not a job"
+}
+
+test_ci_gate_runs_whatever_the_jobs_did() {
+  sed '/^  ci-passed:$/,$ { /^    if: always()$/d }' "$ROOT/.github/workflows/ci.yml" >"$T/ci.yml"
+  ci_gate "$T/ci.yml"
+  bad_rc
+  out_has "ci-passed does not run if: always()"
+}
+
 # ── run ──────────────────────────────────────────────────────────────────────
 # Every test has its own $T, so they run side by side. Each prints its block
 # (failure details, then its result) when it ends; the failures are listed
