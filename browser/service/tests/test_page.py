@@ -438,6 +438,14 @@ def test_live_view_relays_read_only_until_take_over(page, sites):
         assert vnc.closed.wait(5)
 
 
+def test_live_view_opens_without_fetch_metadata_as_chrome_sends_it(page):
+    # Chrome's WebSocket handshake carries Origin but no Sec-Fetch-* header.
+    headers = {"origin": ORIGIN, "cf-access-jwt-assertion": page.token}
+    with page.client.websocket_connect(f"/browser/live/ws?ticket={ticket(page)}", headers=headers) as ws:
+        Rfb(ws).handshake()
+        assert page.vnc.auth is True
+
+
 def test_live_view_without_a_tab_never_passes_input(page):
     with page.client.websocket_connect(
         f"/browser/live/ws?ticket={ticket(page)}", headers={**WS, "cf-access-jwt-assertion": page.token}
@@ -450,12 +458,30 @@ def test_live_view_without_a_tab_never_passes_input(page):
 
 @pytest.mark.parametrize(
     "change",
-    ["no token", "lettuce token", "cross-site", "other origin", "no origin", "no ticket", "reused ticket", "not ws"],
+    [
+        "no token",
+        "lettuce token",
+        "cross-site",
+        "other origin",
+        "no origin",
+        "no origin nor fetch metadata",
+        "other origin nor fetch metadata",
+        "no ticket",
+        "reused ticket",
+        "not ws",
+    ],
 )
 def test_live_view_refusals(page, signing_key, change):
     headers = {**WS, "cf-access-jwt-assertion": page.token}
     t = ticket(page)
-    if change == "no token":
+    if change.endswith("nor fetch metadata"):
+        for k in ("sec-fetch-mode", "sec-fetch-dest", "sec-fetch-site"):
+            headers.pop(k)
+        if change.startswith("no origin"):
+            headers.pop("origin")
+        else:
+            headers["origin"] = "https://evil.example"
+    elif change == "no token":
         headers.pop("cf-access-jwt-assertion")
     elif change == "lettuce token":
         headers["cf-access-jwt-assertion"] = make_jwt(signing_key, aud=["lettuce-aud"])

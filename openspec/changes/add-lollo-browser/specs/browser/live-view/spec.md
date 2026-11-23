@@ -7,7 +7,7 @@ Gives the person their own page on the lollo host to watch and take over the age
 ## ADDED Requirements
 
 ### Requirement: The page is a lollo page
-`/browser/` SHALL be served on the stack's lollo host, behind the lollo's Access application, and every request to it, the live view's connection included, SHALL carry a valid Access token for that application and pass the Fetch Metadata check. Its pages SHALL set Cross-Origin-Opener-Policy, and every change SHALL need the page's form token.
+`/browser/` SHALL be served on the stack's lollo host, behind the lollo's Access application, and every request to it, the live view's connection included, SHALL carry a valid Access token for that application, and every other request SHALL pass the Fetch Metadata check (the connection's own checks are the next requirement). Its pages SHALL set Cross-Origin-Opener-Policy, and every change SHALL need the page's form token.
 
 #### Scenario: Not signed in
 - **WHEN** someone without a valid lollo Access token requests `/browser/` or its live-view connection
@@ -20,6 +20,13 @@ Gives the person their own page on the lollo host to watch and take over the age
 #### Scenario: Request from another site
 - **WHEN** a page on another site posts a settings change or opens the live-view connection
 - **THEN** the request is refused
+
+### Requirement: The live view's connection is checked by its origin and ticket
+The live view's connection SHALL carry the page's own `Origin` and a single-use ticket the page fetched with its form token, and its Fetch Metadata SHALL be checked when the browser sends it: some browsers, Chrome among them, send none on a WebSocket.
+
+#### Scenario: Browser that sends no Fetch Metadata on a WebSocket
+- **WHEN** the person's browser opens the live-view connection with the page's `Origin` and a fresh ticket but no `Sec-Fetch-*` header, as Chrome does
+- **THEN** the live view opens; without the `Origin`, or with another, it is refused
 
 ### Requirement: The live view shows the real browser window
 The live view SHALL show the whole browser window, its address bar and tabs included, so the person can see which site they are on before typing anything.

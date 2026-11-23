@@ -270,8 +270,12 @@ def page_routes(
     async def live_ws(websocket: WebSocket) -> None:
         try:
             email = await authenticator.email(websocket.headers)
+            # Chrome sends no Fetch Metadata on a WebSocket handshake, only Origin,
+            # which every browser sends and no page can set: Origin and the ticket
+            # (fetched by this page with its form token) are what hold. Headers a
+            # browser does send must still say a WebSocket from this site.
             mode, site = websocket.headers.get("sec-fetch-mode"), websocket.headers.get("sec-fetch-site")
-            if mode != "websocket" or site != "same-origin":
+            if mode not in (None, "websocket") or site not in (None, "same-origin"):
                 raise AuthError("the live view opens only from its own page", reason="fetch")
             if websocket.headers.get("origin") != settings.public_origin:
                 raise AuthError("cross-site request refused", reason="fetch")
