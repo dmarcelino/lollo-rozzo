@@ -14,7 +14,7 @@ from lollo_browser import totp
 from lollo_browser.audit import AuditLog, url_for_log
 from lollo_browser.config import ConfigError, Settings
 from lollo_browser.handoffs import Handoffs
-from lollo_browser.scrub import MASK, Scrubber, ScrubFilter
+from lollo_browser.scrub import MASK, MAX_VALUES, Scrubber, ScrubFilter
 from lollo_browser.sessions import Sessions, SiteError, normalize_site
 from lollo_browser.sites import UrlRefused, check_web_url, same_site_https, site_of
 
@@ -37,6 +37,14 @@ from .conftest import SECRET, TOTP_KEY
         ("localhost", "localhost"),
         ("co.uk", ""),
         ("", ""),
+        # Internationalised names in punycode, as Chromium's URLs have them;
+        # only the host is encoded, never the scheme or the path.
+        ("bücher.de", "xn--bcher-kva.de"),
+        ("https://shop.BÜCHER.de/login?x=ü", "xn--bcher-kva.de"),
+        ("xn--bcher-kva.de", "xn--bcher-kva.de"),
+        ("straße.de", "xn--strae-oqa.de"),  # UTS 46 nontransitional, as Chromium
+        ("ab--ü.de", ""),  # not a valid name
+        ("https://bü_cher.de/", ""),
     ],
 )
 def test_site_of(host, site):
@@ -74,6 +82,8 @@ def test_web_urls_pass():
 
 def test_same_site_https():
     assert same_site_https("https://login.example.com/x", "example.com")
+    assert same_site_https("https://shop.xn--bcher-kva.de/x", site_of("https://bücher.de"))
+    assert same_site_https("https://shop.bücher.de/x", "xn--bcher-kva.de")
     assert not same_site_https("http://login.example.com/x", "example.com")
     assert not same_site_https("https://shop-example.com.evil.test/", "example.com")
     assert not same_site_https("https://example.com.evil.test/", "example.com")
@@ -123,6 +133,20 @@ def test_scrub_every_form():
     out = s.text(text)
     assert SECRET not in out and spaced not in out and dashed not in out and SECRET.upper() not in out
     assert out.count(MASK) == 4 and out.startswith("a ") and out.endswith(" e")
+
+
+def test_pinned_values_are_never_dropped():
+    """The engine secret is pinned once at startup; typed values come and go."""
+    engine_secret = "abcdefgh" + "k" * 24
+    s = Scrubber()
+    s.pin(engine_secret)
+    s.add(SECRET, engine_secret)
+    typed = [f"typed-value-{i:06d}" for i in range(MAX_VALUES + 20)]
+    for value in typed:
+        s.add(value)
+    assert s.text(engine_secret) == MASK and s.text(f"x {engine_secret.upper()} y") == f"x {MASK} y"
+    assert s.text(SECRET) == SECRET  # the oldest typed value was dropped
+    assert s.text(typed[0]) == typed[0] and s.text(typed[-1]) == MASK and s.text(typed[-MAX_VALUES]) == MASK
 
 
 def test_scrub_leaves_short_values_to_field_masking():
@@ -207,6 +231,12 @@ def test_site_settings(tmp_path):
     assert normalize_site("https://Shop.Example.com/login") == "example.com"
     with pytest.raises(SiteError):
         normalize_site("co.uk")
+    # Only the host goes to punycode: the scheme and the path are not part of a name.
+    for typed in ("https://bücher.de/login", "shop.BÜCHER.de", "xn--bcher-kva.de", " bücher.de/x "):
+        assert normalize_site(typed) == "xn--bcher-kva.de", typed
+    for bad in ("ab--ü.de", "https://bü..de/", "bü_cher.de"):
+        with pytest.raises(SiteError, match="not a valid site name"):
+            normalize_site(bad)
     s.set_keep_signed_in("shop.example.com", True)
     s.set_may_checkout("other.test", True)
     assert [(x.site, x.keep_signed_in, x.may_checkout) for x in s.sites()] == [
@@ -298,6 +328,42 @@ async def test_handoffs():
     assert c.status == "declined"
     with pytest.raises(LookupError):
         h.get(c.id)
+
+
+def test_a_hand_off_being_approved():
+    """While the service presses a held checkout, the person's other answers
+    are refused, it doesn't expire, and its task's end leaves it to the service."""
+    now = [0.0]
+    h = Handoffs(clock=lambda: now[0], ttl=100)
+    a = h.request("task-1", "t1", "checkout", "https://example.com/", kind="checkout")
+    claimed = h.claim_approval(a.id)
+    assert claimed is a and a.approving and a.status == "pending"
+    with pytest.raises(LookupError):
+        h.claim_approval(a.id)  # once
+    with pytest.raises(LookupError, match="placing this checkout"):
+        h.answer(a.id, done=False)
+    now[0] = 200
+    h.expire()
+    assert a.status == "pending"
+    h.release(a)  # not pressed: open again
+    assert not a.approving and a.status == "pending"
+    h.answer(a.id, done=True)
+    assert a.status == "done"
+    # The task ends during the press: pressed, it is approved all the same...
+    b = h.request("task-2", "t1", "checkout", "", kind="checkout")
+    h.claim_approval(b.id)
+    h.end_task("task-2")
+    assert b.status == "pending"
+    with pytest.raises(LookupError):
+        h.get(b.id)
+    h.approve(b, by="alfred@gmail.com")
+    assert b.status == "approved" and b.answered_by == "alfred@gmail.com" and not b.approving
+    # ...and not pressed, it is declined.
+    c = h.request("task-3", "t1", "checkout", "", kind="checkout")
+    h.claim_approval(c.id)
+    h.end_task("task-3")
+    h.release(c)
+    assert c.status == "declined" and c.note == "the task ended"
 
 
 # ── configuration ────────────────────────────────────────────────────────────

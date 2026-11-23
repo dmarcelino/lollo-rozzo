@@ -6,8 +6,10 @@ HANDOFF_TTL_SECONDS ends as "no answer". The agent waits with wait_handoff,
 at most MAX_WAIT_SECONDS a call (below the MCP bridge's 120 s). Checkout
 recognition creates hand-offs too (kind "checkout"), holding the agent's
 action: the person may approve it, the service then performs it ("approved").
-The held action is dropped as soon as the hand-off ends, so it runs at most
-once. Hand-offs live in memory, like tasks: a restart, or the end of their
+While the service performs it, the hand-off is claimed (`approving`): the
+person's other answers are refused, and if its task ends meanwhile, the
+service still records what it did. The held action is dropped as soon as the
+hand-off ends, so it runs at most once. Hand-offs live in memory, like tasks: a restart, or the end of their
 task, ends them."""
 
 from __future__ import annotations
@@ -46,6 +48,8 @@ class Handoff:
     answered: float | None = None
     # A checkout's held action (the service's HeldCheckout), until the hand-off ends.
     held: Any = field(default=None, repr=False)
+    # Set while the service performs the held action (claim_approval).
+    approving: bool = False
     _event: anyio.Event = field(default_factory=anyio.Event, repr=False)
 
 
@@ -86,31 +90,50 @@ class Handoffs:
         h = self.get(handoff_id)
         if h.status != PENDING:
             raise HandoffError("this hand-off was already answered")
+        if h.approving:
+            raise HandoffError("the browser is placing this checkout, as you approved")
         h.answered_by = by
         self._finish(h, DONE if done else DECLINED, note)
         return h
 
-    def approve(self, handoff_id: str, by: str) -> Handoff:
-        """The person approved a held checkout and the service performed it."""
+    def claim_approval(self, handoff_id: str) -> Handoff:
+        """Before the service performs a held checkout: the hand-off must be
+        pending and not claimed already. Until approve() or release(), the
+        person's other answers are refused and it does not expire."""
         h = self.get(handoff_id)
-        if h.status != PENDING:
+        if h.status != PENDING or h.approving:
             raise HandoffError("this hand-off was already answered")
+        h.approving = True
+        return h
+
+    def approve(self, h: Handoff, by: str) -> Handoff:
+        """The service performed the held checkout the person approved. Never
+        refused, even if the task ended meanwhile: the order was placed."""
+        h.approving = False
         h.answered_by = by
         self._finish(h, APPROVED, "the person approved it and the browser placed it")
         return h
 
+    def release(self, h: Handoff) -> None:
+        """The service did not perform the held checkout: the hand-off is open
+        again, or declined if its task ended meanwhile."""
+        h.approving = False
+        if h.status == PENDING and self._items.get(h.id) is not h:
+            self._finish(h, DECLINED, "the task ended")
+
     def end_task(self, task_id: str) -> None:
-        """A task ended: its open hand-offs are declined and then dropped."""
+        """A task ended: its open hand-offs are declined and then dropped. One
+        being approved is only dropped: approve() or release() ends it."""
         for h in list(self._items.values()):
             if h.task_id == task_id:
-                if h.status == PENDING:
+                if h.status == PENDING and not h.approving:
                     self._finish(h, DECLINED, "the task ended")
                 del self._items[h.id]
 
     def expire(self) -> None:
         now = self._clock()
         for h in list(self._items.values()):
-            if h.status == PENDING and now - h.created > self._ttl:
+            if h.status == PENDING and not h.approving and now - h.created > self._ttl:
                 self._finish(h, NO_ANSWER, "nobody answered in time")
             if h.status != PENDING and now - (h.answered or h.created) > self._ttl:
                 del self._items[h.id]

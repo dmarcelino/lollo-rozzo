@@ -51,6 +51,7 @@ from .config import (
     PREFIX,
     RECONNECT_MAX_SECONDS,
     RECONNECT_MIN_SECONDS,
+    SAVE_SIGNINS_SECONDS,
     SCREENSHOT_TIMEOUT_MS,
     Limits,
 )
@@ -433,8 +434,14 @@ class BrowserService:
         self._forget(task, reason)
         try:
             if save and self.sessions.kept_sites():
-                state = await task.context.storage_state(indexed_db=True)
-                saved = self.sessions.save(state, task.sites, task.epochs)
+                # Bounded: a page running a script loop can stall storage_state,
+                # and expire() and end_task wait for this.
+                with anyio.move_on_after(SAVE_SIGNINS_SECONDS) as scope:
+                    state = await task.context.storage_state(indexed_db=True)
+                if scope.cancelled_caught:
+                    log.warning("kept sign-ins of task %s not saved: the page did not answer in time", task.id)
+                else:
+                    saved = self.sessions.save(state, task.sites, task.epochs)
         except Exception as e:
             log.warning("could not save kept sign-ins of task %s: %s", task.id, self.scrubber.text(_describe_error(e)))
         try:
@@ -655,7 +662,8 @@ class BrowserService:
         caller runs the second, which audits and notifies it, once the action
         succeeded. `locator` is a Locator or the focused element's handle; `key`
         is how the recognition reads it, `press` the key the agent pressed (None
-        for a click), and `did` says what the agent did, for the person."""
+        for a click), and `did` says what the agent did, for the person only:
+        it names the element, which is page text."""
         url = tab.page.url
         did = did or f"clicked {field}"
         try:
@@ -700,10 +708,14 @@ class BrowserService:
             tab,
             status="handed_off",
             handoff=h.id,
+            # The element's name is the page's: only under untrusted_page_data,
+            # never in the service's own message.
             message=f"This looks like a checkout and {site or 'this site'} is not allowed to finish checkouts, so "
-            f"nothing was done (the agent {did}): the checkout was handed to the person, who can approve it (the "
-            "browser then places it), place it themselves, or decline. Wait for their answer with wait_handoff; "
-            "never retry the checkout yourself.",
+            "nothing was done (your click or key press was held): the checkout was handed to the person, who can "
+            "approve it (the browser then places it), place it themselves, or decline. Wait for their answer with "
+            "wait_handoff; never retry the checkout yourself.",
+            about=UNTRUSTED_NOTE,
+            untrusted_page_data={"element": field},
         ), None
 
     def _checkout_submitted(
@@ -783,7 +795,7 @@ class BrowserService:
                 raise BrowserError(f"click on {ref} failed: {_describe_error(e)}") from None
             if done is not None:
                 done()
-            return self._result(task, tab, clicked=field)
+            return self._result(task, tab, clicked=ref, about=UNTRUSTED_NOTE, untrusted_page_data={"element": field})
 
     async def type_text(self, task_id: str, tab_id: str, ref: str, text: str) -> dict[str, Any]:
         task = self._task(task_id)
@@ -796,7 +808,7 @@ class BrowserService:
                 await locator.fill(text, timeout=ACTION_TIMEOUT_MS)
             except PlaywrightError as e:
                 raise BrowserError(f"typing into {ref} failed: {_describe_error(e)}") from None
-            return self._result(task, tab, typed_into=field)
+            return self._typed(task, tab, ref, field)
 
     async def select_option(self, task_id: str, tab_id: str, ref: str, values: list[str]) -> dict[str, Any]:
         task = self._task(task_id)
@@ -809,7 +821,9 @@ class BrowserService:
                 await locator.select_option(values, timeout=ACTION_TIMEOUT_MS)
             except PlaywrightError as e:
                 raise BrowserError(f"selecting in {ref} failed: {_describe_error(e)}") from None
-            return self._result(task, tab, selected_in=field)
+            return self._result(
+                task, tab, selected_in=ref, about=UNTRUSTED_NOTE, untrusted_page_data={"element": field}
+            )
 
     async def press_key(self, task_id: str, tab_id: str, key: str, ref: str | None = None) -> dict[str, Any]:
         task = self._task(task_id)
@@ -920,8 +934,19 @@ class BrowserService:
         return site, provider
 
     async def _type_into(
-        self, task: Task, tab: Tab, ref: str, value: str, expect_site: str, action: str, payment_frame: bool = False
+        self,
+        task: Task,
+        tab: Tab,
+        ref: str,
+        value: str,
+        expect_site: str,
+        action: str,
+        payment_frame: bool = False,
+        scrub: tuple[str, ...] = (),
     ) -> tuple[str, str | None, str]:
+        """Types value into ref's field after the site check. The value, and
+        `scrub`, go into the value scrub only then: a call refused before
+        types nothing, and must not push older values out of it."""
         locator, field = self._locator(task, tab, ref)
         try:
             handle = await locator.element_handle(timeout=ACTION_TIMEOUT_MS)
@@ -930,6 +955,8 @@ class BrowserService:
         if handle is None:
             raise BrowserError(f"{ref} not found: take a new snapshot")
         site, provider = await self._site_check(task, tab, handle, expect_site, action, payment_frame)
+        # Before the page has it: from here on a page may copy it anywhere.
+        self.scrubber.add(*scrub, value)
         try:
             # The handle, not the ref: if the frame navigates between the check
             # and here, the handle is detached and nothing is typed.
@@ -939,10 +966,15 @@ class BrowserService:
         tab.secret_handles = await masking.remark([*tab.secret_handles, handle])
         return site, provider, field
 
+    def _typed(self, task: Task, tab: Tab, ref: str, field: str, **extra: Any) -> dict[str, Any]:
+        """A typing tool's result: the ref, and the field's name (the page's) as page data."""
+        return self._result(
+            task, tab, typed_into=ref, **extra, about=UNTRUSTED_NOTE, untrusted_page_data={"element": field}
+        )
+
     async def type_secret(self, task_id: str, tab_id: str, ref: str, text: str, expect_site: str) -> dict[str, Any]:
-        # First of all, so the value is scrubbed from anything that follows.
-        if isinstance(text, str):
-            self.scrubber.add(text)
+        # No error before the typing carries the value, so it is scrubbed only
+        # once the call is valid and the site check passed (_type_into).
         task = self._task(task_id)
         async with task.lock:
             tab = self._tab(task, tab_id)
@@ -955,18 +987,15 @@ class BrowserService:
                 "secret_typed", task, tab=tab.id, site=site, payment_frame=provider, field=field, url=tab.page.url
             )
             extra = {"payment_frame": provider} if provider else {}
-            return self._result(
-                task, tab, typed_into=field, site=site, **extra, message="The secret was typed; it is masked."
-            )
+            return self._typed(task, tab, ref, field, site=site, **extra, message="The secret was typed; it is masked.")
 
     async def type_totp(self, task_id: str, tab_id: str, ref: str, key: str, expect_site: str) -> dict[str, Any]:
-        if isinstance(key, str):
-            self.scrubber.add(key)
+        # The key's errors never carry it (totp.py): it, its secret and the
+        # code are scrubbed once the site check passed, as in type_secret.
         try:
             parsed = totp.parse_key(key)
         except totp.TotpError as e:
             raise BrowserError(f"no code typed: {e}") from None
-        self.scrubber.add(parsed.raw_secret)
         task = self._task(task_id)
         async with task.lock:
             tab = self._tab(task, tab_id)
@@ -974,10 +1003,11 @@ class BrowserService:
             if remaining < _TOTP_MIN_REMAINING:
                 await anyio.sleep(remaining + 0.1)
             code = totp.code(parsed)
-            self.scrubber.add(code)
-            site, _, field = await self._type_into(task, tab, ref, code, expect_site, "type one-time code")
+            site, _, field = await self._type_into(
+                task, tab, ref, code, expect_site, "type one-time code", scrub=(key, parsed.raw_secret)
+            )
             self.audit.record("code_typed", task, tab=tab.id, site=site, field=field, url=tab.page.url)
-            return self._result(task, tab, typed_into=field, site=site, message="A one-time code was typed.")
+            return self._typed(task, tab, ref, field, site=site, message="A one-time code was typed.")
 
     # ── hand-offs ────────────────────────────────────────────────────────
 
@@ -1147,9 +1177,13 @@ class BrowserService:
         the held click or key, once, on the element it was held on, while the
         tab is still on that page, the person doesn't control it, and no
         checkout was submitted on it since. With allow_site, the site's "may
-        finish checkout" setting is turned on first, as on the Sites page.
+        finish checkout" setting is turned on too, once the press succeeded.
         Returns the site; raises BrowserError, saying what to do, when nothing
-        was pressed (the hand-off then stays open)."""
+        was pressed (the hand-off then stays open).
+
+        The hand-off is claimed before the press: the person's other answers
+        and the task's end don't take the lock, and once the order is placed
+        it is recorded, notified and answered whatever happened meanwhile."""
         gone = "This checkout can no longer be approved: it was answered, it expired, or its task ended."
         try:
             h = self.handoffs.get(handoff_id)
@@ -1163,7 +1197,7 @@ class BrowserService:
             raise BrowserError("Its tab is closed: nothing was pressed.")
         task, tab = found
         async with task.lock:
-            if h.status != PENDING or h.held is not held:
+            if h.status != PENDING or h.held is not held or h.approving:
                 raise BrowserError(gone)
             if tab.controlled:
                 raise BrowserError(
@@ -1180,6 +1214,9 @@ class BrowserService:
                     "The tab is no longer on the page the checkout was held on: nothing was pressed. Take over in "
                     "the live view and check the order."
                 )
+            site = site_of(held.url)
+            if allow_site and not site:
+                raise BrowserError("This page has no site to allow: nothing was pressed. Place this order only.")
             try:
                 attached = await _evaluate(held.handle, "el => el.isConnected", None)
             except PlaywrightError, TimeoutError:
@@ -1189,31 +1226,49 @@ class BrowserService:
                     f"{held.field} is no longer on the page: nothing was pressed. Take over in the live view and "
                     "check the order."
                 )
-            site = site_of(held.url)
-            if allow_site:
-                if not site:
-                    raise BrowserError("This page has no site to allow: nothing was pressed. Place this order only.")
-                after = self.sessions.set_may_checkout(site, True)
-                self.audit.record(
-                    "setting_changed",
-                    site=after.site,
-                    by=email,
-                    keep_signed_in=after.keep_signed_in,
-                    may_checkout=after.may_checkout,
-                )
+            # No await between the checks above and the claim: from here on the
+            # person's other answers are refused, and the task's end leaves the
+            # hand-off to this method.
+            try:
+                self.handoffs.claim_approval(h.id)
+            except HandoffError:
+                raise BrowserError(gone) from None
+            pressed = False
             try:
                 if held.key:
                     await held.handle.press(held.key, timeout=ACTION_TIMEOUT_MS)
                 else:
                     await held.handle.click(timeout=ACTION_TIMEOUT_MS)
+                pressed = True
             except PlaywrightError as e:
                 raise BrowserError(
                     f"Pressing {held.field} failed ({_describe_error(e)}): the order may not be placed. Take over in "
                     "the live view and check it."
                 ) from None
+            finally:
+                if pressed:
+                    self.handoffs.approve(h, by=email)
+                else:
+                    self.handoffs.release(h)
+            # Pressed: from here on nothing awaits, and the order is recorded
+            # even if allowing the site fails. A failed press allowed nothing.
             tab.refs.clear()  # the page changes: the agent takes a new snapshot
             task.last_used = self.clock()
-            self.handoffs.approve(h.id, by=email)
+            allowed = False
+            if allow_site:
+                try:
+                    after = self.sessions.set_may_checkout(site, True)
+                except Exception as e:
+                    log.warning("could not allow checkouts on the site: %s", type(e).__name__)
+                else:
+                    allowed = True
+                    self.audit.record(
+                        "setting_changed",
+                        site=after.site,
+                        by=email,
+                        keep_signed_in=after.keep_signed_in,
+                        may_checkout=after.may_checkout,
+                    )
             self.audit.record(
                 "checkout_approved",
                 task,
@@ -1223,7 +1278,7 @@ class BrowserService:
                 site=site or None,
                 field=held.field,
                 by=email,
-                allowed_site=allow_site,
+                allowed_site=allowed,
             )
             self._checkout_submitted(task, tab, by="person", field=held.field, url=held.url, reasons=held.reasons)
             return site

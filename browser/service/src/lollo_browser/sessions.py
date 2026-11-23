@@ -33,7 +33,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .sites import host_of, site_of
+from .sites import host_in, host_of, site_of
 
 
 class SiteError(ValueError):
@@ -56,12 +56,11 @@ def normalize_site(value: str) -> str:
     """A site the person typed or picked: a host, a URL or a registrable domain."""
     if not isinstance(value, str) or not value.strip() or len(value) > 300:
         raise SiteError("a site is required")
-    text = value.strip().lower()
-    try:
-        text = text.encode("idna").decode("ascii") if not text.isascii() else text
-    except UnicodeError as e:
-        raise SiteError("not a valid site name") from e
-    site = site_of(text)
+    # Only the host is encoded (punycode), never the whole text: a URL's
+    # scheme and path are not part of a name.
+    if not host_in(value):
+        raise SiteError("not a valid site name")
+    site = site_of(value)
     if not site:
         raise SiteError("not a site that can hold a sign-in (a public suffix or an empty name)")
     return site

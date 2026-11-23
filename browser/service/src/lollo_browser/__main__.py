@@ -28,8 +28,9 @@ def main() -> None:
     except ConfigError as e:
         print(f"lollo-browser: {e}", file=sys.stderr)
         sys.exit(2)
-    # The secret is the engine's WebSocket path: scrubbed from every log line.
-    SCRUBBER.add(settings.engine_secret)
+    # The secret is the engine's WebSocket path: scrubbed from every log line,
+    # pinned so that typed values never push it out.
+    SCRUBBER.pin(settings.engine_secret)
     network = EngineNetwork(settings.engine_network, urlsplit(settings.engine_url).hostname or "")
     network.detect()
     pusher = Pusher(settings.page, Subscriptions(settings.data_dir))

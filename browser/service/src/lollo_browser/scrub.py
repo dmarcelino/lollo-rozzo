@@ -1,6 +1,6 @@
 """The value scrub: the second line of masking (design decision 6). Every value
 typed through type_secret or type_totp, the authenticator key, and the engine
-secret are cut out of every tool result, error, audit entry and log line, in
+secret (pinned, so never dropped) are cut out of every tool result, error, audit entry and log line, in
 any case and with spaces or dashes inserted, when they are 6 characters or more
 (separators aside), like vault-run's rule. Shorter values (a card's expiry
 month or year, its security code) are too common to cut out of everything:
@@ -30,7 +30,8 @@ from typing import Any
 MASK = "[masked]"
 # Values are kept (in memory only) until the service restarts, so a kept
 # sign-in page that shows a value in a later task is scrubbed too. The oldest
-# are dropped past this many.
+# are dropped past this many. Pinned values (the engine secret) are kept apart
+# and never dropped.
 MAX_VALUES = 512
 # Values shorter than this, separators aside, are left to field masking
 # (vault-run's MIN_SCRUB_LENGTH, and the vault's log redaction, use 6 too).
@@ -75,22 +76,36 @@ class Scrubber:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._values: OrderedDict[str, None] = OrderedDict()
+        self._pinned: dict[str, None] = {}
         self._forms: tuple[str, ...] = ()
 
     def add(self, *values: str) -> None:
+        """Values typed through the secret tools: the oldest are dropped past MAX_VALUES."""
         with self._lock:
-            for value in values:
-                # Separators inside the value itself are optional too: a key
-                # stored as "ABCD EFGH" matches "ABCDEFGH" on a page, and a card
-                # number as "4111 1111 1111 1111" matches it written any way.
-                value = normalise(value or "")
-                if len(value) < MIN_LENGTH:
-                    continue
+            for value in self._normal(values):
                 self._values[value] = None
                 self._values.move_to_end(value)
             while len(self._values) > MAX_VALUES:
                 self._values.popitem(last=False)
-            self._forms = tuple(self._values)
+            self._update()
+
+    def pin(self, *values: str) -> None:
+        """The service's own secrets (the engine secret): never dropped."""
+        with self._lock:
+            for value in self._normal(values):
+                self._pinned[value] = None
+            self._update()
+
+    @staticmethod
+    def _normal(values: tuple[str, ...]) -> list[str]:
+        # Separators inside the value itself are optional too: a key stored as
+        # "ABCD EFGH" matches "ABCDEFGH" on a page, and a card number as
+        # "4111 1111 1111 1111" matches it written any way.
+        forms = (normalise(value or "") for value in values)
+        return [form for form in forms if len(form) >= MIN_LENGTH]
+
+    def _update(self) -> None:
+        self._forms = (*self._pinned, *(v for v in self._values if v not in self._pinned))
 
     def text(self, text: str) -> str:
         forms = self._forms

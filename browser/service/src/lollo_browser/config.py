@@ -18,6 +18,10 @@ MAX_WAIT_SECONDS = 50
 ACTION_TIMEOUT_MS = 5_000
 NAVIGATION_TIMEOUT_MS = 30_000
 SCREENSHOT_TIMEOUT_MS = 15_000
+# Saving a task's kept sign-ins when it ends: a busy page can stall
+# storage_state, and housekeeping and end_task wait on it. Past this, nothing
+# is saved and the task's context is closed anyway.
+SAVE_SIGNINS_SECONDS = 5
 # A snapshot longer than this is cut, with a note saying so.
 MAX_SNAPSHOT_CHARS = 60_000
 MAX_PURPOSE_LENGTH = 300

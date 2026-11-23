@@ -41,7 +41,7 @@ A checkout hand-off's page SHALL offer to take over in the live view (and then m
 
 #### Scenario: Approve and allow the site
 - **WHEN** the person presses "Place it and always allow" the site
-- **THEN** the site's "may finish checkout" setting is turned on, the held action is performed, and later checkouts there go ahead, notified and audited
+- **THEN** the held action is performed, then the site's "may finish checkout" setting is turned on, and later checkouts there go ahead, notified and audited; if the press fails, the setting is not changed
 
 #### Scenario: Approving from a notification
 - **WHEN** the person gets the push notification of a held checkout
@@ -53,6 +53,10 @@ Approving SHALL make the browser perform the held click or key on the element it
 #### Scenario: The page changed
 - **WHEN** the person approves after the tab left the page the checkout was held on, or the button is gone
 - **THEN** nothing is pressed, the hand-off stays open, and the page suggests taking over
+
+#### Scenario: Answered or ended while the browser presses
+- **WHEN** the person declines, marks it done, or ends the task while the browser is pressing the approved action
+- **THEN** the answer is refused, and once the press succeeded the checkout is still audited, notified and answered `approved`
 
 #### Scenario: Approved twice
 - **WHEN** a held checkout was already approved, declined or expired, or its task ended

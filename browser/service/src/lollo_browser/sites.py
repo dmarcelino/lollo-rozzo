@@ -6,6 +6,7 @@ from __future__ import annotations
 import ipaddress
 from urllib.parse import urlsplit
 
+import idna
 import tldextract
 
 # The PSL snapshot bundled with the pinned tldextract, never fetched: no
@@ -46,19 +47,40 @@ def check_web_url(url: str) -> str:
     return url
 
 
-def host_of(url: str) -> str:
+def ascii_host(host: str) -> str:
+    """A host as Chromium writes it in a URL: an internationalised name in
+    punycode (UTS 46, nontransitional, as the URL Standard), so bücher.de is
+    xn--bcher-kva.de. "" when it is not a valid name. Only the host is
+    encoded, never a whole URL."""
+    host = host.lower().rstrip(".")
+    if host.isascii():
+        return host
     try:
-        return (urlsplit(url).hostname or "").lower().rstrip(".")
+        return idna.encode(host, uts46=True, transitional=False).decode("ascii")
+    except idna.IDNAError, UnicodeError:
+        return ""
+
+
+def host_of(url: str) -> str:
+    """The URL's host, in punycode ("" when it has none or it is not valid)."""
+    try:
+        return ascii_host(urlsplit(url).hostname or "")
     except ValueError:
         return ""
+
+
+def host_in(host_or_url: str) -> str:
+    """The host of what a person or an agent typed: a URL, or a host alone."""
+    text = (host_or_url or "").strip()
+    return host_of(text if "://" in text else "//" + text)
 
 
 def site_of(host_or_url: str) -> str:
     """The registrable domain: example.com for shop.example.com. An IP address
     or a single-label host is its own site. A name under a suffix the list does
-    not know follows the list's default rule ("*"): its last two labels."""
-    text = (host_or_url or "").strip().lower()
-    host = host_of(text if "://" in text else "//" + text)
+    not know follows the list's default rule ("*"): its last two labels. An
+    internationalised name is in punycode, as in Chromium's URLs."""
+    host = host_in(host_or_url)
     if not host:
         return ""
     try:

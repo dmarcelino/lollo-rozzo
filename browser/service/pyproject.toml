@@ -21,6 +21,8 @@ dependencies = [
   "playwright==1.65.2",
   # The Public Suffix List snapshot bundled with the release; never fetched.
   "tldextract==5.4.0",
+  # Hosts in punycode, as Chromium writes them (UTS 46); tldextract needs it too.
+  "idna==3.20",
 ]
 
 [project.optional-dependencies]
