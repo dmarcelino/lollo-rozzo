@@ -15,12 +15,12 @@ See proposal.md for why. Today, on the lollo host:
 Both senders call `pusher.send({title, body, url, tag})` from a background task and ignore the outcome (`vault/src/lollo_vault/service.py`, `browser/service/src/lollo_browser/tasks.py`), so the sender side swaps cleanly.
 
 Constraints that shaped the design:
-- **The landing page stays passive** ([landing/README.md](../../../landing/README.md#the-landing-page-stays-passive)): no script, no other sidecar, no mounts (`check_landing`).
-- **Same-origin script is untrusted** ([lollo-common/README.md](../../../lollo-common/README.md#rules)): the code editor's webviews share the lollo origin. A sidecar's CSRF token is random per process and readable only from its own rendered page, so one page's script cannot post to another sidecar.
+- **The landing page stays passive** ([landing/README.md](../../../../landing/README.md#the-landing-page-stays-passive)): no script, no other sidecar, no mounts (`check_landing`).
+- **Same-origin script is untrusted** ([lollo-common/README.md](../../../../lollo-common/README.md#rules)): the code editor's webviews share the lollo origin. A sidecar's CSRF token is random per process and readable only from its own rendered page, so one page's script cannot post to another sidecar.
 - **Agents share the stack network** and can read the executor's token, so an internal API is only as private as its token's holders.
-- **The vault's erase without the passphrase** is safe only because every device with notifications on is told ([vault/README.md](../../../vault/README.md#rules)).
+- **The vault's erase without the passphrase** is safe only because every device with notifications on is told ([vault/README.md](../../../../vault/README.md#rules)).
 - **VAPID keys are never rotated**: a new key breaks every subscription made with the old one.
-- **The code editor's gate** narrows `Service-Worker-Allowed` to `/code-server/` ([code-server/README.md](../../../code-server/README.md#rules)), so nothing under it can take a wider scope.
+- **The code editor's gate** narrows `Service-Worker-Allowed` to `/code-server/` ([code-server/README.md](../../../../code-server/README.md#rules)), so nothing under it can take a wider scope.
 
 ## Goals / Non-Goals
 
