@@ -95,7 +95,7 @@ Alternative: one persistent profile (the issue's design). Rejected with the pers
 Playwright's snapshot writes `element.value` for every input but checkboxes, radios and files, passwords included (confirmed in its `ariaSnapshot.ts`; a Cursor user hit it in October 2026). `lollo-browser` therefore:
 - records, per tab, the refs and frames of fields typed with `type_secret` or `type_totp`;
 - after each snapshot, finds every password-type input, every field whose `autocomplete` is a card number, expiry, security code, one-time code or password, every field drawn with `-webkit-text-security`, and those recorded, in each frame, and rewrites their lines to `[masked]`, parsing Playwright's quoted line form too and masking any line with a ref it can't parse;
-- scrubs, as a second line, every value of 6 characters or more (like `vault-run`) it typed through a secret tool, in any form (plain, with spaces or dashes) from every result, error and log line; shorter values (an expiry month, a security code) are left to field masking, since scrubbing them breaks ids and refs, and dict keys and the service's ids are never scrubbed;
+- scrubs, as a second line, every value of 6 characters or more (like `vault-run`) it typed through a secret tool, in any form (plain, with spaces, dashes or the punctuation that formats addresses and phones) from every result, error and log line; shorter values (an expiry month, a security code) are left to field masking, since scrubbing them breaks ids and refs, and dict keys and the service's ids are never scrubbed;
 - takes screenshots with Playwright's `mask` over the same fields;
 - never returns console messages, network logs or page errors raw.
 

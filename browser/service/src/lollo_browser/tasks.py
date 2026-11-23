@@ -423,7 +423,9 @@ class BrowserService:
         site = site_of(url) or "this site"
         minutes = max(1, round(self.limits.idle_seconds / 60))
         return (
-            f"Once the page confirms the order, tell the person, and ask whether they need anything else on {site} "
+            "Once the page confirms the order, tell the person the shop, the items, the total and the order number, "
+            "without repeating the address, phone or email the page shows, and ask whether they need anything else "
+            f"on {site} "
             "or whether you should close this browser task (end_task: its tabs, cart and sign-ins are dropped). "
             f"End it when they say so or move on; left unused, it ends by itself after {minutes} minutes."
         )

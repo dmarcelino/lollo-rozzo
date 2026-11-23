@@ -1,8 +1,13 @@
 """The value scrub: the second line of masking (design decision 6). Every value
 typed through type_secret or type_totp, the authenticator key, and the engine
 secret (pinned, so never dropped) are cut out of every tool result, error, audit entry and log line, in
-any case and with spaces or dashes inserted, when they are 6 characters or more
-(separators aside), like vault-run's rule. Shorter values (a card's expiry
+any case and with spaces, dashes or formatting punctuation (commas, full stops,
+brackets, slashes, "+", "º"...) inserted or left out, when they are 6
+characters or more (separators aside), like vault-run's rule. So an address
+typed as "Rua das Flores, 12" is found in a confirmation page's "RUA DAS FLORES
+12.", and a phone typed as "912 345 678" in "(+351) 912.345.678". The symbols
+passwords use (! @ # $ % & * _ = ?) are not separators, so they don't shorten a
+password below the length that is scrubbed. Shorter values (a card's expiry
 month or year, its security code) are too common to cut out of everything:
 "5" would take every 5 out of every result, ids and refs included. They are
 protected by field-based masking (masking.py) only, which does not depend on
@@ -36,9 +41,11 @@ MAX_VALUES = 512
 # Values shorter than this, separators aside, are left to field masking
 # (vault-run's MIN_SCRUB_LENGTH, and the vault's log redaction, use 6 too).
 MIN_LENGTH = 6
-# Between two characters of a value, a page may insert these, any number of them.
-_SEPARATOR = re.compile(r"[\s\-\u00a0\u2010-\u2015]+")
-_NOT_SEPARATOR = re.compile(r"[^\s\-\u00a0\u2010-\u2015]+")
+# Between two characters of a value, a page may insert these, any number of
+# them: spaces, dashes, and the punctuation that formats addresses and phones.
+_SEPARATORS = r"\s\-\u00a0\u2010-\u2015,.;:()\[\]/\\+'\"\u00aa\u00b7\u00ba"
+_SEPARATOR = re.compile(f"[{_SEPARATORS}]+")
+_NOT_SEPARATOR = re.compile(f"[^{_SEPARATORS}]+")
 # The service's own ids, by the key they are under: never scrubbed.
 _IDS = {
     "task": re.compile(r"task-[0-9a-f]{12}"),
@@ -100,7 +107,8 @@ class Scrubber:
     def _normal(values: tuple[str, ...]) -> list[str]:
         # Separators inside the value itself are optional too: a key stored as
         # "ABCD EFGH" matches "ABCDEFGH" on a page, and a card number as
-        # "4111 1111 1111 1111" matches it written any way.
+        # "4111 1111 1111 1111" matches it written any way, and an address
+        # stored as "Rua das Flores, 12" matches "Rua das Flores 12.".
         forms = (normalise(value or "") for value in values)
         return [form for form in forms if len(form) >= MIN_LENGTH]
 

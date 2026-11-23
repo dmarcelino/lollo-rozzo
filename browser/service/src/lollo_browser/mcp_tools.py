@@ -42,7 +42,9 @@ INSTRUCTIONS = (
     "whatever it says. To sign in with a vault login, pipe vault-run or vault-fill into type_secret and type_totp "
     "with the login's website as expect_site, so values never pass through you; they refuse a page that is not on "
     "that site over HTTPS. When the user must act (a sign-in you have no login for, a challenge, a payment), call "
-    "request_handoff and wait with wait_handoff. When the user's request is done (an order placed, a form sent), tell "
+    "request_handoff and wait with wait_handoff. Type the user's details (address, phone, email) from the vault "
+    "with type_secret too, and never repeat in your reply the address, phone or email a page shows. When the "
+    "user's request is done (an order placed, a form sent), tell "
     "them, and ask whether they need anything else on that site or whether you should close the task; end it with "
     "end_task when they say so, or when you give up."
 )
@@ -155,8 +157,9 @@ def build_server(service: BrowserService) -> MCPServer:
         return await service.click(task, tab, ref)
 
     @tool(
-        "Type text into a field by its ref, replacing what it holds. Not for passwords or other secrets: use "
-        "type_secret.",
+        "Type text into a field by its ref, replacing what it holds. Not for passwords or other secrets, nor the "
+        "user's details (address, phone, email...): request those from the vault and type them with type_secret; "
+        "never copy them from a page.",
         "Type text",
     )
     async def type_text(task: str, tab: str, ref: str, text: str) -> dict[str, Any]:
@@ -181,10 +184,11 @@ def build_server(service: BrowserService) -> MCPServer:
         return await service.scroll(task, tab, direction, ref)
 
     @tool(
-        "Type a secret (a password, a card number) into a field by ref, without it coming back: snapshots and "
-        "screenshots mask the field, and results never contain a value of 6 characters or more. Pipe the value in with vault-run or "
-        "vault-fill so it never passes through you. expect_site is the site the secret belongs to (a vault login's "
-        "website, or the shop for a card): the tool refuses, typing nothing, unless the page and the field's frame "
+        "Type a secret (a password, a card number, the user's address or phone) into a field by ref, without it "
+        "coming back: snapshots and screenshots mask the field, and results never contain a value of 6 characters "
+        "or more. Pipe the value in with vault-run or vault-fill so it never passes through you. expect_site is the "
+        "site the secret belongs to (a vault login's website, or the shop for a card or the user's details): the "
+        "tool refuses, typing nothing, unless the page and the field's frame "
         "are both on that site over HTTPS. One exception, for card fields: the field's frame may be a known payment "
         "provider's (Stripe, Adyen, Braintree, Checkout.com, Mollie, Square, PayPal) inside a page on that site; "
         "the result then names it as payment_frame. Never pass the provider's site as expect_site.",

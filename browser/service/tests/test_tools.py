@@ -57,6 +57,9 @@ async def test_fixed_tool_set(env, sites):
         assert t["inputSchema"]["additionalProperties"] is False, name
     assert set(tools["type_secret"]["inputSchema"]["required"]) == {"task", "tab", "ref", "text", "expect_site"}
     assert set(tools["type_totp"]["inputSchema"]["required"]) == {"task", "tab", "ref", "key", "expect_site"}
+    # The user's details go through type_secret, never copied from a page.
+    assert "type_secret" in tools["type_text"]["description"]
+    assert "never copy them from a page" in tools["type_text"]["description"]
 
 
 async def test_the_server_names_its_skill_over_letta_codes_browser_use(env, sites):
@@ -374,6 +377,20 @@ async def test_secret_never_comes_back(env, sites, caplog):
         assert form not in everything, form
     typed = [e for e in env.audit() if e["event"] == "secret_typed"]
     assert typed and typed[0]["field"] == 'textbox "Password"' and typed[0]["site"] == "example.com"
+
+
+async def test_details_typed_as_secrets_are_masked_when_a_page_writes_them_another_way(env, sites):
+    task = await env.task()
+    tab = await env.tab(task, sites.https("shop.example.com", "/delivery"))
+    snap = await env.snap(task, tab)
+    for field, value in (("Address", "Rua das Flores, 12"), ("Phone", "912 345 678")):
+        args = {"task": task, "tab": tab, "ref": ref_of(snap, field), "text": value}
+        await env.call("type_secret", {**args, "expect_site": "https://shop.example.com"})
+    summary = await env.page(task, tab).locator("#summary").text_content()
+    assert "RUA DAS FLORES 12" in summary and "912.345.678" in summary  # the page did write them
+    text = json.dumps(await env.snap(task, tab))
+    assert "flores" not in text.lower() and "345" not in text
+    assert "[masked]" in text
 
 
 async def test_secret_in_a_text_field_is_masked_by_field_too(env, sites, caplog):
@@ -802,6 +819,7 @@ async def test_a_placed_order_offers_to_close_the_task(env, sites, how):
         result = await env.call("wait_handoff", {"task": task, "handoff": hid, "wait_seconds": 0})
         assert result["status"] == ("approved" if how == "approved" else "done")
     assert CLOSE_OFFER in result["message"]
+    assert "without repeating the address, phone or email the page shows" in result["message"]
     assert "anything else on example.com" in result["message"]
     assert "end_task" in result["message"] and "15 minutes" in result["message"]
 

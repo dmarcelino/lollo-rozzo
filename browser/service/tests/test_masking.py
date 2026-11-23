@@ -153,6 +153,19 @@ def test_six_characters_and_more_are_scrubbed_in_every_form():
     assert out == f"code {MASK} {MASK} {MASK} pw {MASK} {MASK} {MASK} card {MASK} {MASK} {MASK} end"
 
 
+def test_punctuation_is_ignored_in_values_and_pages():
+    """An address or a phone a page writes another way is still cut out."""
+    s = Scrubber()
+    s.add("Rua das Flores, 12", "912 345 678", "ab!cd#ef")
+    for text in ("RUA DAS FLORES 12.", "Rua das Flores,12", "(+351) 912.345.678", "tel. 912/345/678"):
+        assert "flores" not in s.text(text).lower() and "345" not in s.text(text), text
+    assert s.text("(+351) 912.345.678") == f"(+351) {MASK}"
+    # Password symbols are not separators: the value keeps its length and is
+    # matched as typed, with spaces or dashes inserted.
+    assert s.text("pw AB!CD#EF end") == f"pw {MASK} end"
+    assert s.text("pw abcdef end") == "pw abcdef end"
+
+
 def test_keys_are_never_scrubbed():
     s = Scrubber()
     s.add("sekrit-value")
