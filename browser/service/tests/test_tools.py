@@ -57,6 +57,20 @@ async def test_fixed_tool_set(env, sites):
     assert set(tools["type_totp"]["inputSchema"]["required"]) == {"task", "tab", "ref", "key", "expect_site"}
 
 
+async def test_the_server_names_its_skill_over_letta_codes_browser_use(env, sites):
+    # An agent that loaded letta-code's browser-use skill instead of ours guessed
+    # tool names and never handed a sign-in check to the person.
+    init = await env.rpc(
+        "initialize",
+        {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
+    )
+    tools = {t["name"]: t for t in (await env.rpc("tools/list")).json()["result"]["tools"]}
+    started = await env.call("start_task", {"purpose": "skill pointer"})
+    for text in (init.json()["result"]["instructions"], tools["start_task"]["description"], started["message"]):
+        assert "load the using-the-browser skill" in text.lower(), text
+        assert "not browser-use" in text.lower(), text
+
+
 async def test_page_registering_tools_changes_nothing(env, sites):
     task = await env.task()
     tab = await env.tab(task, sites.https("shop.example.com", "/webmcp"))

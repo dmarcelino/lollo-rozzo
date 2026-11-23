@@ -24,7 +24,17 @@ from .tasks import BrowserError, BrowserService
 P = ParamSpec("P")
 R = TypeVar("R")
 
+# Agents pick a skill by its description, and letta-code's own browser-use skill
+# (a local browser this stack doesn't have) matches a request like "buy this
+# book" better than ours: an agent that loaded it guessed tool names and missed
+# the sign-in recipe and the hand-offs. So the server names its skill itself.
+SKILL = (
+    "Before your first task, load the using-the-browser skill: it shows how to sign in with a vault login, "
+    "hand a page to the user and check out. Not browser-use, which drives another browser that is not here."
+)
+
 INSTRUCTIONS = (
+    SKILL + " "
     "A web browser for acting on sites for the user: each task is a fresh browser, signed out of every site "
     "except those the user keeps signed in. Start with start_task (say what it is for), open_tab, then read the "
     "page with snapshot and act with the refs it gives (click, type_text, select_option, press_key, scroll). "
@@ -86,7 +96,7 @@ def build_server(service: BrowserService) -> MCPServer:
     @tool(
         "Start a browser task and get its id, which every other tool takes. purpose says what it is for (the user "
         "reads it in the audit log). A task starts signed out of every site except those the user keeps signed in, "
-        "and ends with end_task, after 15 minutes unused or 4 hours, or when the service restarts.",
+        "and ends with end_task, after 15 minutes unused or 4 hours, or when the service restarts. " + SKILL,
         "Start a task",
         open_world=False,
     )

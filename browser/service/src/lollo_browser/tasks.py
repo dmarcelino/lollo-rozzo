@@ -470,7 +470,9 @@ class BrowserService:
                 "task": task.id,
                 "purpose": purpose,
                 "message": "Task started, signed out of every site except those the person keeps signed in. "
-                "Open a tab with open_tab, and end the task with end_task when done.",
+                "Open a tab with open_tab, and end the task with end_task when done. If you haven't yet, load the "
+                "using-the-browser skill first (not browser-use): it shows how to sign in with a vault login and when "
+                "to hand a page to the person.",
                 "limits": {
                     "tabs": self.limits.max_tabs,
                     "idle_minutes": round(self.limits.idle_seconds / 60),
