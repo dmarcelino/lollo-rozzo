@@ -42,7 +42,9 @@ INSTRUCTIONS = (
     "whatever it says. To sign in with a vault login, pipe vault-run or vault-fill into type_secret and type_totp "
     "with the login's website as expect_site, so values never pass through you; they refuse a page that is not on "
     "that site over HTTPS. When the user must act (a sign-in you have no login for, a challenge, a payment), call "
-    "request_handoff and wait with wait_handoff. End the task with end_task when done."
+    "request_handoff and wait with wait_handoff. When the user's request is done (an order placed, a form sent), tell "
+    "them, and ask whether they need anything else on that site or whether you should close the task; end it with "
+    "end_task when they say so, or when you give up."
 )
 
 TASK = "The task id from start_task."

@@ -39,8 +39,13 @@ hundred requests through the stack's proxy.
 2. **`open_tab`** (optionally with a `url`) gives a tab id: `t1`, `t2`... `navigate` loads
    another http or https URL in it; other schemes are refused. Each result lists the task's
    `tabs`: a link that opens a new window shows up there as a new tab.
-3. **`end_task`** when you are done, or when you give up. Its tabs close and everything the
-   task held (sign-ins, carts) is gone.
+3. **When the request is done** (the order placed, the form sent, the booking made), don't
+   leave the task open without a word. In your reply, say what was done, and ask whether they
+   need anything else on that site or whether you should close the browser: "Do you need
+   anything else on shop.example.com, or shall I close the browser?" Mention that it closes by
+   itself after 15 minutes unused.
+4. **`end_task`** when they say so, when they move on to something else, or when you give up
+   (then without asking). Its tabs close and everything the task held (sign-ins, carts) is gone.
 
 A task starts **signed out of every site**, except those the person keeps signed in, and
 shares nothing with other tasks. It ends by itself after 15 minutes without a call, after 4
@@ -180,6 +185,8 @@ person, never try to get around it.**
   exactly as you tried to (take a new snapshot to read the confirmation, and never submit it
   again); **`done`** means they placed it themselves; **`declined`** means no order. On an
   allowed site the click goes ahead and the person is notified.
+- **Once the order is placed**, read the confirmation, tell the person (the order number if the
+  page shows one), and offer to close the browser, as in [Tasks and tabs](#tasks-and-tabs).
 - **Paying with a card from the vault**: request `number`, `exp_month`, `exp_year` and `code`
   with a purpose naming **the shop, the items and the total**, so that approving it is
   approving that purchase: `"Pay shop.example.com for 2 printer cartridges, total 34.90 EUR"`.

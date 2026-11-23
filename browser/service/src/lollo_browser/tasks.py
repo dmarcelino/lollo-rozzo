@@ -56,7 +56,7 @@ from .config import (
     Limits,
 )
 from .engine import Engine
-from .handoffs import APPROVED, PENDING, Handoff, HandoffError, Handoffs
+from .handoffs import APPROVED, DONE, PENDING, Handoff, HandoffError, Handoffs
 from .push import NoPusher
 from .scrub import SCRUBBER, Scrubber
 from .sessions import Sessions
@@ -415,6 +415,18 @@ class BrowserService:
 
     def _tabs_list(self, task: Task) -> list[dict[str, str]]:
         return [{"tab": t.id, "url": t.page.url} for t in task.tabs.values() if not t.page.is_closed()]
+
+    def _after_checkout(self, url: str) -> str:
+        """What the agent does once an order is placed: report it and offer to
+        close the task, rather than leave it open until it expires. The site
+        comes from the URL, never from page text."""
+        site = site_of(url) or "this site"
+        minutes = max(1, round(self.limits.idle_seconds / 60))
+        return (
+            f"Once the page confirms the order, tell the person, and ask whether they need anything else on {site} "
+            "or whether you should close this browser task (end_task: its tabs, cart and sign-ins are dropped). "
+            f"End it when they say so or move on; left unused, it ends by itself after {minutes} minutes."
+        )
 
     def _result(self, task: Task, tab: Tab | None, **extra: Any) -> dict[str, Any]:
         out: dict[str, Any] = {"task": task.id}
@@ -793,9 +805,15 @@ class BrowserService:
                 await locator.click(timeout=ACTION_TIMEOUT_MS)
             except PlaywrightError as e:
                 raise BrowserError(f"click on {ref} failed: {_describe_error(e)}") from None
+            extra: dict[str, Any] = {}
             if done is not None:
                 done()
-            return self._result(task, tab, clicked=ref, about=UNTRUSTED_NOTE, untrusted_page_data={"element": field})
+                extra["message"] = "This was a checkout, and the site may finish checkouts: it was submitted. " + (
+                    self._after_checkout(tab.page.url)
+                )
+            return self._result(
+                task, tab, clicked=ref, about=UNTRUSTED_NOTE, untrusted_page_data={"element": field}, **extra
+            )
 
     async def type_text(self, task_id: str, tab_id: str, ref: str, text: str) -> dict[str, Any]:
         task = self._task(task_id)
@@ -869,9 +887,13 @@ class BrowserService:
                 raise BrowserError(f"pressing {key} failed: {_describe_error(e)}") from None
             except TimeoutError:
                 raise BrowserError(f"pressing {key} failed: timed out") from None
+            extra: dict[str, Any] = {}
             if done is not None:
                 done()
-            return self._result(task, tab, pressed=key)
+                extra["message"] = "This was a checkout, and the site may finish checkouts: it was submitted. " + (
+                    self._after_checkout(tab.page.url)
+                )
+            return self._result(task, tab, pressed=key, **extra)
 
     async def scroll(
         self, task_id: str, tab_id: str, direction: str = "down", ref: str | None = None
@@ -1045,7 +1067,12 @@ class BrowserService:
         elif h.status == APPROVED:
             out["message"] = (
                 "The person approved the checkout and the browser placed it, as you tried to. Take a new snapshot "
-                "to see the result; never submit it again."
+                "to see the result; never submit it again. " + self._after_checkout(h.url)
+            )
+        elif h.status == DONE and h.kind == "checkout":
+            out["message"] = (
+                "The person placed the order themselves. Take a new snapshot to see the result; never submit it "
+                "again. " + self._after_checkout(h.url)
             )
         elif h.status == "no answer":
             out["message"] = "The person did not answer in time. The tab stays open until the task ends."
