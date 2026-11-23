@@ -56,11 +56,15 @@ Every tool other than starting a task SHALL take a task id. A task SHALL be star
 - **THEN** the call is refused, saying the person has control, and the person can still end the task on their page
 
 ### Requirement: Fixed tool set
-The browser SHALL offer only its own fixed set of tools: start and end a task, open, navigate and close tabs, read a page snapshot, take a screenshot, click, type, select, press a key, scroll, type a secret, type a one-time code, and request and wait for a hand-off. It SHALL never expose tools a page registers.
+The browser SHALL offer only its own fixed set of tools: start and end a task, open, navigate and close tabs, read a page snapshot, take a screenshot, click, type, select, press a key, scroll, type a secret, type a one-time code, and request and wait for a hand-off. It SHALL never expose tools a page registers. Each tool SHALL refuse an argument it does not take, naming it, rather than ignore it.
 
 #### Scenario: Page registers a tool
 - **WHEN** a page registers tools for agents
 - **THEN** the browser's tool list does not change
+
+#### Scenario: Agent passes an argument the tool doesn't take
+- **WHEN** an agent calls `snapshot` with a `click` argument
+- **THEN** the call is refused with an error naming `click`, and nothing is clicked
 
 ### Requirement: No escape hatches
 No tool SHALL run script in a page or in the browser's process, read cookies or storage, intercept requests, read or write files, upload or download files, install anything, or reach Chromium's debugging protocol.

@@ -53,6 +53,7 @@ async def test_fixed_tool_set(env, sites):
     for name, t in tools.items():
         if name != "start_task":
             assert "task" in t["inputSchema"]["required"], name
+        assert t["inputSchema"]["additionalProperties"] is False, name
     assert set(tools["type_secret"]["inputSchema"]["required"]) == {"task", "tab", "ref", "text", "expect_site"}
     assert set(tools["type_totp"]["inputSchema"]["required"]) == {"task", "tab", "ref", "key", "expect_site"}
 
@@ -270,6 +271,23 @@ async def test_unknown_refs_fail_fast(env, sites):
     # A load clears the refs: the agent is told to take a new snapshot.
     await env.call("navigate", {"task": task, "tab": tab, "url": sites.https("shop.example.com", "/next")})
     assert "snapshot first" in await env.error("click", {"task": task, "tab": tab, "ref": "e1"})
+
+
+async def test_unknown_arguments_are_refused_by_name(env, sites):
+    # An agent passed click and type_text to snapshot; the SDK dropped them, the
+    # snapshot came back fine, and the agent believed it had clicked and typed.
+    task = await env.task()
+    tab = await env.tab(task, sites.https("shop.example.com", "/login"))
+    snap = await env.snap(task, tab)
+    user = ref_of(snap, "User")
+    message = await env.error("snapshot", {"task": task, "tab": tab, "click": {"ref": ref_of(snap, "Sign in")}})
+    assert "click" in message and "not permitted" in message, message
+    typing = {"task": task, "tab": tab, "type_text": {"ref": user, "text": "alfred@gmail.com"}}
+    message = await env.error("snapshot", typing)
+    assert "type_text" in message and "alfred@gmail.com" not in message, message
+    args = {"task": task, "tab": tab, "ref": user, "text": "alfred@gmail.com", "submit": True}
+    assert "submit" in await env.error("type_text", args)
+    assert await env.page(task, tab).locator("input[name=u]").input_value() == ""
 
 
 async def test_keys_are_limited(env, sites):

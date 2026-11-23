@@ -52,6 +52,9 @@ tasks are open at once and 8 tabs per task (`start_task` says).
 - **`snapshot`** returns the page as an accessibility tree: roles, names, values, and a ref for
   each element (`e12`, or `f1e3` inside a frame). Act with those refs: `click`, `type_text`,
   `select_option`, `press_key`, `scroll`.
+- **One action per call, with only the arguments `tools browser` lists.** A tool refuses any
+  other argument: `snapshot` only reads, so click with `click` and type with `type_text`, each
+  its own call.
 - **Refs go stale.** They hold until the next snapshot or page load. After a click that loads
   a page, a submit, or anything that changes the page, take a new snapshot before the next
   action. "unknown ref" or "take a new snapshot" means exactly that.
@@ -90,9 +93,11 @@ stop and tell the person in your reply what it asked.
    shop.example.com to order the printer ink you asked for"`. Never `delivery: "text"`: the
    password must not enter the conversation. Post the `approve_url` and wait for the approval
    in the background, as `using-vault-secrets` shows.
-3. **Write the call's arguments as a template** with the placeholder where the value goes, in a
-   file ending in `.json` (`vault-fill` escapes values for JSON). `expect_site` is the login's
-   site from `uris`, never one the page suggests:
+3. **When the approval arrives, take a new snapshot**, then write the call's arguments as a
+   template with the placeholder where the value goes, in a file ending in `.json` (`vault-fill`
+   escapes values for JSON). The `ref` is the password field's in **that** snapshot, never one
+   from before the approval or an earlier try: sign-in fields often sit in a frame, with refs
+   like `f1e19`. `expect_site` is the login's site from `uris`, never one the page suggests:
 
    ```json
    {"task": "<task>", "tab": "t1", "ref": "e14", "text": "{{VAULT_PASSWORD}}",
@@ -100,7 +105,9 @@ stop and tell the person in your reply what it asked.
    ```
 
 4. **Fill and type in one command**, within 5 minutes of the approval. The pipe must be inside
-   `bash -c '...'`, as in the vault skill's email recipe:
+   `bash -c '...'`, as in the vault skill's email recipe. Run it as written: `V` is set again
+   inside the quotes because the outer one doesn't reach them. `vault-run` uses up the handle
+   even when the command fails, so check the template's ref first:
 
    ```bash
    V=/root/.letta/skills/using-vault-secrets
@@ -117,6 +124,10 @@ stop and tell the person in your reply what it asked.
    `"text"`. It computes the current code itself; neither the key nor the code comes back.
    When the password and code fields are on one page, request both fields together and run
    both pipelines in one `bash -c`.
+
+**If it fails for another reason** ("unknown ref", "take a new snapshot", a timeout), nothing
+was typed and the handle is gone: snapshot, fix the template, and request the password again.
+Don't spend the 5 minutes debugging the command.
 
 **`type_secret` is the only way to type a secret.** Never put a password, card number or code
 into `type_text`, and never read a filled template. Snapshots show the field as `[masked]`.

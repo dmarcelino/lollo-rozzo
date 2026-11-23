@@ -65,13 +65,16 @@ def _quiet(tool: Tool) -> Tool:
     """The SDK validates arguments before the tool runs, so before type_secret
     puts its value into the scrub, and pydantic's errors echo the input
     (`input_value={... 'text': ...}`). No tool's validation error carries an
-    argument's value; the schema is unchanged."""
+    argument's value. An argument the tool doesn't take is refused by name, not
+    dropped: an agent that passed `click` to snapshot was told nothing and
+    believed it had clicked."""
 
     class Arguments(tool.fn_metadata.arg_model):  # type: ignore[name-defined,misc]
-        model_config = ConfigDict(hide_input_in_errors=True)
+        model_config = ConfigDict(hide_input_in_errors=True, extra="forbid")
 
     Arguments.__name__ = tool.fn_metadata.arg_model.__name__
     tool.fn_metadata.arg_model = Arguments
+    tool.parameters["additionalProperties"] = False
     return tool
 
 
