@@ -35,10 +35,33 @@ from .conftest import ref_of, wait_for
         ("Conferma l’ordine", "https://negozio.example.it/ordine"),
         ("Acquista ora 34,90 €", "https://negozio.example.it/x"),
         ("Procedi al pagamento", "https://negozio.example.it/x"),
+        ("Confirmar encomenda", "https://loja.example.pt/x"),
+        ("Finalizar encomenda", "https://loja.example.pt/x"),
+        ("Encomendar já", "https://loja.example.pt/x"),
+        ("Finalizar compra", "https://loja.example.pt/x"),
+        ("Efetuar pagamento", "https://loja.example.pt/x"),
+        ("Comprar agora", "https://loja.example.pt/x"),
+        ("Pagar agora 20,61 €", "https://loja.example.pt/x"),
+        ("Finalizar pedido", "https://loja.example.pt/x"),
     ],
 )
-def test_checkout_buttons_in_five_languages(name, url):
+def test_checkout_buttons_in_six_languages(name, url):
     assert recognise(Features(names=[name], url=url)).is_checkout, name
+
+
+@pytest.mark.parametrize(
+    "fields,url,expected",
+    [
+        ([], "https://loja.example.pt/livro/um-livro/1", False),  # on a product page it adds to the cart
+        ([], "https://tienda.example.es/producto/1", False),
+        ([], "https://loja.example.pt/checkout/resumo", True),
+        (["cardnumber cc-number"], "https://loja.example.pt/x", True),
+    ],
+)
+def test_a_bare_comprar_needs_a_checkout_page_or_card_fields(fields, url, expected):
+    for name in ("COMPRAR", "Comprar"):
+        verdict = recognise(Features(names=[name], fields=fields, url=url))
+        assert verdict.is_checkout is expected, (name, url, verdict)
 
 
 @pytest.mark.parametrize(
@@ -54,6 +77,8 @@ def test_checkout_buttons_in_five_languages(name, url):
         ("Order history", [], "https://shop.example.com/account"),
         ("Continue", ["name", "address"], "https://shop.example.com/checkout/address"),
         ("Border settings", [], "https://shop.example.com/border"),
+        ("Adicionar ao carrinho", [], "https://loja.example.pt/produto/1"),
+        ("Continuar", ["morada", "telefone"], "https://loja.example.pt/checkout/dados"),
     ],
 )
 def test_not_checkouts(name, fields, url):
@@ -75,13 +100,14 @@ def test_submit_during_take_over():
 
 # ── through the tools ────────────────────────────────────────────────────────
 
-PAGES = ["/checkout/review", "/kasse", "/commande", "/pedido", "/ordine", "/shop/buy", "/pay"]
+PAGES = ["/checkout/review", "/kasse", "/commande", "/pedido", "/ordine", "/encomenda", "/shop/buy", "/pay"]
 BUTTONS = {
     "/checkout/review": "Place order",
     "/kasse": "Zahlungspflichtig bestellen",
     "/commande": "Valider la commande",
     "/pedido": "Realizar pedido",
     "/ordine": "Conferma l’ordine",
+    "/encomenda": "Confirmar encomenda",
     "/shop/buy": "Acquista ora 34,90 €",
     "/pay": "Continue",
 }
@@ -192,7 +218,7 @@ async def test_keys_that_submit_nothing_are_pressed(env, sites):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("path", ["/newsletter", "/search", "/contact", "/cart", "/login"])
+@pytest.mark.parametrize("path", ["/newsletter", "/search", "/contact", "/cart", "/login", "/livro/1"])
 async def test_other_forms_are_performed(env, sites, path):
     task = await env.task()
     tab = await env.tab(task, sites.https("shop.example.com", path))
@@ -203,6 +229,7 @@ async def test_other_forms_are_performed(env, sites, path):
         "/contact": "Send message",
         "/cart": "Add to cart",
         "/login": "Sign in",
+        "/livro/1": "COMPRAR",
     }[path]
     result = await env.call("click", {"task": task, "tab": tab, "ref": ref_of(snap, button)})
     assert "handoff" not in result

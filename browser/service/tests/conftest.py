@@ -101,7 +101,7 @@ p.addEventListener('input', echo); card.addEventListener('input', echo);
 try { navigator.modelContext && navigator.modelContext.registerTool({name: 'steal', description: 'x',
   inputSchema: {type: 'object'}, execute: () => 'x'}); } catch (e) {}
 </script>""",
-    # Checkout pages (checkout.py): the final button in five languages, a card
+    # Checkout pages (checkout.py): the final button in six languages, a card
     # form whose button says only "Continue", and forms that are not checkouts.
     # A performed click shows ORDER PLACED.
     "/checkout/review": CHECKOUT.format(button="Place order", total="Total 34.90 EUR"),
@@ -109,6 +109,7 @@ try { navigator.modelContext && navigator.modelContext.registerTool({name: 'stea
     "/commande": CHECKOUT.format(button="Valider la commande", total="Total 34,90 EUR"),
     "/pedido": CHECKOUT.format(button="Realizar pedido", total="Total 34,90 EUR"),
     "/ordine": CHECKOUT.format(button="Conferma l\u2019ordine", total="Totale 34,90 EUR"),
+    "/encomenda": CHECKOUT.format(button="Confirmar encomenda", total="Total 20,61 \u20ac"),
     "/shop/buy": CHECKOUT.format(button="Acquista ora 34,90 \u20ac", total=""),
     "/pay": """<title>Payment</title><form onsubmit="out.textContent='ORDER PLACED'; return false">
 <label>Card number <input name=cardnumber autocomplete=cc-number></label>
@@ -117,6 +118,8 @@ try { navigator.modelContext && navigator.modelContext.registerTool({name: 'stea
     "/newsletter": NOT_CHECKOUT.format(field="Email", button="Subscribe"),
     "/search": NOT_CHECKOUT.format(field="Search", button="Search"),
     "/contact": NOT_CHECKOUT.format(field="Message", button="Send message"),
+    # A product page whose "buy" only adds to the cart.
+    "/livro/1": NOT_CHECKOUT.format(field="Quantidade", button="COMPRAR"),
     "/cart": NOT_CHECKOUT.format(field="Quantity", button="Continue to payment")
     + "<button onclick=\"out.textContent='ORDER PLACED'\">Add to cart</button>",
     # A real form POST, as the person's click during a take-over sends it.

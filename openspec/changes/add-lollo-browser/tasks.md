@@ -64,6 +64,7 @@
 - [x] 7.5 Hold a recognised checkout's action (the element and the click or key) with its hand-off; approving performs it once on the same element, only on the same page, with the tab not controlled and no checkout submitted since, otherwise presses nothing and leaves the hand-off open; "approve and allow" turns on the site's setting first; `wait_handoff` answers `approved`; audit `checkout_approved` with who; and verify with pytest (approve once and the next checkout held again, allow the site, page changed, element gone, taken over, approved twice, declined, expired)
 - [x] 7.6 Offer take over, "Place this order", "Place it and always allow" the site, done and decline on a checkout hand-off's page (form token, never in a push notification), and verify with pytest
 - [x] 7.7 Update the skill's checkout section (`approved` means the browser placed it), the tool's held-checkout message, `docs/browser.md` and `browser/README.md`, and verify the agent-skills and browser checks and the doc link check pass
+- [x] 7.8 Recognise Portuguese order buttons ("confirmar encomenda", "encomendar", "finalizar compra"...) and count a bare "comprar" only with a checkout page or card fields, since on many shops it adds to the cart; verify with pytest on a Portuguese checkout fixture and a product page
 
 ## 8. Registration, skill and guide
 

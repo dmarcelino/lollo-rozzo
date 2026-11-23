@@ -2,7 +2,7 @@
 
 Before an agent's click, or Enter in a form field, the target is scored on
 three signals: its accessible name and text against phrases that place an
-order in English, German, French, Spanish and Italian; its form's fields
+order in English, German, French, Spanish, Italian and Portuguese; its form's fields
 (card number, expiry, security code); and the page URL (checkout, payment,
 order...). A score of THRESHOLD or more is a checkout. A page can name its
 button anything, so this can miss: the limits that hold are the vault's
@@ -54,7 +54,7 @@ _STRONG = [
     # Spanish
     r"(?:realizar|confirmar|finalizar|tramitar) (?:el |mi )?pedido",
     r"(?:finalizar|confirmar) (?:la |mi )?compra",
-    r"comprar(?: ahora| ya)?",
+    r"comprar (?:ahora|ya)",
     r"pagar(?: ahora| y finalizar)?",
     # Italian
     r"(?:conferma|completa|invia) (?:l'|il |l )?ordine",
@@ -64,12 +64,23 @@ _STRONG = [
     r"ordina(?: ora| adesso)?",
     r"concludi (?:l'|l )?(?:acquisto|ordine)",
     r"procedi (?:al pagamento|all'acquisto)",
+    # Portuguese
+    r"(?:confirmar|finalizar|concluir|efetuar|efectuar|fazer|submeter) (?:a |o |a minha |o meu )?encomenda",
+    r"encomendar(?: agora| ja)?",
+    r"(?:finalizar|concluir|efetuar|efectuar|confirmar) (?:a |o )?(?:compra|pagamento|pedido)",
+    r"(?:fazer|efetuar|efectuar) (?:o )?pedido",
+    r"comprar (?:agora|ja)",
+    r"pagar (?:agora|encomenda)",
 ]
 _STRONG_RE = re.compile(r"^(?:" + "|".join(_STRONG) + r")$")
+# A bare "buy" (score 2): on many shops it only adds to the cart ("COMPRAR" on
+# a product page), so it counts as a checkout only with a checkout page or card
+# fields as well.
+_BUY_RE = re.compile(r"^comprar$")
 # Words that point at a checkout without placing one (score 1).
 _WEAK_RE = re.compile(
     r"\b(?:order|checkout|purchase|payment|pay|bestell\w*|kasse|bezahl\w*|zahlung\w*|commande|paiement|"
-    r"pedido|pago|compra|ordine|pagamento|acquisto)\b"
+    r"pedido|pago|compra|ordine|pagamento|acquisto|encomenda\w*)\b"
 )
 # Form fields of a payment (score 2).
 _CARD_FIELD_RE = re.compile(
@@ -79,7 +90,7 @@ _CARD_FIELD_RE = re.compile(
 # URL path words (score 1).
 _URL_RE = re.compile(
     r"(?<![a-z])(?:checkout|pay|payment|place.?order|order|kasse|bestellung|bestellen|commande|paiement|pago|"
-    r"pedido|cassa|ordine|pagamento)(?![a-z])"
+    r"pedido|cassa|ordine|pagamento|encomenda)(?![a-z])"
 )
 
 
@@ -138,6 +149,9 @@ def recognise(features: Features) -> Verdict:
     if any(_STRONG_RE.match(n[:80]) for n in names):
         score += 3
         reasons.append("the button places an order")
+    elif any(_BUY_RE.match(n) for n in names):
+        score += 2
+        reasons.append("the button buys, which may only add to the cart")
     elif any(_WEAK_RE.search(n) for n in names):
         score += 1
         reasons.append("the button mentions an order or payment")
