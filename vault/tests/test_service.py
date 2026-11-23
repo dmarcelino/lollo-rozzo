@@ -122,6 +122,9 @@ async def test_a_pending_answer_tells_the_agent_to_keep_waiting(settings, vault)
         assert answer["wait_command"] == command and command in message
         assert "background command" in message and "every request the task needs" in message
         assert f"{command} <other ids>" in message and "Don't start it for each request" in message
+        # An agent that asked again later started no wait; one stopped its wait to end its turn.
+        assert "even if this is the only request, or one you make again later" in message
+        assert "end your turn and leave it running: don't stop it" in message
         # The fallback without a shell.
         assert f"get_result with this id and wait_seconds {MAX_WAIT_SECONDS}" in message
         assert "until" in message and "end your turn" in message

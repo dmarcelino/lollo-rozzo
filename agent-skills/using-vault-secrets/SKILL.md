@@ -130,7 +130,8 @@ collect what they approved.
    get a notification. A secret the user shares without asking answers at once with a handle,
    whose 5 minutes start then: request those after `vault-wait` finishes, just before you fill.
 2. Then run `vault-wait` once, with all their ids, as one background command, so you are told
-   when it finishes. Don't start one per request: it would collect each answer as it comes,
+   when it finishes. Run it even for a single request, and again for a request you make later in
+   the task (asked again after a handle was used up, say). Don't start one per request: it would collect each answer as it comes,
    and its handle's minutes would run out while the others wait. Each `pending` answer gives
    the command for its id in `wait_command`; put every id in the one command:
 
@@ -142,6 +143,10 @@ python3 /root/.letta/skills/using-vault-secrets/vault-wait <id1> <id2> <id3>
    `done` with the `handle` and `placeholders` (or, for `delivery: "text"`, the values), or
    `denied` or `expired`. You don't need to start it again while you wait. The handles' 5 minutes
    start only when it prints them, so use them right away.
+
+   Once it is running, end your turn and leave it running. Never stop it (`TaskStop`): a running
+   background command doesn't block your turn, and its notification is what starts your next
+   one. Stopped, it collects nothing.
 3. When it finishes, act on its answers, also when it exits with an error: it still prints
    every handle it collected. For a `denied` or `expired` request, tell the user and ask
    whether to request it again. If it says to run it again (it was stopped, or the vault could

@@ -78,10 +78,12 @@ def post_link(url: str) -> str:
 def keep_waiting(rid: str) -> str:
     return (
         "Wait for the answer before you end your turn. Once you have made every request the task needs, run one "
-        f"background command with all their ids, this one included: {wait_command(rid)} <other ids>. Run only one: "
-        "it waits until every request is answered, then collects them together and prints the answers, and you are "
-        "told it finished. Don't start it for each request, or a handle's minutes start before the others are "
-        "answered. Without a shell, call get_result with "
+        f"background command with all their ids, this one included: {wait_command(rid)} <other ids>. Run it even "
+        "if this is the only request, or one you make again later in the task. Run only one: it waits until every "
+        "request is answered, then collects them together and prints the answers, and you are told it finished. "
+        "Then end your turn and leave it running: don't stop it, since its notification starts your next turn. "
+        "Don't start it for each request, or a handle's minutes start before the others are answered. Without a "
+        "shell, call get_result with "
         f"this id and wait_seconds {MAX_WAIT_SECONDS}, and call it again until the status is no longer pending "
         f"(the request expires after {REQUEST_TTL_SECONDS // 60} minutes). Don't end your turn with nothing "
         "waiting: nothing tells you when the user answers."

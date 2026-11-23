@@ -13,6 +13,7 @@ Whenever `request_secret` or `get_result` answers `pending`, the reply SHALL inc
 - **WHEN** an agent calls `request_secret` for a field that needs approval
 - **THEN** the reply has `status` `pending`, the `approve_url`, and `wait_command` equal to `python3 /root/.letta/skills/using-vault-secrets/vault-wait <id>` with the request's id
 - **AND** the message contains that same command, says to run it in the background, and says to call `get_result` with `wait_seconds` 50 until it is no longer pending when no shell is available
+- **AND** the message says to run it even for a single request or one made again later in the task, and to end the turn leaving it running, without stopping it
 
 #### Scenario: get_result still pending
 - **WHEN** an agent calls `get_result` and the request is still `pending` when the wait ends
