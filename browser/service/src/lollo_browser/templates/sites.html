@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Sites{% endblock %}
+{% block content %}
+<h1>Sites</h1>
+<p>Every task starts signed out of every site, except the sites you keep signed in here. Agents can't change
+  these settings.</p>
+<p class="muted small">A site you keep signed in can be used by every agent of this stack without asking you or the
+  vault: they all share one app-server. Keeping a shop where a card is saved lets agents spend there without a
+  vault step.</p>
+{% if sites %}
+<div class="stack">
+  {% for s in sites %}
+  <section class="panel">
+    <form method="post" action="{{ base }}/sites" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="site" value="{{ s.site }}">
+      <strong>{{ s.site }}</strong>
+      <label><input type="checkbox" name="keep_signed_in"{% if s.keep_signed_in %} checked{% endif %}> Keep me signed in</label>
+      <label><input type="checkbox" name="may_checkout"{% if s.may_checkout %} checked{% endif %}> Agents may finish checkouts</label>
+      <p class="muted small">{% if s.saved_at %}Sign-in saved {{ s.saved_at|time }}{% else %}No sign-in saved{% endif %}</p>
+      <div class="form-actions"><button class="button ghost">Save</button></div>
+    </form>
+    {% if s.keep_signed_in or s.saved_at %}
+    <form method="post" action="{{ base }}/sites/forget" data-confirm="Forget the sign-in of {{ s.site }}?">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="site" value="{{ s.site }}">
+      <button class="button danger outline">Forget</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+<form method="post" action="{{ base }}/sites/forget-all" data-confirm="Forget every kept sign-in?">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><button class="button danger">Forget all sign-ins</button>
+</form>
+{% else %}
+<div class="empty"><p class="muted">No site has a setting yet.</p></div>
+{% endif %}
+<h2>Add a site</h2>
+<form method="post" action="{{ base }}/sites" class="panel stack">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="add" value="1">
+  <div class="field"><label for="site">Site, e.g. shop.example.com (covers all of example.com)</label>
+    <input id="site" name="site" required maxlength="300" autocomplete="off"></div>
+  <label><input type="checkbox" name="keep_signed_in"> Keep me signed in</label>
+  <label><input type="checkbox" name="may_checkout"> Agents may finish checkouts</label>
+  <div class="form-actions"><button class="button">Add</button></div>
+</form>
+{% include "_checkout_note.html" %}
+{% endblock %}

@@ -43,5 +43,5 @@ Read `vault/README.md#rules` and `agent-skills/README.md#rules` before starting 
 ## Workflow follow-up
 
 - Done: `docs/diagrams/agent-skills-architecture` and `vault-architecture` show `vault-wait` and its `get_result` path, re-finalised against `bb0414b` with their SVGs exported again from the viewer.
-- On `33-browser`, point `using-the-browser`'s "wait in the background" step at `vault-wait` once this is merged.
+- Done: with `33-browser` merged in, `using-the-browser`'s sign-in step waits with `vault-wait` and points at the renamed MCP-arguments recipe.
 - Archive the change once it is reviewed and merged.

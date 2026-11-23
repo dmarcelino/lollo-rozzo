@@ -1,0 +1,35 @@
+<!doctype html>
+<title>WebRTC</title>
+<!-- Case 2: WebRTC with STUN and TURN servers at addresses on the engine's own
+network (lollo-pipelock, lollo-browser) and at a stack service's address, and
+fetches to a host whose responses advertise HTTP/3 (Alt-Svc), so QUIC would
+be tried if it were on. Nothing may leave the engine by UDP. -->
+<p id=out>gathering</p>
+<script>
+const servers = [
+  {urls: 'stun:lollo-pipelock:3478'}, {urls: 'stun:lollo-browser:3478'}, {urls: 'stun:{{VAULT_IP}}:3478'},
+  {urls: 'turn:lollo-pipelock:3478?transport=udp', username: 'u', credential: 'p'},
+  {urls: 'turn:lollo-pipelock:3478?transport=tcp', username: 'u', credential: 'p'},
+];
+const kinds = {host: 0, srflx: 0, relay: 0, prflx: 0};
+async function quic() {
+  for (let i = 0; i < 4; i++) {
+    await fetch('https://shop.acme-shop.test/quic-' + i, {cache: 'no-store'}).catch(() => {});
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+async function rtc() {
+  const pc = new RTCPeerConnection({iceServers: servers, iceCandidatePoolSize: 2});
+  pc.createDataChannel('x');
+  pc.onicecandidate = (e) => { if (e.candidate && e.candidate.type) kinds[e.candidate.type]++; };
+  await pc.setLocalDescription(await pc.createOffer());
+  await new Promise((r) => {
+    pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && r();
+    setTimeout(r, 8000);
+  });
+  pc.close();
+}
+Promise.all([quic(), rtc()]).then(() => {
+  out.textContent = `candidates host=${kinds.host} srflx=${kinds.srflx} relay=${kinds.relay} prflx=${kinds.prflx}; done`;
+});
+</script>

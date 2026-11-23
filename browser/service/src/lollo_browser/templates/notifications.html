@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<h1>Notifications</h1>
+<p>Get a notification on this device when an agent hands something to you (a sign-in, a challenge, a checkout) and
+  whenever a checkout is submitted. Tapping it opens the page to answer.</p>
+<p class="muted">On iPhone and iPad, first add this page to the Home Screen (Share, Add to Home Screen) and open it from there.</p>
+<section class="panel" id="push">
+  <p id="push-status" class="muted">Checking this device...</p>
+  <div class="form-actions">
+    <button class="button" id="push-enable" hidden>Enable on this device</button>
+    <button class="button ghost" id="push-disable" hidden>Disable on this device</button>
+    <button class="button ghost" id="push-test" hidden>Send a test</button>
+  </div>
+</section>
+<p class="muted small">Devices with notifications on for {{ email }}: {{ devices }}</p>
+{% endblock %}

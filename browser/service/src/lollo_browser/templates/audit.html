@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+{% block content %}
+<h1>History</h1>
+<form method="get" action="{{ base }}/audit" class="filters">
+  <div class="field"><label for="task">Task</label><input id="task" name="task" value="{{ task }}" placeholder="task-..."></div>
+  <div class="field"><label for="site">Site</label><input id="site" name="site" value="{{ site }}" placeholder="example.com"></div>
+  <div class="form-actions"><button class="button ghost">Filter</button>{% if task or site %} <a href="{{ base }}/audit">All</a>{% endif %}</div>
+</form>
+<p class="muted small">Newest first. Secrets typed show the site and the field, never the value. Addresses are
+  shown without their query.</p>
+{% if entries %}
+<ul class="entries">
+  {% for e in entries %}
+  <li><span class="muted small">{{ e.ts|time }}</span> <strong>{{ e.event|replace("_", " ") }}</strong>
+    {% if e.site %}on {{ e.site }}{% endif %}
+    {% if e.payment_frame %}in {{ e.payment_frame }}'s frame{% endif %}
+    {% if e.field %}, {{ e.field }}{% endif %}
+    {% if e.by %}, by {{ e.by }}{% endif %}
+    {% if e.reason %}: {{ e.reason }}{% endif %}
+    {% if e.summary %}: {{ e.summary }}{% endif %}
+    {% if e.status %} ({{ e.status }}){% endif %}
+    {% if e.url %}<br><span class="url small">{{ e.url }}</span>{% endif %}
+    {% if e.task %}<br><a class="small" href="{{ base }}/audit?task={{ e.task }}">{{ e.purpose }}</a>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty"><p class="muted">Nothing yet.</p></div>
+{% endif %}
+{% endblock %}

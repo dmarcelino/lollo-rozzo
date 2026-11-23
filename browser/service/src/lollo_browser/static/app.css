@@ -1,0 +1,103 @@
+/* The browser page only; the shared look is lollo.css. */
+
+.tabs {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 18px;
+  font-size: 14px;
+}
+.tabs a {
+  padding: 4px 0 10px;
+  color: var(--text);
+  text-decoration: none;
+}
+.tabs a:hover {
+  text-decoration: underline;
+}
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.panel.pending {
+  border-left: 3px solid var(--accent-ink);
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.stack > .button {
+  align-self: flex-start;
+}
+blockquote {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-left: 3px solid var(--accent-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.url {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+.tabs-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tab-actions {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  margin-left: 8px;
+}
+form.inline {
+  display: inline;
+}
+.entries {
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: flex-end;
+}
+
+/* The live view: as wide as the window allows, the display scaled to fit. */
+.shell.wide {
+  max-width: 1320px;
+}
+.screen {
+  width: 100%;
+  aspect-ratio: 1280 / 900;
+  background: #111;
+  border: 1px solid var(--border);
+}

@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "b537162f494aa3bef69c0d6af8cefe38f99b552e"
     }
   },
   "components": [
@@ -30,8 +30,8 @@
       "sources": [
         {
           "path": "README.md",
-          "line": 9,
-          "end_line": 12,
+          "line": 13,
+          "end_line": 16,
           "label": "two hosts per person"
         }
       ]
@@ -91,19 +91,19 @@
       ],
       "size": [
         120,
-        662
+        782
       ],
       "sources": [
         {
           "path": "lib/cloudflare.sh",
           "line": 114,
-          "end_line": 128,
+          "end_line": 129,
           "label": "lollo host routes"
         },
         {
           "path": "lib/cloudflare.sh",
-          "line": 154,
-          "end_line": 173,
+          "line": 155,
+          "end_line": 174,
           "label": "tunnel ingress"
         },
         {
@@ -135,8 +135,8 @@
         },
         {
           "path": "compose/pipelock-proxy.yml",
-          "line": 47,
-          "end_line": 49,
+          "line": 49,
+          "end_line": 51,
           "label": "proxied by pipelock"
         }
       ]
@@ -191,8 +191,8 @@
         },
         {
           "path": "lolloctl",
-          "line": 385,
-          "end_line": 395,
+          "line": 389,
+          "end_line": 399,
           "label": "sync_executor"
         },
         {
@@ -224,8 +224,8 @@
         },
         {
           "path": "compose/pipelock-proxy.yml",
-          "line": 44,
-          "end_line": 46,
+          "line": 46,
+          "end_line": 48,
           "label": "proxied by pipelock"
         }
       ]
@@ -234,7 +234,7 @@
       "id": "pipelock",
       "type": "security",
       "label": "lollo-pipelock",
-      "sublabel": "egress proxy, advisory",
+      "sublabel": "egress proxy",
       "pos": [
         1050,
         260
@@ -253,7 +253,7 @@
         {
           "path": "compose/pipelock-proxy.yml",
           "line": 1,
-          "end_line": 43,
+          "end_line": 45,
           "label": "who follows the proxy"
         }
       ]
@@ -265,7 +265,7 @@
       "sublabel": "Gmail, Calendar",
       "pos": [
         1050,
-        380
+        760
       ],
       "size": [
         130,
@@ -329,8 +329,8 @@
         },
         {
           "path": "lolloctl",
-          "line": 466,
-          "end_line": 473,
+          "line": 495,
+          "end_line": 502,
           "label": "image lolloctl builds"
         }
       ]
@@ -420,13 +420,63 @@
       ]
     },
     {
+      "id": "lollo-browser",
+      "type": "security",
+      "label": "lollo-browser",
+      "sublabel": "/browser/, browser-data",
+      "pos": [
+        560,
+        740
+      ],
+      "size": [
+        170,
+        62
+      ],
+      "sources": [
+        {
+          "path": "compose/browser.yml",
+          "line": 57,
+          "end_line": 94,
+          "label": "the service"
+        }
+      ]
+    },
+    {
+      "id": "engine",
+      "type": "backend",
+      "label": "lollo-browser-engine",
+      "sublabel": "Chromium, sandbox on",
+      "pos": [
+        1050,
+        380
+      ],
+      "size": [
+        130,
+        62
+      ],
+      "sources": [
+        {
+          "path": "compose/browser.yml",
+          "line": 28,
+          "end_line": 55,
+          "label": "the engine"
+        },
+        {
+          "path": "compose/browser.yml",
+          "line": 103,
+          "end_line": 107,
+          "label": "internal network"
+        }
+      ]
+    },
+    {
       "id": "gate",
       "type": "security",
       "label": "lollo-code-server",
       "sublabel": "/code-server/ gate",
       "pos": [
         560,
-        740
+        860
       ],
       "size": [
         170,
@@ -448,7 +498,7 @@
       "sublabel": "socket only, no port",
       "pos": [
         560,
-        880
+        980
       ],
       "size": [
         170,
@@ -470,7 +520,7 @@
       "sublabel": "SSH in, code-egress out",
       "pos": [
         560,
-        1000
+        1100
       ],
       "size": [
         170,
@@ -492,7 +542,7 @@
       "sublabel": "letta-home, workspaces",
       "pos": [
         840,
-        1000
+        1100
       ],
       "size": [
         150,
@@ -501,9 +551,9 @@
       "sources": [
         {
           "path": "docs/architecture.md",
-          "line": 52,
+          "line": 53,
           "label": "the stack's data",
-          "end_line": 69
+          "end_line": 72
         },
         {
           "path": "compose/code-server.yml",
@@ -541,6 +591,7 @@
         "vault",
         "gmail",
         "news-radar",
+        "lollo-browser",
         "gate"
       ],
       "pad": 14
@@ -560,6 +611,14 @@
       "wraps": [
         "gotenberg",
         "toolsvol"
+      ],
+      "pad": 14
+    },
+    {
+      "kind": "security-group",
+      "label": "browser network (internal)",
+      "wraps": [
+        "engine"
       ],
       "pad": 14
     }
@@ -613,6 +672,10 @@
     },
     {
       "from": "cloudflared",
+      "to": "lollo-browser"
+    },
+    {
+      "from": "cloudflared",
       "to": "gate"
     },
     {
@@ -657,6 +720,12 @@
     },
     {
       "from": "appserver",
+      "to": "lollo-browser",
+      "label": "/mcp",
+      "variant": "security"
+    },
+    {
+      "from": "appserver",
       "to": "pipelock",
       "label": "proxy"
     },
@@ -695,6 +764,18 @@
       "from": "shell",
       "to": "state",
       "label": "workspaces"
+    },
+    {
+      "from": "lollo-browser",
+      "to": "engine",
+      "label": "Playwright, VNC (secret)",
+      "variant": "security"
+    },
+    {
+      "from": "engine",
+      "to": "pipelock",
+      "label": "every request",
+      "variant": "security"
     }
   ],
   "cards": [
@@ -714,15 +795,16 @@
         "Agents are root in the app-server and share its network namespace with the BFF; every container there drops NET_RAW.",
         "Lollo services accept only the lollo's Access application (CF_LOLLO_AUD), never Lettuce's JWT.",
         "The code editor runs nothing agents wrote; its terminals are SSH sessions into the shell, which is no stronger than an agent.",
-        "Pipelock is advisory: the stack network keeps its direct route out.",
-        "lollo-news-radar fetches public websites directly, public addresses only (not drawn)."
+        "Pipelock is advisory: the stack network keeps its direct route out. The browser's engine is the exception: on its internal network, pipelock is its only way out.",
+        "lollo-news-radar fetches public websites directly, public addresses only (not drawn).",
+        "Chromium's sandbox stays on in the browser's engine, which holds no data and obeys only lollo-browser."
       ]
     },
     {
       "dot": "amber",
       "title": "Volumes not drawn",
       "items": [
-        "vault-data: only lollo-vault. pipelock-data: only lollo-pipelock. news-radar-data: only lollo-news-radar.",
+        "vault-data: only lollo-vault. pipelock-data: only lollo-pipelock. news-radar-data: only lollo-news-radar. browser-data: only lollo-browser, never backed up.",
         "google-creds: the BFF, google-mcp, and lollo-gmail-triggers read-only.",
         "code-server-sock, code-server-data, code-exec-keys: only the code editor's services.",
         "state/lollo/gmail-triggers: only lollo-gmail-triggers, outside every app-server mount."
@@ -732,7 +814,7 @@
       "dot": "slate",
       "title": "Profiles",
       "items": [
-        "lollo-*: this repo's extras; lollo starts with any lollo page profile.",
+        "lollo-*: this repo's extras; lollo starts with any lollo page profile. lollo-browser needs lollo-pipelock.",
         "search (searxng, ddg-mcp), google (google-mcp), cloudflared (required): upstream's.",
         "Not drawn: channel-gateway (upstream's telegram profile), which also shares the app-server's namespace."
       ]

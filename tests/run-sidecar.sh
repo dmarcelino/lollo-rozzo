@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for a sidecar image (landing/, vault/, gmail-triggers/, news-radar/, code-server/) or
-# the document tools (doc-tools/). They run in a container built from the image's
+# Tests for a sidecar image (landing/, vault/, gmail-triggers/, news-radar/, code-server/,
+# browser/) or the document tools (doc-tools/). They run in a container built from the image's
 # `test` stage, so the host needs only Docker.
 # agent-skills/ is mounted for the vault's vault-run helper tests. For landing,
 # the lollo executor's tests (landing/executor/) also run in a Node image,
@@ -10,22 +10,28 @@
 # arguments narrow the run; its first build downloads code-server. For
 # doc-tools, the `office` stage is built too, unless pytest arguments narrow the
 # run: it downloads OfficeAgent for this host's architecture and checks it
-# against OFFICEAGENT_SHA256_AMD64 or OFFICEAGENT_SHA256_ARM64.
+# against OFFICEAGENT_SHA256_AMD64 or OFFICEAGENT_SHA256_ARM64. For browser, the
+# pytest image is the service's (browser/service/), and the engine's own script,
+# browser/engine/tests/run.sh, also runs, unless pytest arguments narrow the run;
+# it needs Docker on Linux with unprivileged user namespaces (browser/README.md).
 #   tests/run-sidecar.sh <dir> [pytest args...]
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 NODE_IMAGE=node:22.22.0-slim
 
 dir=${1:-}
-if [[ ! $dir =~ ^[a-z][a-z0-9-]*$ || ! -f $ROOT/$dir/Dockerfile ]]; then
-  echo "usage: tests/run-sidecar.sh <dir> [pytest args...]   (dir: landing, vault, gmail-triggers, news-radar, code-server, doc-tools)" >&2
+# The pytest image's build context: the folder, but the browser's service.
+context=$ROOT/$dir
+[[ $dir != browser ]] || context=$ROOT/browser/service
+if [[ ! $dir =~ ^[a-z][a-z0-9-]*$ || ! -f $context/Dockerfile ]]; then
+  echo "usage: tests/run-sidecar.sh <dir> [pytest args...]   (dir: landing, vault, gmail-triggers, news-radar, code-server, doc-tools, browser)" >&2
   exit 2
 fi
 shift
 
 image=lollo-$dir:test
 docker build -q --target test --build-context "lollo-common=$ROOT/lollo-common" \
-  -t "$image" "$ROOT/$dir" >/dev/null
+  -t "$image" "$context" >/dev/null
 
 mounts=()
 if [[ $dir == vault ]]; then
@@ -45,4 +51,8 @@ fi
 
 if [[ $dir == doc-tools && $# -eq 0 ]]; then
   docker build -q --target office --build-context "lollo-common=$ROOT/lollo-common" "$ROOT/doc-tools" >/dev/null
+fi
+
+if [[ $dir == browser && $# -eq 0 ]]; then
+  "$ROOT/browser/engine/tests/run.sh"
 fi

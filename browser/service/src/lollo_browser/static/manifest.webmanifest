@@ -1,0 +1,14 @@
+{
+  "name": "Lollo Browser",
+  "short_name": "Browser",
+  "description": "Watch, take over and limit what your agents do in their browser",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#e7eaf0",
+  "theme_color": "#e7eaf0",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
