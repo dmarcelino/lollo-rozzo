@@ -124,17 +124,18 @@ async def test_a_pending_answer_tells_the_agent_to_keep_waiting(settings, vault)
         assert f"{command} <other ids>" in message and "Don't start it for each request" in message
         # An agent that asked again later started no wait; one stopped its wait to end its turn.
         assert "even if this is the only request, or one you make again later" in message
-        assert "end your turn and leave it running: don't stop it" in message
+        assert "Leave it running when you end your turn: don't stop it" in message
+        # One sent the link as a text-only response, which ended its turn before the wait started.
+        assert "Start it before you write to the user: a response with no tool call ends your turn" in message
+        assert "in the same response as your next tool call" in message
         # The fallback without a shell.
         assert f"get_result with this id and wait_seconds {MAX_WAIT_SECONDS}" in message
         assert "until" in message and "end your turn" in message
-    # The link comes first, to write before anything else: agents that went on
+    # The link and why the user needs it from the agent: agents that went on
     # working after a request never showed it to the user.
-    assert sub["message"].startswith(
-        "Waiting for the user's approval. Before your next tool call, write this link to the user in a message"
-    )
-    assert sub["approve_url"] in sub["message"] and "even if you go on working" in sub["message"]
-    assert still["message"].startswith("Still waiting for the user's approval. If you haven't written its link")
+    assert sub["message"].startswith("Waiting for the user's approval. The user sees only what you write")
+    assert sub["approve_url"] in sub["message"]
+    assert still["message"].startswith("Still waiting for the user's approval. If you haven't given the user its link")
     assert sub["approve_url"] in still["message"]
 
 

@@ -124,16 +124,15 @@ When `request_secret` answers `pending`, the user has to approve the request fir
 starts a new turn for you when they do: if your turn ends with nothing waiting, you never
 collect what they approved.
 
-1. Make the requests that need approval first. Write each `approve_url` to the user in a
-   message as soon as you get it, **before your next tool call**, even if you go on with the
-   task while you wait: they see only what you write, not the vault's answer, and they may not
-   get a notification. A secret the user shares without asking answers at once with a handle,
-   whose 5 minutes start then: request those after `vault-wait` finishes, just before you fill.
-2. Then run `vault-wait` once, with all their ids, as one background command, so you are told
-   when it finishes. Run it even for a single request, and again for a request you make later in
-   the task (asked again after a handle was used up, say). Don't start one per request: it would collect each answer as it comes,
-   and its handle's minutes would run out while the others wait. Each `pending` answer gives
-   the command for its id in `wait_command`; put every id in the one command:
+1. Make the requests that need approval first. A secret the user shares without asking
+   answers at once with a handle, whose 5 minutes start then: request those after `vault-wait`
+   finishes, just before you fill.
+2. Then start `vault-wait` once, with all their ids, as one background command, so you are told
+   when it finishes. Run it even for a single request, and again for a request you make later
+   in the task (asked again after a handle was used up, say). Don't start one per request: it
+   would collect each answer as it comes, and its handle's minutes would run out while the
+   others wait. Each `pending` answer gives the command for its id in `wait_command`; put every
+   id in the one command:
 
 ```bash
 python3 /root/.letta/skills/using-vault-secrets/vault-wait <id1> <id2> <id3>
@@ -144,9 +143,15 @@ python3 /root/.letta/skills/using-vault-secrets/vault-wait <id1> <id2> <id3>
    `denied` or `expired`. You don't need to start it again while you wait. The handles' 5 minutes
    start only when it prints them, so use them right away.
 
-   Once it is running, end your turn and leave it running. Never stop it (`TaskStop`): a running
-   background command doesn't block your turn, and its notification is what starts your next
-   one. Stopped, it collects nothing.
+   **Give the user every `approve_url`**, in the same response as the command or in the message
+   that ends your turn after it: they see only what you write, not the vault's answer, and they
+   may not get a notification. Start `vault-wait` first: a response with no tool call ends your
+   turn, so links written before it would end the turn with nothing waiting. If you go on with
+   the task while you wait, put each link in the same response as your next tool call.
+
+   Then end your turn and leave it running. Never stop it (`TaskStop`): a running background
+   command doesn't block your turn, and its notification is what starts your next one.
+   Stopped, it collects nothing.
 3. When it finishes, act on its answers, also when it exits with an error: it still prints
    every handle it collected. For a `denied` or `expired` request, tell the user and ask
    whether to request it again. If it says to run it again (it was stopped, or the vault could

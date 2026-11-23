@@ -23,10 +23,10 @@ INSTRUCTIONS = (
     "without passing through you. Load the using-vault-secrets skill first. Ask for 'text' only when you must "
     "reason about the value itself (and a public detail such as the country is not enough); it needs a reason the "
     "user reads before approving. "
-    "Unless the user set a field to share without asking, they approve first: write the approve_url you get back "
-    "to the user in a message before your next tool call, even if you go on working (they see only what you "
-    "write, and may not get a notification), and wait with the one command its answer gives you "
-    "(vault-wait, with every request's id, in the background), or with get_result. Use values only for the "
+    "Unless the user set a field to share without asking, they approve first: start the one wait command its answer "
+    "gives you (vault-wait, with every request's id, in the background; get_result without a shell), and give the "
+    "user each approve_url in that same response or in the message that ends your turn (they see only what you "
+    "write, and may not get a notification; a response with no tool call ends your turn). Use values only for the "
     "approved purpose. Never repeat a value in your reply, memory or files, and never open a filled file to check "
     "it: check the template instead."
 )
@@ -55,7 +55,7 @@ def build_server(service: Service) -> MCPServer:
         "({{VAULT_<ALIAS>_<FIELD>}}), to use two secrets with the same fields in one command. delivery 'text' "
         "returns the values into the conversation, which the AI provider sees: use it only when you must reason "
         "about a value, and give the reason, which the user reads. Secrets that need approval return an id for "
-        "get_result and an approve_url to write to the user before your next tool call; fields the user shares "
+        "get_result and an approve_url to give the user (start the wait first); fields the user shares "
         "without asking answer at once. "
         "Never repeat a value in your reply, memory or files.",
         annotations=ToolAnnotations(title="Request a secret", read_only_hint=False, open_world_hint=False),

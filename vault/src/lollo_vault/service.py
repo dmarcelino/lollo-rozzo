@@ -66,24 +66,28 @@ def wait_command(rid: str) -> str:
 # pending answer carries the one command that waits, ready to run.
 #
 # The user sees only what the agent writes, not this answer. Agents that went on
-# working after a request ("your reply" read as the end of the turn) never wrote
-# the link, so it is asked for before the next tool call.
+# working after a request never wrote the link; one told to write it "before your
+# next tool call" sent it as a text-only response, which ends the turn, and never
+# started its wait. So: start the wait first, and give the link in that same
+# response or in the message that ends the turn.
 def post_link(url: str) -> str:
     return (
-        "Before your next tool call, write this link to the user in a message, even if you go on working while "
-        f"you wait: they see only what you write, and they may not get a notification. {url}"
+        "The user sees only what you write, not this answer, and may not get a notification, so they need this "
+        f"link from you: {url}"
     )
 
 
 def keep_waiting(rid: str) -> str:
     return (
-        "Wait for the answer before you end your turn. Once you have made every request the task needs, run one "
-        f"background command with all their ids, this one included: {wait_command(rid)} <other ids>. Run it even "
-        "if this is the only request, or one you make again later in the task. Run only one: it waits until every "
-        "request is answered, then collects them together and prints the answers, and you are told it finished. "
-        "Then end your turn and leave it running: don't stop it, since its notification starts your next turn. "
-        "Don't start it for each request, or a handle's minutes start before the others are answered. Without a "
-        "shell, call get_result with "
+        "Once you have made every request the task needs, start one background command with all their ids, this "
+        f"one included: {wait_command(rid)} <other ids>. Run it even if this is the only request, or one you make "
+        "again later in the task. Start it before you write to the user: a response with no tool call ends your "
+        "turn, so give the user every link in the same response as the command, or in the message that ends your "
+        "turn after it. If you go on working while you wait, put each link in the same response as your next tool "
+        "call. Run only one: it waits until every request is answered, then collects them together and prints the "
+        "answers, and you are told it finished. Leave it running when you end your turn: don't stop it, since its "
+        "notification starts your next turn. Don't start it for each request, or a handle's minutes start before "
+        "the others are answered. Without a shell, call get_result with "
         f"this id and wait_seconds {MAX_WAIT_SECONDS}, and call it again until the status is no longer pending "
         f"(the request expires after {REQUEST_TTL_SECONDS // 60} minutes). Don't end your turn with nothing "
         "waiting: nothing tells you when the user answers."
@@ -552,8 +556,8 @@ class Service:
             return {"status": "unknown", "error": f"no request '{rid}' (requests are forgotten after a restart)"}
         if req.status == PENDING:
             message = (
-                "Still waiting for the user's approval. If you haven't written its link to the user yet, do it "
-                f"before your next tool call: {self.url(f'r/{rid}')} {keep_waiting(rid)}"
+                "Still waiting for the user's approval. If you haven't given the user its link yet, put it in your "
+                f"next response: {self.url(f'r/{rid}')} {keep_waiting(rid)}"
             )
             return {
                 "id": rid,

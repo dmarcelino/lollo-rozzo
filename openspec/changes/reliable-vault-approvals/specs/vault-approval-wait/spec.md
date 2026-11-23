@@ -23,16 +23,17 @@ Whenever `request_secret` or `get_result` answers `pending`, the reply SHALL inc
 - **WHEN** a request is `done`, `denied`, `expired` or unknown
 - **THEN** the `get_result` reply has no `wait_command`
 
-### Requirement: A pending reply asks for the link before the next tool call
-The `pending` reply from `request_secret` SHALL begin by telling the agent to write the `approve_url` to the user in a message before its next tool call, even if it goes on working while it waits, because the user sees only what the agent writes. A `pending` reply from `get_result` SHALL ask for the same, if the agent has not written the link yet. The locked-vault reply SHALL ask the same for the unlock link.
+### Requirement: A pending reply asks for the link alongside the wait
+A `pending` reply SHALL give the `approve_url`, say the user sees only what the agent writes, and tell the agent to start the wait command before writing to the user, giving every link in the same response or in the message that ends its turn, since a response with no tool call ends the turn. The locked-vault reply SHALL give the unlock link the same way.
 
 #### Scenario: a request made in the middle of a task
 - **WHEN** an agent calls `request_secret` for a field that needs approval
-- **THEN** the message starts with "Waiting for the user's approval. Before your next tool call, write this link to the user in a message", followed by the `approve_url`
+- **THEN** the message starts with "Waiting for the user's approval. The user sees only what you write", followed by the `approve_url`
+- **AND** it says to start the wait command before writing to the user, because a response with no tool call ends the turn
 
 #### Scenario: still pending
 - **WHEN** `get_result` answers `pending`
-- **THEN** the message says to write the request's link to the user before the next tool call if that hasn't been done yet, and contains the link
+- **THEN** the message says to give the user the request's link in the next response if that hasn't been done yet, and contains the link
 
 ### Requirement: get_result can report status without collecting
 `get_result` SHALL accept an optional `collect` flag, default true. With `collect` false it SHALL wait and report the status as usual, but SHALL NOT hand over a handle or values, SHALL NOT start a handle's lifetime, and SHALL leave an approved result collectable by a later call.

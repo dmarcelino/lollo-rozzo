@@ -17,6 +17,7 @@ Read `vault/README.md#rules` and `agent-skills/README.md#rules` before starting 
 - [x] 2.4 Run the full suite, `tests/run-sidecar.sh vault`, and verify it passes.
 - [x] 2.5 Make the `pending` replies (and the locked-vault reply) open with "Before your next tool call, write this link to the user in a message, even if you go on working while you wait", with `get_result`'s asking only if it wasn't written yet; say the same in the MCP instructions, `using-vault-secrets`' first waiting step and `using-the-browser`'s sign-in step. Verify with `test_a_pending_answer_tells_the_agent_to_keep_waiting`.
 - [x] 2.6 Say in the `pending` message and in the skill's waiting steps to run `vault-wait` even for a single request or one made again later, and to end the turn leaving it running, never stopping it with `TaskStop`. Verify with `test_a_pending_answer_tells_the_agent_to_keep_waiting`.
+- [x] 2.7 Reorder the `pending` message and the skills: start `vault-wait` first, then give every link in the same response or in the message that ends the turn (a response with no tool call ends a letta-code turn); an agent that goes on working puts each link in the same response as its next tool call. Verify with `test_a_pending_answer_tells_the_agent_to_keep_waiting`.
 
 ## 3. Skill: `vault-wait` helper
 
