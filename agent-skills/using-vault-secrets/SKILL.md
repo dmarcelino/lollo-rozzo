@@ -27,8 +27,10 @@ the whole identity.
    Check the template or script now: you can't look at the result later.
 2. **Request the secret** with a clear purpose. If the answer is `pending`, wait for the user
    (below). Once approved, `get_result` answers with a `handle` and the exact `placeholders`.
-3. **Fill at the last step, within 5 minutes.** The handle works once. Run one of the recipes
-   below. In them, `V=/root/.letta/skills/using-vault-secrets`.
+3. **Fill at the last step, within 5 minutes.** The handle works once: the first `vault-run`
+   uses it up, even when its command then fails. So get everything ready (the page open, the
+   template checked) before you run it. Run one of the recipes below. In them,
+   `V=/root/.letta/skills/using-vault-secrets`.
 
 ## A document
 
@@ -42,10 +44,12 @@ the format. For a PDF, fill the source (a `.docx` or `.html` template) and then 
 filled copy. It refuses to write anything when a placeholder has no value, or when Word split a
 placeholder across formatting: retype it in one go, with no formatting change inside it.
 
-## An email, or any other MCP tool
+## An MCP tool's arguments (an email, a form field, any tool)
 
-Write the tool's arguments as a JSON template, with the placeholders inside its strings, then
-fill and send them in one command. The pipe must be inside `bash -c '...'`: `vault-run` replaces
+Write the tool's arguments as a JSON template file, with the placeholders inside its strings,
+then fill and send them in one command. Never write `$VAULT_...` into the arguments on the
+command line (`--args '{"text":"'"$VAULT_PASSWORD"'"}'`): your shell expands it to nothing
+before `vault-run` sets it, the tool gets an empty value, and the handle is used up. The pipe must be inside `bash -c '...'`: `vault-run` replaces
 the values in its own output, so a pipe outside it would send `[VAULT_CITY]` instead of the city.
 `pipefail` stops a failed fill from being reported as sent.
 
@@ -92,8 +96,18 @@ python3 $V/vault-run <handle1> <handle2> -- python3 $V/vault-fill letter.tmpl.do
   is lost when `vault-run` exits.
 - Use the values only for the purpose the user approved. Never save, log or send them anywhere
   else.
-- "unknown or expired handle": the handle was already used or is older than 5 minutes. Ask for
-  that secret again; with several handles, none was used up, so the others still work.
+- **A handle is used up by the first `vault-run` that takes it**, even if its command then
+  fails (a page that closed, a wrong argument, a typo in the template). To try again, request
+  the secret again.
+- **An MCP tool's arguments come only from a `vault-fill` template** piped into the tool inside
+  `vault-run` (the recipe above), never from `$VAULT_...` written into `--args`.
+- "already used": an earlier `vault-run` took this handle, even though its command failed.
+  Request the secret again. It is not a timeout, so waiting or hurrying won't help.
+- "dropped when the vault locked (or was erased)": the vault locked before you used the handle. Request the
+  secret again; while the vault is still locked, that answer gives you the link to send the
+  user so they can unlock it.
+- "unknown or expired handle": almost always already used, or older than 5 minutes. Request
+  that secret again. With several handles, none of them was used up, so the others still work.
 - "would come from two secrets" or "already set": two handles give the same names, or a
   `VAULT_` variable is already set. Nothing was used up: request one secret again with an
   `alias`, or unset the variable.
@@ -110,17 +124,28 @@ When `request_secret` answers `pending`, the user has to approve the request fir
 starts a new turn for you when they do: if your turn ends with nothing waiting, you never
 collect what they approved.
 
-1. Post the `approve_url` to the user in your reply (they may not get a notification).
-2. Call `get_result` with the request's `id` and `wait_seconds` 50, as its own background
-   command, so you are told when it finishes:
+1. Make all the requests that need approval first, then post every `approve_url` to the user
+   in your reply (they may not get a notification). A secret the user shares without asking
+   answers at once with a handle, whose 5 minutes start then: request those after
+   `vault-wait` finishes, just before you fill.
+2. Then run `vault-wait` once, with all their ids, as one background command, so you are told
+   when it finishes. Don't start one per request: it would collect each answer as it comes,
+   and its handle's minutes would run out while the others wait. Each `pending` answer gives
+   the command for its id in `wait_command`; put every id in the one command:
 
 ```bash
-sh /root/.letta/skills/mcp-servers/scripts/mcp.sh call mcp__vault__get_result --args '{"request_id":"<id>","wait_seconds":50}'
+python3 /root/.letta/skills/using-vault-secrets/vault-wait <id1> <id2> <id3>
 ```
 
-3. While it answers `pending`, start the same command again, one call per command (a loop in
-   one command runs into the command's time limit). Stop at `done`, `denied` or `expired`; a
-   request expires after 10 minutes.
+   It waits until the user has answered every request, then prints one JSON answer per id:
+   `done` with the `handle` and `placeholders` (or, for `delivery: "text"`, the values), or
+   `denied` or `expired`. You don't need to start it again while you wait. The handles' 5 minutes
+   start only when it prints them, so use them right away.
+3. When it finishes, act on its answers, also when it exits with an error: it still prints
+   every handle it collected. For a `denied` or `expired` request, tell the user and ask
+   whether to request it again. If it says to run it again (it was stopped, or the vault could
+   not be asked), run it again with the ids it names. For an answer `not collected`, follow its
+   note.
 
-If you can't run commands in the background, make the same calls in the foreground before you
-end your turn.
+If you can't run commands in the background, call `get_result` with the request's `id` and
+`wait_seconds` 50, and call it again while it answers `pending`, before you end your turn.

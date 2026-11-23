@@ -26,6 +26,13 @@ HANDLES = {
     "home": {"VAULT_HOME_CITY": "Lisboa TEST_938742"},
     "work": {"VAULT_WORK_CITY": "Porto TEST_938743"},
 }
+# Handles the vault no longer redeems, with its reason (Service.redeem).
+REFUSED = {
+    "spent": (
+        "already used: an earlier vault-run took this handle, even if its command failed; request that secret again"
+    ),
+    "dropped": "dropped when the vault locked (or was erased); request that secret again once it is unlocked",
+}
 
 
 class Stub(BaseHTTPRequestHandler):
@@ -35,7 +42,10 @@ class Stub(BaseHTTPRequestHandler):
         # Like the vault's Service.redeem: all the handles or none.
         handles, taken = body.get("handles", []), set(body.get("taken", []))
         names = [n for h in handles for n in HANDLES.get(h, {})]
-        if self.path != "/redeem" or not all(h in HANDLES for h in handles):
+        refused = next((h for h in handles if h in REFUSED), None)
+        if refused:
+            answer, status = {"error": REFUSED[refused]}, 410
+        elif self.path != "/redeem" or not all(h in HANDLES for h in handles):
             answer, status = {"error": "unknown or expired handle; request that secret again"}, 404
         elif len(set(names)) != len(names) or taken & set(names):
             answer, status = {"error": f"{', '.join(sorted(set(names)))}: clash; use an alias"}, 409
@@ -117,6 +127,14 @@ def test_stdin_reaches_the_command(vault_url):
 def test_unknown_handle(vault_url):
     r = run(vault_url[0], "stale", "--", "true")
     assert r.returncode == 2 and b"unknown or expired" in r.stderr
+
+
+@pytest.mark.parametrize("handle", sorted(REFUSED))
+def test_a_spent_or_dropped_handle_says_why(vault_url, tmp_path, handle):
+    marker = tmp_path / "ran"
+    r = run(vault_url[0], handle, "--", "touch", str(marker))
+    assert r.returncode == 2 and not marker.exists()
+    assert r.stderr.decode() == f"vault-run: {REFUSED[handle]}\n"
 
 
 def test_vault_unreachable():

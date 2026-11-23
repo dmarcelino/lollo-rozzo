@@ -2710,7 +2710,7 @@ test_skills_ships_the_repo_skills() {
   # tar has written every name.
   local list
   list=$(tar -tf "$T/exec-stdin.log")
-  for f in using-vault-secrets/SKILL.md using-vault-secrets/vault-run using-vault-secrets/vault-fill; do
+  for f in using-vault-secrets/SKILL.md using-vault-secrets/vault-run using-vault-secrets/vault-fill using-vault-secrets/vault-wait; do
     grep -qx "$f" <<<"$list" || fail "$f not shipped"
   done
   grep -qx "name: using-vault-secrets" "$ROOT/agent-skills/using-vault-secrets/SKILL.md" || fail "SKILL.md name mismatch"

@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""vault-wait ID [ID...]
+
+Waits for the user's answers to one or more vault requests (request_secret's
+ids), then collects them all and prints one JSON answer per id, in the order
+given. Run it as one background command: the agent is told when it finishes,
+once, with every answer. Nothing else tells an agent when the user answers.
+
+It asks the vault only through the agent's own get_result tool, via the
+mcp-servers wrapper, and peeks (collect false) until no request is pending, so
+no handle's few minutes start while another request still waits. Exit codes:
+0 every request done and collected, 1 some denied, expired, unknown or
+collected earlier (all are printed), 2 usage, or the vault could not be asked:
+then what was collected is still printed, and the message says which ids to
+wait on or collect again.
+Standard library only: it runs with whatever python3 the app-server has.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+USAGE = "usage: vault-wait ID [ID...]   (1 to 5 different request ids)"
+# The vault lets at most this many requests wait at once (MAX_PENDING).
+MAX_IDS = 5
+ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# One get_result waits at most this long (the vault's MAX_WAIT_SECONDS, under
+# the 120 s Lettuce's MCP bridge gives a tool call).
+WAIT_SECONDS = 50
+# A request expires after 10 minutes; this is only a guard against looping on.
+GIVE_UP_SECONDS = 600 + 2 * WAIT_SECONDS
+# A call that fails is tried again after these pauses, then vault-wait gives up.
+RETRY_PAUSES = (1, 2, 3)
+CALL_TIMEOUT = 120
+WRAPPER = "/root/.letta/skills/mcp-servers/scripts/mcp.sh"
+
+children: set[subprocess.Popen] = set()
+children_lock = threading.Lock()
+
+
+class CallFailed(Exception):
+    pass
+
+
+def fail(message: str, answers: list | None = None) -> None:
+    if answers:
+        print(json.dumps(answers, indent=2), flush=True)
+    print(f"vault-wait: {message}", file=sys.stderr, flush=True)
+    sys.exit(2)
+
+
+def kill(child: subprocess.Popen, sig: int) -> None:
+    """The wrapper and whatever it started: each call runs in its own process group."""
+    try:
+        os.killpg(child.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def call_once(rid: str, wait: int, collect: bool) -> dict:
+    args = json.dumps({"request_id": rid, "wait_seconds": wait, "collect": collect})
+    command = ["sh", os.environ.get("LOLLO_MCP_SH", WRAPPER), "call", "mcp__vault__get_result", "--args", args]
+    child = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True
+    )
+    with children_lock:
+        children.add(child)
+    try:
+        out, err = child.communicate(timeout=CALL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        kill(child, signal.SIGKILL)
+        child.communicate()
+        raise CallFailed("get_result did not answer in time") from None
+    finally:
+        with children_lock:
+            children.discard(child)
+    try:
+        result = json.loads(out)
+    except ValueError:
+        tail = (err or out).decode(errors="replace").strip().splitlines()[-1:] or ["no output"]
+        raise CallFailed(f"get_result failed (exit {child.returncode}): {tail[0][:300]}") from None
+    answer = result.get("structuredContent") if isinstance(result, dict) else None
+    if not isinstance(answer, dict):
+        try:
+            answer = json.loads(result["content"][0]["text"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            answer = None
+    if child.returncode != 0 or not isinstance(answer, dict) or result.get("isError"):
+        raise CallFailed(f"get_result failed (exit {child.returncode}): {json.dumps(result)[:300]}")
+    return answer
+
+
+def call(rid: str, wait: int, collect: bool) -> dict:
+    """Tried again on failure: only for peeking, which changes nothing in the vault."""
+    for pause in (*RETRY_PAUSES, None):
+        try:
+            return call_once(rid, wait, collect)
+        except (CallFailed, OSError) as e:
+            error = e
+            if pause is None:
+                break
+            print(f"vault-wait: {e}; trying again in {pause} s", file=sys.stderr, flush=True)
+            time.sleep(pause)
+    raise CallFailed(str(error))
+
+
+def peek_all(ids: list[str]) -> dict[str, dict | Exception]:
+    """One get_result per id at once, so any answer is seen within one wait."""
+    results: dict[str, dict | Exception] = {}
+
+    def one(rid: str) -> None:
+        try:
+            results[rid] = call(rid, WAIT_SECONDS, False)
+        except Exception as e:  # noqa: BLE001 - reported for that id
+            results[rid] = e
+
+    threads = [threading.Thread(target=one, args=(rid,), daemon=True) for rid in ids]
+    for t in threads:
+        t.start()
+    for t in threads:
+        while t.is_alive():
+            t.join(0.5)  # short joins, so a signal is handled at once
+    return results
+
+
+def stop(number: int, _frame) -> None:
+    with children_lock:
+        for child in children:
+            kill(child, signal.SIGTERM)
+    print("vault-wait: stopped; nothing was collected, run it again to keep waiting", file=sys.stderr, flush=True)
+    os._exit(128 + number)
+
+
+def main(argv: list[str]) -> int:
+    ids = argv
+    if not ids or len(ids) > MAX_IDS or len(set(ids)) != len(ids) or not all(ID.fullmatch(i) for i in ids):
+        fail(USAGE)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, stop)
+
+    answered: dict[str, dict] = {}
+    waiting = list(ids)
+    give_up = time.monotonic() + GIVE_UP_SECONDS
+    while waiting and time.monotonic() < give_up:
+        results = peek_all(waiting)
+        # A vault without collect hands over every done answer it was asked
+        # about: print them all, since they can't be collected again.
+        handed_over = [r for r in results.values() if isinstance(r, dict) and ("handle" in r or "values" in r)]
+        if handed_over:
+            fail("this vault does not support waiting without collecting; use get_result", handed_over)
+        failed = next((r for r in results.values() if isinstance(r, Exception)), None)
+        if failed is not None:
+            again = [rid for rid in ids if rid in waiting or answered.get(rid, {}).get("status") == "done"]
+            fail(f"{failed}; nothing was collected; run it again with: {' '.join(again)}")
+        for rid, result in results.items():
+            if result.get("status") != "pending":
+                answered[rid] = result
+        waiting = [rid for rid in waiting if rid not in answered]
+
+    # Collecting takes seconds; a stop now would lose handles already collected.
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, signal.SIG_IGN)
+    answers: list[dict] = []
+    not_collected: list[str] = []
+    for rid in ids:
+        answer = answered.get(rid)
+        if answer is None:
+            answer = {"id": rid, "status": "pending", "note": "no answer yet; run vault-wait again for it"}
+        elif answer.get("status") == "done":
+            # Once only: collecting hands the handle over, so a retry after a
+            # call that reached the vault would get nothing.
+            try:
+                answer = call_once(rid, 0, True)
+            except (CallFailed, OSError) as e:
+                not_collected.append(rid)
+                answer = {
+                    "id": rid,
+                    "status": "not collected",
+                    "note": f"{e}. Call get_result with this id; if it says the values were already returned, "
+                    "request the secret again",
+                }
+            else:
+                if "handle" not in answer and "values" not in answer:
+                    answer.setdefault("note", "already collected earlier (another vault-wait or get_result)")
+        answers.append(answer)
+    print(json.dumps(answers, indent=2), flush=True)
+    if not_collected:
+        print(f"vault-wait: could not collect {' '.join(not_collected)}; see their notes", file=sys.stderr)
+        return 2
+    return 0 if all(a.get("status") == "done" and ("handle" in a or "values" in a) for a in answers) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

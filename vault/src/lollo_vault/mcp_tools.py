@@ -24,7 +24,8 @@ INSTRUCTIONS = (
     "reason about the value itself (and a public detail such as the country is not enough); it needs a reason the "
     "user reads before approving. "
     "Unless the user set a field to share without asking, they approve first: post the approve_url you get back "
-    "in your reply, since they may not get a notification, and wait with get_result. Use values only for the "
+    "in your reply, since they may not get a notification, and wait with the one command its answer gives you "
+    "(vault-wait, with every request's id, in the background), or with get_result. Use values only for the "
     "approved purpose. Never repeat a value in your reply, memory or files, and never open a filled file to check "
     "it: check the template instead."
 )
@@ -71,10 +72,11 @@ def build_server(service: Service) -> MCPServer:
         description="Get the answer to a request_secret: pending, denied, expired, or done with the handle and "
         "placeholders (or, for delivery 'text', the values) of the fields the user agreed to share (they may "
         f"withhold some). wait_seconds (0-{MAX_WAIT_SECONDS}) waits for the answer. Handles and values are "
-        "returned once. Never repeat a value in your reply, memory or files.",
+        "returned once. collect false reports the status only and leaves the handle or values for a later call "
+        "(vault-wait uses it). Never repeat a value in your reply, memory or files.",
         annotations=ToolAnnotations(title="Get request result", read_only_hint=True, open_world_hint=False),
     )
-    async def get_result(request_id: str, wait_seconds: float = 0) -> dict[str, Any]:
-        return await service.get_result(request_id, wait_seconds)
+    async def get_result(request_id: str, wait_seconds: float = 0, collect: bool = True) -> dict[str, Any]:
+        return await service.get_result(request_id, wait_seconds, collect)
 
     return server
