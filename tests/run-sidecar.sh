@@ -2,7 +2,8 @@
 # Tests for a sidecar image (landing/, vault/, gmail-triggers/, news-radar/, code-server/,
 # browser/, notifications/) or the document tools (doc-tools/). They run in a container built from the image's
 # `test` stage, so the host needs only Docker.
-# agent-skills/ is mounted for the vault's vault-run helper tests. For landing,
+# agent-skills/ is mounted for the vault's helper tests (vault-run, vault-fill,
+# vault-wait) and the browser's (browser-screenshot). For landing,
 # the lollo executor's tests (landing/executor/) also run in a Node image,
 # unless pytest arguments narrow the run. Node 22's --test takes files or globs, not a
 # directory; the quoted glob is expanded by node inside the container. For
@@ -36,7 +37,7 @@ docker build -q --target test --build-context "lollo-common=$ROOT/lollo-common" 
   -t "$image" "$context" >/dev/null
 
 mounts=()
-if [[ $dir == vault ]]; then
+if [[ $dir == vault || $dir == browser ]]; then
   mounts+=(-v "$ROOT/agent-skills:/agent-skills:ro")
 fi
 docker run --rm --network none "${mounts[@]}" "$image" python -m pytest -q -p no:cacheprovider "$@"
