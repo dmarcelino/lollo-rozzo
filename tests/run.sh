@@ -4521,10 +4521,14 @@ SHARE
 # such an archive before it unpacks anything.
 # restore_refuses_entry NAME -> an archive whose state/letta-home is NAME is refused
 restore_refuses_entry() {
+  local list
   a_snapshot
   A=$B/alfred/20261018T033000Z.tar.gz
   tar -C "$S" -czPf "$A" --transform "s|^\./state/letta-home|$1|" .
-  tar -tzPf "$A" | grep -qxF "$1/" || fail "the archive does not hold $1: $(tar -tzPf "$A")"
+  # Listed once: `tar | grep -q` fails under pipefail when grep quits before
+  # tar has written every name.
+  list=$(tar -tzPf "$A")
+  grep -qxF "$1/" <<<"$list" || fail "the archive does not hold $1: $list"
   rm -rf "$S"
   a_new_host
   ctl restore alfred "$A"
