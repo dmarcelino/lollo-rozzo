@@ -2,7 +2,7 @@
 name = "pdf-mcp"
 version = "0.1.0"
 description = "Lettuce document tools: a stdio MCP server for PDF files in an agent's workspace"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 # Pinned: the doc-tools image is rebuilt when anything in doc-tools/ changes.
 # PyMuPDF is AGPL-3.0; the image is built on the operator's host and never published.
 # 1.28.x, not 2.0: 2.0 was days old when this was written.
