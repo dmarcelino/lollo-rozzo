@@ -31,7 +31,7 @@ Read `browser/README.md#rules` and `agent-skills/README.md#rules` before startin
 ## 5. Integration checks
 
 - [x] 5.1 Run every check in `browser/README.md#build-and-test` and `agent-skills/README.md#build-and-test`, plus `shellcheck` from the root Commands, and verify they pass.
-- [ ] 5.2 On a stack, `lolloctl skills all` and `lolloctl up`, then ask an agent to show a page's screenshot through the browser. Verify the chat shows the image, that the file is under `browser-screenshots/` in the agent's workspace, and that a call through `mcp_call` returns the `show` hint.
+- [x] 5.2 On a stack, `lolloctl skills all` and `lolloctl up`, then ask an agent to show a page's screenshot through the browser. Verify the chat shows the image, that the file is under `browser-screenshots/` in the agent's workspace, and that a call through `mcp_call` returns the `show` hint.
 
 ## Workflow follow-up
 
