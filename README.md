@@ -2,9 +2,11 @@
 
 Run personal AI agents with memory, that learn and improve over time. Lollo Rozzo comes with batteries included: tools that let your agents do real tasks. Your data stays on your own server.
 
-_Lollo Rozzo stands on the leaves of giants._ Built on [Lettuce](https://github.com/dmarchevsky/lettuce), it gives you [Letta Code](https://github.com/letta-ai/letta-code) agents that have memory, identity and a sense of experience over time. They learn and evolve over long horizons by rewriting their own memory, skills and prompts.
+> Lollo Rozzo stands on the leaves of giants.
 
-You host it yourself, on one Linux machine with Docker, for yourself or for several people. Each person gets their own private stack: their agents, a web app that works on phone and desktop, and the extras you turn on. Everyone signs in with Google through Cloudflare Access, and nobody can reach anyone else's stack. One command line tool, `lolloctl`, sets it all up and runs it: who has a stack is one file, and `lolloctl apply` gives each person their own Cloudflare Tunnel, sign-in and DNS records, and starts their stack.
+Built on [Lettuce](https://github.com/dmarchevsky/lettuce), it gives you [Letta Code](https://github.com/letta-ai/letta-code) agents that have memory, identity and a sense of experience over time. They learn and evolve over long horizons by rewriting their own memory, skills and prompts.
+
+You host it yourself, on one Linux machine or Mac with Docker, for yourself or for several people. Each person gets their own private stack: their agents, a web app that works on phone and desktop, and the extras you turn on. Everyone signs in with Google through Cloudflare Access, and nobody can reach anyone else's stack. One command line tool, `lolloctl`, sets it all up and runs it: who has a stack is one file, and `lolloctl apply` gives each person their own Cloudflare Tunnel, sign-in and DNS records, and starts their stack.
 
 ![Each person signs in through Cloudflare to their own stack: Lettuce and their lollo pages](docs/diagrams/lollo-rozzo-at-a-glance.svg)
 
@@ -26,35 +28,36 @@ Each extra is a Compose profile whose name starts with `lollo-`. Profiles are gl
 | `lollo-code-server` | VS Code in the browser on the agents' workspaces. Its terminals run in a separate container that has the agents' tools and is no stronger than an agent. | [Code editor](docs/code-server.md) |
 | `lollo-outlook` | One Outlook mailbox (mail, calendar, tasks, and read-only shared mailboxes) for agents, under a policy the person sets: what agents may do with mail, events and tasks, and whom they may write to. The person connects their signed-in Outlook on the web with a bookmarklet; no app registration or admin consent. | [Outlook](docs/outlook.md) |
 | `lollo-pipelock` | An egress proxy for letta-code and the agents' tools, which checks where they connect (model calls included), scans pages fetched through it and signs a receipt for every decision. Advisory for now: the stack keeps its direct route out. | [Egress proxy](docs/egress-firewall.md) |
+| `lollo-browser` | A real browser the agents drive to sign in, fill in forms and carts and get orders ready. The person watches it live, takes over a tab when a CAPTCHA or a payment needs them, answers hand-offs, and chooses per site which sign-ins are kept and where agents may finish a checkout; until then an agent's "Place order" comes back to them. Needs `lollo-pipelock`. | [Browser](docs/browser.md) |
 | `lollo-doc-tools` | Office and PDF tools as MCP servers: create, edit and convert Word, PowerPoint, Excel and PDF files in the agents' workspaces. | [Document tools](docs/doc-tools.md) |
 
-With any of the vault, Gmail triggers, News Radar, the code editor or Outlook on, the lollo address has a landing page linking to the pages that are on. Lettuce's own profiles add more: web search (`search`) and Gmail, Calendar, Tasks and Contacts for the agents (`google`); `cloudflared` is required. They are described in Lettuce's `docs/CONFIGURATION.md`, and summarised in [operations.md](docs/operations.md#optional-features).
+With any of the vault, Gmail triggers, News Radar, the code editor, Outlook or the browser on, the lollo address has a landing page linking to the pages that are on. With the vault or the browser on, it also has a Notifications page, where each person turns the lollo's notifications on once per device ([Notifications](docs/notifications.md)). Lettuce's own profiles add more: web search (`search`) and Gmail, Calendar, Tasks and Contacts for the agents (`google`); `cloudflared` is required. They are described in Lettuce's `docs/CONFIGURATION.md`, and summarised in [operations.md](docs/operations.md#optional-features).
 
 ## Requirements
-- A Linux host (`amd64` or `arm64`) with Docker Engine 25 or later. That is all it needs: `lolloctl` runs from its own image, which brings Docker Compose and every other tool. The document tools (`lollo-doc-tools`) need an `amd64` host.
+- A Linux host (`amd64` or `arm64`) with Docker Engine 25 or later, or a Mac with Colima, Docker Desktop or OrbStack and bash 4 or later (`brew install bash`; [macOS notes](docs/operations.md#running-on-macos)). That is all it needs: `lolloctl` runs from its own image, which brings Docker Compose and every other tool. The document tools (`lollo-doc-tools`) need an `amd64` host, so not an Apple silicon Mac.
 - A domain whose DNS is on Cloudflare. The free plan is enough.
 - Cloudflare Zero Trust. The free plan covers up to 50 users; Cloudflare asks for payment details even for it, and charges nothing.
 - A Google Cloud OAuth client for the Google login method (free).
 - An account with a model provider for each person (Anthropic, OpenAI and others), paid per use: Lollo Rozzo runs the agents, the provider runs the model, and sees what the agents send it.
-- RAM for every stack you run. Each app-server is capped at 8 GiB, Lettuce's other services at 1 GiB and cloudflared at 256 MiB (`compose/hardening.yml`); the lollo's services at 128 MiB to 512 MiB, the code editor at 2 GiB for the editor plus 8 GiB for its shell, and the document tools' Gotenberg, one per host, at 2 GiB ([caps per service](docs/architecture.md#what-runs-in-each-stack)). These are caps, not reservations; measure idle use with `docker stats`.
+- RAM for every stack you run. Each app-server is capped at 8 GiB, Lettuce's other services at 1 GiB and cloudflared at 256 MiB (`compose/hardening.yml`); the lollo's services at 128 MiB to 512 MiB, the code editor at 2 GiB for the editor plus 8 GiB for its shell, the browser at 2 GiB for its engine plus 512 MiB, and the document tools' Gotenberg, one per host, at 2 GiB ([caps per service](docs/architecture.md#what-runs-in-each-stack)). These are caps, not reservations; measure idle use with `docker stats`.
 
 ## Quickstart
 1. Do the one-time Cloudflare and Google setup: **[docs/cloudflare-setup.md](docs/cloudflare-setup.md)**. It takes about an hour of work. Moving your domain's DNS to Cloudflare then takes minutes to hours to become active, and up to 48 h; if DNSSEC is on, turning it off first adds 24-48 h. A domain you don't use for anything else avoids the risk of breaking its email.
-2. Install `lolloctl`: create its data directory, owned by you, put the latest release's `lolloctl` in its `bin/` and check it against the release's `SHA256SUMS`:
+2. Install `lolloctl`: create its data directory, put the latest release's `lolloctl` in its `bin/` and check it against the release's `SHA256SUMS`:
    ```bash
-   sudo install -d -o "$USER" -g "$(id -gn)" -m 700 /srv/lollo-rozzo /srv/lollo-rozzo/bin
-   curl -fsSL -o /srv/lollo-rozzo/bin/lolloctl https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/lolloctl
-   (cd /srv/lollo-rozzo/bin && curl -fsSL https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/SHA256SUMS | sha256sum -c --ignore-missing)
-   chmod 755 /srv/lollo-rozzo/bin/lolloctl
-   mkdir -p ~/.local/bin && ln -s /srv/lollo-rozzo/bin/lolloctl ~/.local/bin/lolloctl
+   install -d -m 700 ~/lollo-rozzo ~/lollo-rozzo/bin
+   curl -fsSL -o ~/lollo-rozzo/bin/lolloctl https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/lolloctl
+   (cd ~/lollo-rozzo/bin && curl -fsSL https://github.com/dmarcelino/lollo-rozzo/releases/latest/download/SHA256SUMS | grep ' lolloctl$' | sha256sum -c)   # macOS: shasum -a 256 -c
+   chmod 755 ~/lollo-rozzo/bin/lolloctl
+   mkdir -p ~/.local/bin && ln -s ~/lollo-rozzo/bin/lolloctl ~/.local/bin/lolloctl   # or another directory on your PATH
    ```
-   To install a given release instead, replace `latest/download` with `download/vX.Y.Z`. To check where the file comes from, with the `gh` CLI: `gh attestation verify /srv/lollo-rozzo/bin/lolloctl --repo dmarcelino/lollo-rozzo`. [docs/operations.md](docs/operations.md#installing-and-upgrading) says more.
+   The data directory can be anywhere you own; `~/lollo-rozzo` works on Linux and macOS without sudo. On Linux with an encrypted home that unlocks only at login, put it elsewhere, such as `/srv/lollo-rozzo` ([why](docs/operations.md#files-on-the-host)). To install a given release instead, replace `latest/download` with `download/vX.Y.Z`. To check where the file comes from, with the `gh` CLI: `gh attestation verify ~/lollo-rozzo/bin/lolloctl --repo dmarcelino/lollo-rozzo`. [docs/operations.md](docs/operations.md#installing-and-upgrading) says more.
 3. Configure and start:
    ```bash
-   lolloctl init                   # creates /srv/lollo-rozzo/config.env from the example; edit it
-   $EDITOR /srv/lollo-rozzo/config.env   # set DOMAIN, PUSH_CONTACT_EMAIL (required), TZ and PROFILES
+   lolloctl init                   # creates ~/lollo-rozzo/config.env from the example; edit it
+   $EDITOR ~/lollo-rozzo/config.env   # set DOMAIN, PUSH_CONTACT_EMAIL (required), TZ and PROFILES
    lolloctl init                   # checks the Cloudflare setup step by step, downloads Lettuce, caches ids
-   $EDITOR /srv/lollo-rozzo/stacks.conf  # one line per person: alfred alfred@gmail.com
+   $EDITOR ~/lollo-rozzo/stacks.conf  # one line per person: alfred alfred@gmail.com
    lolloctl apply                  # shows the plan, then creates and starts every stack
    ```
    The example's `PROFILES=cloudflared,search` is a working start (web search for the agents); add the [extras](#batteries-included) you want, e.g. `cloudflared,search,lollo-vault`. You can change the list later with `lolloctl profiles`.
@@ -65,19 +68,19 @@ Developing Lollo Rozzo runs `./lolloctl` from a clone instead, which builds ever
 ## Documentation
 **Using a stack** (for the people you give one to)
 - [Your stack](docs/user-guide.md): addresses, signing in, first steps, what to keep in mind.
-- The "Using it" section of each extra: [vault](docs/vault.md#using-it), [Gmail triggers](docs/gmail-triggers.md#using-it), [News Radar](docs/news-radar.md#using-it), [code editor](docs/code-server.md#using-it), [Outlook](docs/outlook.md#using-it), [document tools](docs/doc-tools.md#using-it).
+- The "Using it" section of each extra: [vault](docs/vault.md#using-it), [Gmail triggers](docs/gmail-triggers.md#using-it), [News Radar](docs/news-radar.md#using-it), [code editor](docs/code-server.md#using-it), [Outlook](docs/outlook.md#using-it), [browser](docs/browser.md#using-it), [document tools](docs/doc-tools.md#using-it).
 
 **Installing and running it** (for admins)
 - [One-time Cloudflare and Google setup](docs/cloudflare-setup.md): the domain, Zero Trust, Google sign-in and the API token.
 - [Operations](docs/operations.md): everyday commands, people, profiles, upgrades, backups, troubleshooting and security notes.
 - [How it works](docs/architecture.md): the design, the two addresses per stack, what runs, where the data lives, limits.
 - [Google for agents](docs/google-setup.md): Gmail, Calendar, Tasks and Contacts for the agents (`google` profile).
-- The guide of each extra, with how to run it and its security model: [vault](docs/vault.md), [Gmail triggers](docs/gmail-triggers.md), [News Radar](docs/news-radar.md), [code editor](docs/code-server.md), [Outlook](docs/outlook.md), [egress proxy](docs/egress-firewall.md), [document tools](docs/doc-tools.md).
+- The guide of each extra, with how to run it and its security model: [vault](docs/vault.md), [Gmail triggers](docs/gmail-triggers.md), [News Radar](docs/news-radar.md), [code editor](docs/code-server.md), [Outlook](docs/outlook.md), [browser](docs/browser.md), [egress proxy](docs/egress-firewall.md), [document tools](docs/doc-tools.md).
 
 **Developing Lollo Rozzo**
 - [CONTRIBUTING.md](CONTRIBUTING.md): where to start, the rules, tests and how the docs are organised.
 - [ARCHITECTURE.md](ARCHITECTURE.md): the whole stack's containers, networks, volumes and routes, and a map of the repo.
-- Each folder's README ([lib/](lib/README.md), [compose/](compose/README.md), [vault/](vault/README.md), [gmail-triggers/](gmail-triggers/README.md), [news-radar/](news-radar/README.md), [code-server/](code-server/README.md), [outlook/](outlook/README.md), [landing/](landing/README.md), [lollo-common/](lollo-common/README.md), [pipelock/](pipelock/README.md), [doc-tools/](doc-tools/README.md), [agent-skills/](agent-skills/README.md), [backup/](backup/README.md), [tests/](tests/README.md)), each with its rules.
+- Each folder's README ([lib/](lib/README.md), [compose/](compose/README.md), [vault/](vault/README.md), [gmail-triggers/](gmail-triggers/README.md), [news-radar/](news-radar/README.md), [code-server/](code-server/README.md), [outlook/](outlook/README.md), [browser/](browser/README.md), [notifications/](notifications/README.md), [landing/](landing/README.md), [lollo-common/](lollo-common/README.md), [pipelock/](pipelock/README.md), [doc-tools/](doc-tools/README.md), [agent-skills/](agent-skills/README.md), [backup/](backup/README.md), [tests/](tests/README.md)), each with its rules.
 - [AGENTS.md](AGENTS.md): the short directives for coding agents, linking to those rules.
 
 ## Licence

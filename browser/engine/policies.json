@@ -1,0 +1,10 @@
+{
+  "WebRtcIPHandling": "disable_non_proxied_udp",
+  "DnsOverHttpsMode": "off",
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "ExtensionInstallBlocklist": ["*"],
+  "DownloadRestrictions": 3,
+  "URLBlocklist": ["file://*", "devtools://*", "view-source:*", "javascript:*"]
+}

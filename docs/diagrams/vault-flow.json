@@ -111,9 +111,9 @@
       "from": "vault",
       "to": "you",
       "y": 265,
-      "label": "push notification",
+      "label": "notification, through the lollo",
       "variant": "default",
-      "note": "the agent also posts the request's link in the chat"
+      "note": "on every device with notifications on; the agent also posts the request's link in the chat"
     },
     {
       "id": "decide",

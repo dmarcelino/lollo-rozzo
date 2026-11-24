@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Test stub for macOS's `security find-generic-password -s SERVICE -w`: prints
+# STUB_SECURITY (in stub.env), or fails like a keychain without that entry.
+# Tests copy the stubs to $STUB_ROOT/bin.
+STUB_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=/dev/null
+[[ -f $STUB_ROOT/stub.env ]] && . "$STUB_ROOT/stub.env"
+[[ ${1:-} == find-generic-password && -n ${STUB_SECURITY:-} ]] || exit 1
+printf '%s\n' "$STUB_SECURITY"

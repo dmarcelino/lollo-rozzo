@@ -125,7 +125,11 @@ BIND_MOUNTS=""
 
 # check_mounts -> in release mode, reads this container's own mounts (one API
 # call) and dies unless every bind mount has the same source and destination
-# and LOLLO_DATA is one of them. It fails closed: no container found, no run.
+# and LOLLO_DATA is one of them, holding the wrapper (bin/lolloctl), which an
+# empty directory Docker made in its place cannot. Not its owner: the wrapper
+# checked that on the host, and in Docker's VM on macOS a share reports another
+# (Colima's virtiofs: whoever looked first, root when Docker starts a container).
+# It fails closed: no container found, no run.
 check_mounts() {
   local mounts bad
   release_mode || return 0
@@ -135,14 +139,14 @@ check_mounts() {
     die "could not read this container's mounts"
   [[ -z $bad ]] || die "host paths must be mounted at the same path inside lolloctl's container; these are not: $bad"
   BIND_MOUNTS=$(jq -r '.[] | select(.Type == "bind") | .Destination' <<<"$mounts")
-  if [[ $(stat -c %u "$LOLLO_DATA" 2>/dev/null) != "$(id -u)" ]] || ! grep -qxF -- "$LOLLO_DATA" <<<"$BIND_MOUNTS"; then
-    die "$LOLLO_DATA is not mounted, at the same path and owned by you, into lolloctl's container; run lolloctl through its wrapper"
+  if [[ ! -f $LOLLO_DATA/bin/lolloctl ]] || ! grep -qxF -- "$LOLLO_DATA" <<<"$BIND_MOUNTS"; then
+    die "$LOLLO_DATA is not mounted into lolloctl's container at the same path (no bin/lolloctl in it); run lolloctl through its wrapper"
   fi
 }
 
 # require_mounted PATH -> in release mode, dies unless PATH is at or below one
 # of this container's bind mounts (the wrapper mounts backup's and receipts'
-# destinations); always passes from a clone
+# destinations, and the backup restore reads); always passes from a clone
 require_mounted() {
   local m p
   release_mode || return 0
@@ -220,7 +224,7 @@ conf_unset() {
 inside() {
   local p
   p=$(realpath -m -- "$1")
-  [[ $p == "$2" || $p == "$2"/* ]]
+  [[ $p == "$2" || $p == "${2%/}"/* ]]
 }
 
 # cfg KEY -> value from config.env
@@ -387,6 +391,8 @@ normalise_profiles() {
 profile_unmet() {
   if has_profile "$1" lollo-gmail-triggers && ! has_profile "$1" google; then
     printf 'the lollo-gmail-triggers profile needs google (it uses the connection made in Settings -> Google)'
+  elif has_profile "$1" lollo-browser && ! has_profile "$1" lollo-pipelock; then
+    printf "the lollo-browser profile needs lollo-pipelock (the browser's engine reaches the internet only through it)"
   fi
 }
 
@@ -511,6 +517,8 @@ compose_env() {
     -f "$LOLLO_HOME/compose/pipelock.yml" \
     -f "$LOLLO_HOME/compose/code-server.yml" \
     -f "$LOLLO_HOME/compose/outlook.yml" \
+    -f "$LOLLO_HOME/compose/browser.yml" \
+    -f "$LOLLO_HOME/compose/notifications.yml" \
     -f "$LOLLO_HOME/compose/landing.yml" \
     "${extra[@]}" \
     --env-file "$env_file" \
@@ -565,27 +573,25 @@ host_docker() {
   env -i PATH="$PATH" HOME="$HOME" ${DOCKER_HOST:+DOCKER_HOST="$DOCKER_HOST"} docker "$@"
 }
 
-# vault_volume NAME -> the Docker volume holding the stack's vault
-vault_volume() { printf 'lollo-%s_vault-data' "$1"; }
+# stack_volume NAME VOLUME -> the Docker volume Compose names VOLUME in the stack
+stack_volume() { printf 'lollo-%s_%s' "$1" "$2"; }
 
-# has_vault NAME -> success when the vault's volume exists. Turning the lollo-vault
-# profile off keeps it, and `compose down -v` deletes it either way.
-has_vault() { host_docker volume inspect "$(vault_volume "$1")" >/dev/null 2>&1; }
+# has_volume NAME VOLUME -> success when the stack's VOLUME exists. Turning a
+# profile off keeps its volume, and `compose down -v` deletes it either way.
+has_volume() { host_docker volume inspect "$(stack_volume "$1" "$2")" >/dev/null 2>&1; }
+
+# vault_volume NAME -> the Docker volume holding the stack's vault
+vault_volume() { stack_volume "$1" vault-data; }
+has_vault() { has_volume "$1" vault-data; }
 
 # receipts_volume NAME -> the Docker volume holding the stack's pipelock receipts
 # and their signing key
-receipts_volume() { printf 'lollo-%s_pipelock-data' "$1"; }
-
-# has_receipts NAME -> success when that volume exists; like the vault's, it
-# outlives the profile and goes with `compose down -v`
-has_receipts() { host_docker volume inspect "$(receipts_volume "$1")" >/dev/null 2>&1; }
+receipts_volume() { stack_volume "$1" pipelock-data; }
+has_receipts() { has_volume "$1" pipelock-data; }
 
 # news_radar_volume NAME -> the Docker volume holding the stack's monitors, sources and items
-news_radar_volume() { printf 'lollo-%s_news-radar-data' "$1"; }
-
-# has_news_radar NAME -> success when that volume exists; it outlives the profile
-# and goes with `compose down -v`
-has_news_radar() { host_docker volume inspect "$(news_radar_volume "$1")" >/dev/null 2>&1; }
+news_radar_volume() { stack_volume "$1" news-radar-data; }
+has_news_radar() { has_volume "$1" news-radar-data; }
 
 # compose_label_mask CONFIG -> `--label KEY=` for each Compose label of an
 # image's config (`image inspect`'s .Config, as JSON). A container inherits its
@@ -601,6 +607,14 @@ stack_running() {
   local running
   running=$(compose "$1" ps --status running --services) || die "$1: docker compose ps failed"
   [[ -n $running ]]
+}
+
+# stack_live NAME -> success when any of the stack's containers has processes:
+# running, paused (they resume where they were) or restarting
+stack_live() {
+  local live
+  live=$(compose "$1" ps --status running --status paused --status restarting --services) || die "$1: docker compose ps failed"
+  [[ -n $live ]]
 }
 
 # stale_services NAME -> services that have a container in the stack but are not
@@ -639,18 +653,18 @@ push_contact() {
   printf '%s' "$contact"
 }
 
-# push_env_lines -> the stack.env lines of a new stack's push notifications: the
-# contact address and a VAPID keypair each for the BFF (PUSH_) and the vault
-# (VAULT_), so neither holds the other's private key. Nothing makes them again:
-# a new keypair would invalidate every browser subscription.
+# push_env_lines -> the stack.env lines of a new stack's push notifications from
+# Lettuce's BFF: the contact address and the BFF's own VAPID keypair (PUSH_).
+# The lollo's pair is the notifications service's (ensure_notify_secrets).
+# Nothing makes them again: a new keypair would invalidate every browser
+# subscription.
 push_env_lines() {
-  local contact push vault
+  local contact push
   # Run inside $(...), where errexit is off: each failure ends it by hand.
   contact=$(push_contact) || exit 1
   push=$(vapid_keypair) || exit 1
-  vault=$(vapid_keypair) || exit 1
-  printf 'PUSH_VAPID_CONTACT_EMAIL=%s\nPUSH_VAPID_PUBLIC_KEY=%s\nPUSH_VAPID_PRIVATE_KEY=%s\nVAULT_VAPID_PUBLIC_KEY=%s\nVAULT_VAPID_PRIVATE_KEY=%s\n' \
-    "$contact" "${push% *}" "${push#* }" "${vault% *}" "${vault#* }"
+  printf 'PUSH_VAPID_CONTACT_EMAIL=%s\nPUSH_VAPID_PUBLIC_KEY=%s\nPUSH_VAPID_PRIVATE_KEY=%s\n' \
+    "$contact" "${push% *}" "${push#* }"
 }
 
 # sync_push_contact NAME -> the stack's PUSH_VAPID_CONTACT_EMAIL follows config.env
@@ -681,6 +695,64 @@ ensure_outlook_secret() {
   f=$(stack_env "$1")
   [[ -n $(env_get "$f" OUTLOOK_SECRET) ]] ||
     env_set "$f" OUTLOOK_SECRET "$(openssl rand -hex 32)"
+}
+
+# NOTIFY_SOURCES: the senders of the notifications service, "<SOURCE> <service>":
+# each has its own token, stack.env's NOTIFY_TOKEN_<SOURCE>, which only that
+# Compose service and NOTIFY_SERVICE get.
+NOTIFY_SOURCES=('VAULT lollo-vault' 'BROWSER lollo-browser')
+# The notifications service: the only one with the lollo's VAPID private key and
+# every sender's token. Compose runs it whenever a sender's profile is on.
+NOTIFY_SERVICE='lollo-notifications'
+
+# notify_keypair_missing NAME -> success when the stack has no lollo VAPID
+# keypair yet: ensure_notify_secrets would make it, the first time it runs there
+notify_keypair_missing() {
+  local f
+  f=$(stack_env "$1")
+  [[ -z $(env_get "$f" LOLLO_VAPID_PUBLIC_KEY) || -z $(env_get "$f" LOLLO_VAPID_PRIVATE_KEY) ]]
+}
+
+# ensure_notify_secrets NAME -> gives the stack, once, what the notifications
+# service needs: the lollo's VAPID keypair (LOLLO_VAPID_*, which only that
+# service gets) and a token per sender (NOTIFY_TOKEN_<SOURCE>, which only it and
+# that sender get), whatever the profiles, so a sender turned on later finds
+# its token. Each is made only when missing; the values go into stack.env, never
+# argv. The keypair is never rotated: a new one invalidates every device's
+# subscription. A token may be replaced: delete its line and run `lolloctl up`.
+ensure_notify_secrets() {
+  local f pair e src
+  f=$(stack_env "$1")
+  if notify_keypair_missing "$1"; then
+    pair=$(vapid_keypair) || exit 1
+    env_set "$f" LOLLO_VAPID_PUBLIC_KEY "${pair% *}"
+    env_set "$f" LOLLO_VAPID_PRIVATE_KEY "${pair#* }"
+  fi
+  for e in "${NOTIFY_SOURCES[@]}"; do
+    src=${e%% *}
+    [[ -n $(env_get "$f" "NOTIFY_TOKEN_$src") ]] ||
+      env_set "$f" "NOTIFY_TOKEN_$src" "$(openssl rand -hex 32)"
+  done
+}
+
+# BROWSER_SECRET_RE: the engine's secret, base64url. It is the path of the
+# engine's control WebSocket, and its first 8 characters the display's password.
+BROWSER_SECRET_RE='^[A-Za-z0-9_-]{43,}$'
+
+# ensure_browser_secrets NAME -> gives the stack, once, the secret only the
+# engine and lollo-browser know (BROWSER_ENGINE_SECRET), whatever the profiles,
+# so a stack that turns the browser on later has it. Made only when missing and
+# never rotated by lolloctl; to replace it, delete its line from stack.env and
+# run `lolloctl up`. The browser's notifications go through the notifications
+# service (ensure_notify_secrets).
+ensure_browser_secrets() {
+  local f secret
+  f=$(stack_env "$1")
+  if [[ -z $(env_get "$f" BROWSER_ENGINE_SECRET) ]]; then
+    secret=$(openssl rand 32 | base64url) || die "openssl could not generate the browser's engine secret"
+    [[ $secret =~ $BROWSER_SECRET_RE ]] || die "openssl produced a malformed browser engine secret"
+    env_set "$f" BROWSER_ENGINE_SECRET "$secret"
+  fi
 }
 
 # env_without_profile FILE PROFILE -> the path of a private temp copy of the env
@@ -746,9 +818,12 @@ check_stack() {
   fi
   for k in SESSION_SECRET LETTA_STATE_DIR PUBLIC_ORIGIN ALLOWED_USERS COMPOSE_PROFILES \
     CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD CLOUDFLARE_TUNNEL_TOKEN \
-    PUSH_VAPID_PUBLIC_KEY PUSH_VAPID_PRIVATE_KEY PUSH_VAPID_CONTACT_EMAIL \
-    VAULT_VAPID_PUBLIC_KEY VAULT_VAPID_PRIVATE_KEY; do
+    PUSH_VAPID_PUBLIC_KEY PUSH_VAPID_PRIVATE_KEY PUSH_VAPID_CONTACT_EMAIL; do
     [[ -n $(env_get "$f" "$k") ]] || die "$name: $k is empty"
+  done
+  # Made by up (ensure_notify_secrets), so a stack from before them passes once it ran.
+  for k in LOLLO_VAPID_PUBLIC_KEY LOLLO_VAPID_PRIVATE_KEY; do
+    [[ -n $(env_get "$f" "$k") ]] || die "$name: $k is empty (run: lolloctl up $name, which makes it once)"
   done
   k=$(env_get "$f" SESSION_SECRET)
   ((${#k} >= 32)) || die "$name: SESSION_SECRET is shorter than 32 characters"
@@ -797,12 +872,13 @@ check_stack() {
   k=$(jq -r '([.services | to_entries[]
       | select([(.value.volumes // [])[] | select(.source == "google-creds" or .source == "vault-data"
         or .source == "pipelock-data" or .source == "code-server-data" or .source == "code-exec-keys"
-        or .source == "code-server-sock" or .source == "news-radar-data" or .source == "outlook-data")] | length > 0)
-      | .key] + ["lollo-gmail-triggers", "lollo-vault", "lollo-pipelock", "lollo-news-radar", "lollo-outlook", "lollo-code-server", "lollo-code-server-editor", "lollo-code-server-exec"]) as $held
+        or .source == "code-server-sock" or .source == "news-radar-data" or .source == "outlook-data"
+        or .source == "browser-data" or .source == "notifications-data")] | length > 0)
+      | .key] + ["lollo-gmail-triggers", "lollo-vault", "lollo-pipelock", "lollo-news-radar", "lollo-outlook", "lollo-code-server", "lollo-code-server-editor", "lollo-code-server-exec", "lollo-browser", "lollo-notifications"]) as $held
     | [.services | to_entries[] | .key as $k | (.value.volumes_from // [])[]
       | sub("^service:"; "") | sub(":(ro|rw)$"; "") | select(. as $t | $held | index($t)) | "\($k) from \(.)"]
     | join(", ")' <<<"$rendered")
-  [[ -z $k ]] || die "$name: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session or the code editor ($k)"
+  [[ -z $k ]] || die "$name: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session, the browser's data, the notification subscriptions or the code editor ($k)"
   # Both volumes outlive their profile, so these hold whatever the profiles.
   k=$(volume_users "$rendered" vault-data lollo-vault)
   [[ -z $k ]] || die "$name: $k mount(s) the vault's volume; only the vault service may"
@@ -812,6 +888,10 @@ check_stack() {
   [[ -z $k ]] || die "$name: $k mount(s) News Radar's volume; only lollo-news-radar may"
   k=$(volume_users "$rendered" outlook-data lollo-outlook)
   [[ -z $k ]] || die "$name: $k mount(s) the Outlook session volume (the bearer token); only lollo-outlook may"
+  k=$(volume_users "$rendered" browser-data lollo-browser)
+  [[ -z $k ]] || die "$name: $k mount(s) the browser's volume (its kept sign-ins, settings and audit log); only lollo-browser may"
+  k=$(volume_users "$rendered" notifications-data "$NOTIFY_SERVICE")
+  [[ -z $k ]] || die "$name: $k mount(s) the notifications service's volume (every device's subscription); only $NOTIFY_SERVICE may"
   k=$(volume_users "$rendered" code-server-data lollo-code-server-editor)
   [[ -z $k ]] || die "$name: $k mount(s) the code editor's volume (its state and SSH key); only lollo-code-server-editor may"
   k=$(volume_users "$rendered" code-exec-keys lollo-code-server-editor lollo-code-server-exec)
@@ -823,10 +903,23 @@ check_stack() {
       | select($m | test("^service:lollo-code-server(-editor|-exec)?$") or (startswith("container:") and contains("code-server")))
       | "\(.key) shares the network namespace of the code editor (\($m))"] | join("; ")' <<<"$rendered")
   [[ -z $k ]] || die "$name: $k"
+  # The browser's engine loads hostile pages; its network leads only to
+  # pipelock. Whatever the profiles, since lollo-pipelock joins it either way;
+  # so sharing pipelock's namespace would put a service on that network too.
+  k=$(jq -r '[.services | to_entries[] | (.value.network_mode // "") as $m
+      | select($m | test("^service:lollo-browser(-engine)?$") or (startswith("container:") and contains("lollo-browser")))
+      | "\(.key) shares the network namespace of the browser (\($m))"] | join("; ")' <<<"$rendered")
+  [[ -z $k ]] || die "$name: $k"
+  k=$(jq -r '[.services | to_entries[] | (.value.network_mode // "") as $m
+      | select($m == "service:lollo-pipelock" or ($m | startswith("container:") and contains("lollo-pipelock")))
+      | "\(.key) shares the network namespace of lollo-pipelock (\($m)), which is on the browser'"'"'s network"] | join("; ")' <<<"$rendered")
+  [[ -z $k ]] || die "$name: $k"
+  k=$(browser_network_members "$name" "$rendered" | awk '!/^lollo-(browser(-engine)?|pipelock)$/' | paste -sd, - | sed 's/,/, /g')
+  [[ -z $k ]] || die "$name: $k join(s) the browser's network; only lollo-browser-engine, lollo-browser and lollo-pipelock may (compose/browser.yml)"
   check_images "$name" "$rendered"
-  if has_profile "$profiles" lollo-doc-tools && [[ $(host_platform 2>/dev/null) != linux/amd64 ]]; then
-    die "$name: lollo-doc-tools needs a linux/amd64 host (OfficeAgent is pinned for x86_64 only); this one is $(host_platform 2>/dev/null || echo unknown)"
-  fi
+  # Whatever the profiles: the tokens are made either way, and a sender turned
+  # on later must find its own the only one it holds.
+  check_notify_secrets "$name" "$rendered" "$f"
   if has_profile "$profiles" lollo-vault; then
     check_sidecar "$name" "$rendered" lollo-vault lollo-vault compose/vault.yml
   fi
@@ -844,6 +937,15 @@ check_stack() {
   fi
   if has_profile "$profiles" lollo-outlook; then
     check_outlook "$name" "$rendered" "$f"
+  fi
+  if has_profile "$profiles" lollo-browser; then
+    [[ $(env_get "$f" BROWSER_ENGINE_SECRET) =~ $BROWSER_SECRET_RE ]] ||
+      die "$name: BROWSER_ENGINE_SECRET must be at least 43 base64url characters (delete the line and run: lolloctl up $name)"
+    check_browser "$name" "$rendered"
+  fi
+  k=$(notify_profiles "$profiles")
+  if [[ -n $k ]]; then
+    check_notifications "$name" "$rendered" "${k%%,*}"
   fi
   k=$(lollo_profiles "$profiles")
   if [[ -n $k ]]; then
@@ -1004,7 +1106,8 @@ check_sidecar() {
 # compose/pipelock.yml gives it (check_sidecar), and the app-server uses it
 # (compose/pipelock-proxy.yml) for everything but stack-internal traffic:
 # pipelock must never see the vault's values, the executor's token (which
-# goes to gmail-triggers, news-radar and landing) or Outlook's mail.
+# goes to gmail-triggers, news-radar and landing), Outlook's mail, nor the vault
+# values agents type through the browser (lollo-browser).
 check_pipelock() {
   local name=$1 rendered=$2 k v
   check_sidecar "$name" "$rendered" lollo-pipelock lollo-pipelock compose/pipelock.yml
@@ -1014,7 +1117,7 @@ check_pipelock() {
       die "$name: the app-server's $k must be http://lollo-pipelock:8888 with the lollo-pipelock profile (compose/pipelock-proxy.yml)"
   done
   for k in NO_PROXY no_proxy; do
-    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-outlook landing; do
+    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-outlook lollo-browser landing; do
       jq -e --arg k "$k" --arg v "$v" '.services["app-server"].environment[$k] // "" | split(",") | index($v)' <<<"$rendered" >/dev/null ||
         die "$name: the app-server's $k must list $v; pipelock must not see its traffic (compose/pipelock-proxy.yml)"
     done
@@ -1054,6 +1157,88 @@ check_lollo_audience() {
   done
 }
 
+# notify_profiles PROFILES -> the senders' profiles in PROFILES, comma-separated:
+# with any of them on, Compose runs the notifications service
+notify_profiles() {
+  local e list=''
+  for e in "${NOTIFY_SOURCES[@]}"; do
+    has_profile "$1" "${e#* }" && list+=${list:+,}${e#* }
+  done
+  printf '%s\n' "$list"
+}
+
+# check_notify_secrets NAME RENDERED ENV_FILE -> whatever the profiles, each
+# sender's token (NOTIFY_TOKEN_<SOURCE>) is 64 lowercase hex characters, unlike
+# every other token and LOLLO_EXECUTOR_TOKEN (which agents can read); and no
+# service but NOTIFY_SERVICE and that sender holds a token's value, nor any
+# service but NOTIFY_SERVICE the lollo's VAPID private key, anywhere in its
+# rendered config (its environment, command, labels...). A token in the
+# app-server would let agents send as that sender.
+check_notify_secrets() {
+  local name=$1 rendered=$2 f=$3 e src svc v k seen=()
+  for e in "${NOTIFY_SOURCES[@]}"; do
+    src=${e%% *}
+    v=$(env_get "$f" "NOTIFY_TOKEN_$src")
+    [[ $v =~ ^[0-9a-f]{64}$ ]] ||
+      die "$name: NOTIFY_TOKEN_$src must be 64 lowercase hex characters (delete the line and run: lolloctl up $name)"
+    [[ $v != "$(env_get "$f" LOLLO_EXECUTOR_TOKEN)" ]] ||
+      die "$name: NOTIFY_TOKEN_$src must differ from LOLLO_EXECUTOR_TOKEN, which agents can read (delete the line and run: lolloctl up $name)"
+    for k in "${seen[@]}"; do
+      [[ $v != "${k#* }" ]] ||
+        die "$name: NOTIFY_TOKEN_$src and NOTIFY_TOKEN_${k%% *} are equal; each sender needs its own (delete one line and run: lolloctl up $name)"
+    done
+    seen+=("$src $v")
+  done
+  for e in "${seen[@]}"; do
+    src=${e%% *} v=${e#* }
+    svc=$(printf '%s\n' "${NOTIFY_SOURCES[@]}" | awk -v s="$src" '$1 == s { print $2 }')
+    k=$(holders "$rendered" "$v" "$NOTIFY_SERVICE" "$svc")
+    [[ -z $k ]] || die "$name: $k hold(s) NOTIFY_TOKEN_$src; only $NOTIFY_SERVICE and $svc may (compose/notifications.yml)"
+  done
+  v=$(env_get "$f" LOLLO_VAPID_PRIVATE_KEY)
+  k=$(holders "$rendered" "$v" "$NOTIFY_SERVICE")
+  [[ -z $k ]] || die "$name: $k hold(s) LOLLO_VAPID_PRIVATE_KEY; only $NOTIFY_SERVICE may (compose/notifications.yml)"
+}
+
+# holders RENDERED VALUE SERVICE... -> the services, other than these, whose
+# rendered config holds VALUE anywhere, comma-separated; nothing for an empty VALUE.
+# VALUE is a secret, so it reaches jq through its environment, which only this
+# user can read, never through argv (--arg), which every local user can.
+holders() {
+  local rendered=$1 value=$2
+  shift 2
+  [[ -n $value ]] || return 0
+  HOLDERS_VALUE=$value jq -r '[.services | to_entries[] | select(.key as $k | $ARGS.positional | index($k) | not)
+    | select(.value | tojson | contains($ENV.HOLDERS_VALUE)) | .key] | join(", ")' --args "$@" <<<"$rendered"
+}
+
+# check_notifications NAME RENDERED PROFILE -> the notifications service, on
+# while PROFILE (or another sender's) is, keeps what compose/notifications.yml
+# gives it: a hardened sidecar (check_sidecar) with no-new-privileges and memory
+# and process limits, on the default network only, mounting only its own
+# volume, notifications-data, at /data, never given the profile lists (a profile
+# change would recreate it, and the vault would refuse erases meanwhile) nor a
+# token for a sender named after itself.
+check_notifications() {
+  local name=$1 rendered=$2 s=$NOTIFY_SERVICE svc
+  check_sidecar "$name" "$rendered" "$3" "$s" compose/notifications.yml
+  svc=$(jq -c --arg s "$s" '.services[$s]' <<<"$rendered")
+  jq -e '(.security_opt // []) | any(. == "no-new-privileges:true" or . == "no-new-privileges" or . == "no-new-privileges=true")' <<<"$svc" >/dev/null ||
+    die "$name: $s must have no-new-privileges (compose/notifications.yml)"
+  jq -e '((.mem_limit // "0") | tostring | . != "0" and . != "") and ((.pids_limit // 0) | tonumber > 0)' <<<"$svc" >/dev/null ||
+    die "$name: $s must have a mem_limit and a pids_limit (compose/notifications.yml)"
+  jq -e '(.networks // {"default": null} | keys) == ["default"]' <<<"$svc" >/dev/null ||
+    die "$name: $s must be on the default network only (compose/notifications.yml)"
+  jq -e '[(.volumes // [])[] | select(.type != "tmpfs") | {type, source, target}]
+    == [{"type": "volume", "source": "notifications-data", "target": "/data"}]' <<<"$svc" >/dev/null ||
+    die "$name: $s may mount only its volume notifications-data, at /data (compose/notifications.yml)"
+  jq -e '(.environment // {}) | has("COMPOSE_PROFILES") or has("LOLLO_PROFILES") | not' <<<"$svc" >/dev/null ||
+    die "$name: $s must not get COMPOSE_PROFILES or LOLLO_PROFILES; a profile change would recreate it (compose/notifications.yml)"
+  # The service takes each NOTIFY_TOKEN_<SOURCE> as a sender; its own name is reserved.
+  jq -e '(.environment // {}) | has("NOTIFY_TOKEN_NOTIFICATIONS") | not' <<<"$svc" >/dev/null ||
+    die "$name: $s must not get NOTIFY_TOKEN_NOTIFICATIONS; no sender may be named after the service (compose/notifications.yml)"
+}
+
 # check_news_radar NAME RENDERED -> the News Radar service keeps what
 # compose/news-radar.yml gives it: a hardened sidecar (check_sidecar) on the default
 # network only, mounting only its own volume, news-radar-data, at /data.
@@ -1083,6 +1268,69 @@ check_outlook() {
     die "$name: lollo-outlook may mount only its volume outlook-data, at /data (compose/outlook.yml)"
   k=$(env_get "$3" OUTLOOK_SECRET)
   ((${#k} >= 32)) || die "$name: OUTLOOK_SECRET must be at least 32 characters (delete the line and run: lolloctl up $name)"
+}
+
+# browser_network_members NAME RENDERED -> the services on the browser's
+# network, one per line, sorted: those naming `browser`, or any network Compose
+# names lollo-NAME_browser, the network's own name
+browser_network_members() {
+  jq -r --arg n "lollo-$1_browser" '[.networks // {} | to_entries[] | select(.key == "browser" or .value.name == $n) | .key] as $nets
+    | .services | to_entries[] | select(.value.networks // {} | keys | any(. as $k | $nets | index($k))) | .key' <<<"$2" | sort
+}
+
+# BROWSER_SECCOMP: the engine's seccomp profile, under the code (in release
+# mode the lolloctl image carries it). Compose reads it and sends its JSON.
+BROWSER_SECCOMP=browser/engine/seccomp.json
+
+# check_browser NAME RENDERED -> the browser's two services keep what
+# compose/browser.yml gives them (browser/README.md, Rules):
+# - both: a hardened sidecar (check_sidecar) with no-new-privileges and memory
+#   and process limits;
+# - the engine (lollo-browser-engine): no volume at all, the `browser` network
+#   only, our seccomp profile and no other, nothing unconfined, not root, and
+#   no switch that turns Chromium's sandbox off in its command, entrypoint or
+#   environment;
+# - lollo-browser: the default and `browser` networks, and only its volume,
+#   browser-data, at /data;
+# and the `browser` network internal, with exactly the engine, lollo-browser
+# and lollo-pipelock on it.
+check_browser() {
+  local name=$1 rendered=$2 engine svc s k members
+  for s in lollo-browser-engine lollo-browser; do
+    check_sidecar "$name" "$rendered" lollo-browser "$s" compose/browser.yml
+    svc=$(jq -c --arg s "$s" '.services[$s]' <<<"$rendered")
+    jq -e '(.security_opt // []) | any(. == "no-new-privileges:true" or . == "no-new-privileges" or . == "no-new-privileges=true")' <<<"$svc" >/dev/null ||
+      die "$name: $s must have no-new-privileges (compose/browser.yml)"
+    jq -e '((.mem_limit // "0") | tostring | . != "0" and . != "") and ((.pids_limit // 0) | tonumber > 0)' <<<"$svc" >/dev/null ||
+      die "$name: $s must have a mem_limit and a pids_limit (compose/browser.yml)"
+  done
+  engine=$(jq -c '.services["lollo-browser-engine"]' <<<"$rendered")
+  jq -e '[(.volumes // [])[] | select(.type != "tmpfs")] | length == 0' <<<"$engine" >/dev/null ||
+    die "$name: lollo-browser-engine must not mount anything; pages run there, so it holds no data (compose/browser.yml)"
+  jq -e '(.networks // {"default": null} | keys) == ["browser"]' <<<"$engine" >/dev/null ||
+    die "$name: lollo-browser-engine must be on the browser network only; its only way out is lollo-pipelock (compose/browser.yml)"
+  jq -e --arg p "seccomp=$LOLLO_HOME/$BROWSER_SECCOMP" '[(.security_opt // [])[] | select(test("^seccomp[=:]"))] == [$p]' <<<"$engine" >/dev/null ||
+    die "$name: lollo-browser-engine must run with seccomp=$LOLLO_HOME/$BROWSER_SECCOMP and no other seccomp profile; Chromium's sandbox needs it (compose/browser.yml)"
+  [[ -f $LOLLO_HOME/$BROWSER_SECCOMP ]] || die "$name: the engine's seccomp profile $LOLLO_HOME/$BROWSER_SECCOMP is missing"
+  k=$(jq -r '[(.security_opt // [])[] | select(test("unconfined|disable"; "i"))] | join(", ")' <<<"$engine")
+  [[ -z $k ]] || die "$name: lollo-browser-engine must not set $k; on Ubuntu an unconfined AppArmor profile breaks Chromium's sandbox, and the rest weaken its container (compose/browser.yml)"
+  jq -e '(.user // "") | test("^(0|root)(:|$)") | not' <<<"$engine" >/dev/null ||
+    die "$name: lollo-browser-engine must not run as root; Chromium's sandbox runs as its image's user (compose/browser.yml)"
+  k=$(jq -r '[((.command // []), (.entrypoint // []) | if type == "array" then .[] else . end),
+      ((.environment // {}) | to_entries[] | select(.key != "BROWSER_ENGINE_SECRET") | "\(.key)=\(.value // "")")
+    | select(test("no[-_]?sandbox|disable[-_][a-z_-]*sandbox|no-zygote|chromium_?sandbox"; "i"))] | join(", ")' <<<"$engine")
+  [[ -z $k ]] || die "$name: lollo-browser-engine must not turn Chromium's sandbox off ($k); see browser/README.md"
+  svc=$(jq -c '.services["lollo-browser"]' <<<"$rendered")
+  jq -e '(.networks // {} | keys) == ["browser", "default"]' <<<"$svc" >/dev/null ||
+    die "$name: lollo-browser must be on the default and browser networks only (compose/browser.yml)"
+  jq -e '[(.volumes // [])[] | select(.type != "tmpfs") | {type, source, target}]
+    == [{"type": "volume", "source": "browser-data", "target": "/data"}]' <<<"$svc" >/dev/null ||
+    die "$name: lollo-browser may mount only its volume browser-data, at /data (compose/browser.yml)"
+  members=$(browser_network_members "$name" "$rendered" | paste -sd, -)
+  [[ $members == lollo-browser,lollo-browser-engine,lollo-pipelock ]] ||
+    die "$name: only lollo-browser-engine, lollo-browser and lollo-pipelock may join the browser network, and all three must (found: ${members:-none})"
+  jq -e '.networks.browser.internal == true' <<<"$rendered" >/dev/null ||
+    die "$name: the browser network must be internal; the engine's only way out is lollo-pipelock (compose/browser.yml)"
 }
 
 # check_gmail_triggers NAME RENDERED STATE_DIR -> the gmail-triggers service keeps

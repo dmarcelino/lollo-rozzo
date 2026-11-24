@@ -1,14 +1,24 @@
 # The checks of CONTRIBUTING.md "Building and testing" (and AGENTS.md
 # "Commands"), run as an operator would run them, on every branch push, by
 # hand, and by publish.yml before it publishes anything (workflow_call). A new
-# test script or linted file goes here too, and in both docs.
+# test script or linted file goes here too, and in both docs; a new job goes in
+# ci-passed's needs too (scripts/check-ci-gate.sh, run by tests/run.sh).
+# A push that changes only release/NOTES.md (the release skill's commit, just
+# before its tag) runs nothing: publish.yml runs these checks on the tag.
 name: CI
 
 on:
   push:
     branches: ['**']
+    paths-ignore: ['release/NOTES.md']
   workflow_dispatch:
   workflow_call:
+    inputs:
+      # The commit to check: publish.yml passes a PR's head, not the merge
+      # commit GitHub would check out. Empty is checkout's default.
+      ref:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -28,6 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - name: Install shellcheck
         run: |
@@ -38,7 +49,7 @@ jobs:
           tar -xJf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION" >>"$GITHUB_PATH"
       - run: shellcheck --version
-      - run: shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/lolloctl-wrapper.sh
+      - run: shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/run-browser-acceptance.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/dev-tag release/lolloctl-wrapper.sh
 
   cli:
     runs-on: ubuntu-24.04
@@ -46,6 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - run: tests/run.sh
       - run: node --test tests/mcp-servers.test.mjs
@@ -56,12 +68,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dir: [landing, vault, gmail-triggers, news-radar, code-server, outlook, doc-tools]
+        dir: [landing, vault, gmail-triggers, news-radar, code-server, outlook, doc-tools, browser, notifications]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - run: tests/run-sidecar.sh ${{ matrix.dir }}
+
+  # doc-tools is built on each host, an Apple silicon Mac included: this checks
+  # its arm64 pins (OfficeAgent's linux-arm64 tarball, the lock's aarch64
+  # wheels) on every change, Renovate's included.
+  doc-tools-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: tests/run-sidecar.sh doc-tools
 
   pipelock:
     runs-on: ubuntu-24.04
@@ -69,8 +95,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - run: tests/run-pipelock.sh
+
+  # Both browser images, pipelock and hostile fixture pages on internal
+  # networks (browser/acceptance/). A cold run builds the engine (Chromium)
+  # and the service from scratch.
+  browser-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: tests/run-browser-acceptance.sh
 
   docs:
     runs-on: ubuntu-24.04
@@ -78,6 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - run: node --test tests/check-doc-links.test.mjs
       - run: node scripts/check-doc-links.mjs
@@ -87,3 +128,20 @@ jobs:
           node-version: 24
       - run: |
           npx --yes --package "renovate@$(sed -n 's/^ *RENOVATE_VERSION: //p' .github/workflows/renovate.yml)" renovate-config-validator --strict
+
+  # The one check the Main branch ruleset requires (CONTRIBUTING.md, "Dependency
+  # updates"): it passes only when every job above passed, so a new job is
+  # required once it is in `needs`. Without `if: always()` it would be skipped
+  # when a job fails, and a skipped required check counts as passed.
+  ci-passed:
+    if: always()
+    needs: [shellcheck, cli, sidecar, doc-tools-arm64, pipelock, browser-acceptance, docs]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          jq -e 'all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null

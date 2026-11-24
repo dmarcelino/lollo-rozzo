@@ -56,8 +56,7 @@ CREATE TABLE IF NOT EXISTS source_state (
   fill TEXT NOT NULL DEFAULT '{}',
   sample TEXT NOT NULL DEFAULT '',
   unhealthy_since INTEGER,
-  unhealthy_reason TEXT NOT NULL DEFAULT '',
-  alerted_at INTEGER
+  unhealthy_reason TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS items (
   source TEXT NOT NULL,
@@ -89,6 +88,8 @@ CREATE TABLE IF NOT EXISTS monitors (
   last_empty INTEGER,
   set_up_in TEXT NOT NULL DEFAULT '',
   where_terms TEXT NOT NULL DEFAULT '[]',
+  from_now_at INTEGER,
+  where_unknown TEXT NOT NULL DEFAULT 'keep',
   UNIQUE (agent_id, name)
 );
 CREATE TABLE IF NOT EXISTS reports (
@@ -116,6 +117,13 @@ CREATE INDEX IF NOT EXISTS reports_by_agent ON reports (agent_id, at);
 CREATE TABLE IF NOT EXISTS tests (fingerprint TEXT PRIMARY KEY, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, pos INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS places (
+  key TEXT PRIMARY KEY,
+  phrase TEXT NOT NULL,
+  locality TEXT NOT NULL,
+  added_by TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
 """
 
 # queued: waiting for the executor; claimed: handed to it, waiting for its result.
@@ -131,8 +139,10 @@ class Monitor:
     conversation: str = "new"
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
-    # Places an event's venue must name; events without a venue are kept.
+    # Places an item must be at (places.PlaceMap says where it is).
     where: list[str] = field(default_factory=list)
+    # With where, what happens to an item nothing places: "keep" or "drop".
+    where_unknown: str = "keep"
     days_ahead: int | None = None
     news: bool = False
     id: str = ""
@@ -145,6 +155,8 @@ class Monitor:
     # The conversation the agent saved it from, when it said: one of the choices
     # the page offers for where reports go.
     set_up_in: str = ""
+    # When it was last saved with from_now: what its sources held then is its baseline.
+    from_now_at: int | None = None
 
     @property
     def reports_to(self) -> str:
@@ -165,6 +177,7 @@ class Monitor:
             "include": self.include,
             "exclude": self.exclude,
             "where": self.where,
+            "where_unknown": self.where_unknown,
             "days_ahead": self.days_ahead,
             "news": self.news,
             "paused": self.paused,
@@ -185,7 +198,6 @@ class SourceState:
     sample: str = ""
     unhealthy_since: int | None = None
     unhealthy_reason: str = ""
-    alerted_at: int | None = None
 
     @property
     def healthy(self) -> bool:
@@ -221,6 +233,19 @@ class StoredItem:
     last_seen: int
 
 
+def _stored_item(r: sqlite3.Row) -> StoredItem:
+    return StoredItem(r["source"], r["key"], json.loads(r["data"]), r["first_seen"], r["changed_at"], r["last_seen"])
+
+
+@dataclass(frozen=True)
+class PlaceEntry:
+    key: str
+    phrase: str
+    locality: str
+    added_by: str
+    at: int
+
+
 @dataclass(frozen=True)
 class Agent:
     id: str
@@ -250,6 +275,8 @@ class Store:
         for name, definition in (
             ("set_up_in", "TEXT NOT NULL DEFAULT ''"),
             ("where_terms", "TEXT NOT NULL DEFAULT '[]'"),
+            ("from_now_at", "INTEGER"),
+            ("where_unknown", "TEXT NOT NULL DEFAULT 'keep'"),
         ):
             if name not in columns:
                 with self._db:
@@ -331,6 +358,33 @@ class Store:
     def source_users(self, name: str) -> list[Monitor]:
         return [m for m in self.monitors() if name in m.sources]
 
+    # -- the place map ------------------------------------------------------------
+    def places(self) -> list[PlaceEntry]:
+        rows = self._db.execute("SELECT * FROM places ORDER BY locality, phrase")
+        return [PlaceEntry(r["key"], r["phrase"], r["locality"], r["added_by"], r["at"]) for r in rows]
+
+    def put_places(self, entries: Sequence[tuple[str, str, str]], added_by: str, most: int) -> bool:
+        """Adds or replaces (key, phrase, locality) entries, all or none: False, and
+        nothing saved, when the map would then hold more than `most`."""
+        now = self.now()
+        with self._db:
+            keys = {r[0] for r in self._db.execute("SELECT key FROM places")}
+            if len(keys | {e[0] for e in entries}) > most:
+                return False
+            self._db.executemany(
+                "INSERT INTO places (key, phrase, locality, added_by, at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET phrase = excluded.phrase, locality = excluded.locality, "
+                "added_by = excluded.added_by, at = excluded.at",
+                [(*e, added_by, now) for e in entries],
+            )
+        return True
+
+    def delete_place(self, key: str) -> str | None:
+        """The phrase of the entry deleted, or None when there was none."""
+        with self._db:
+            row = self._db.execute("DELETE FROM places WHERE key = ? RETURNING phrase", (key,)).fetchone()
+        return row[0] if row else None
+
     # -- source state and health -----------------------------------------------
     @staticmethod
     def _state(row: sqlite3.Row) -> SourceState:
@@ -347,7 +401,6 @@ class Store:
             sample=row["sample"],
             unhealthy_since=row["unhealthy_since"],
             unhealthy_reason=row["unhealthy_reason"],
-            alerted_at=row["alerted_at"],
         )
 
     def source_state(self, name: str) -> SourceState:
@@ -381,9 +434,11 @@ class Store:
             reason = ""
             if error:
                 failures = state.failures + 1
+                # An error without an answer (a timeout, a challenge) keeps the last error's sample.
+                kept = sample or (state.sample if state.failures else "")
                 self._db.execute(
                     "UPDATE source_state SET last_run=?, failures=?, last_error=?, sample=? WHERE name=?",
-                    (now, failures, error, sample, name),
+                    (now, failures, error, kept, name),
                 )
                 if failures >= UNHEALTHY_FAILURES:
                     reason = f"{failures} failed runs in a row; the last: {error}"
@@ -418,8 +473,7 @@ class Store:
                 pass  # a failure or two: not unhealthy yet
             else:
                 self._db.execute(
-                    "UPDATE source_state SET unhealthy_since = NULL, unhealthy_reason = '', alerted_at = NULL "
-                    "WHERE name = ?",
+                    "UPDATE source_state SET unhealthy_since = NULL, unhealthy_reason = '' WHERE name = ?",
                     (name,),
                 )
             self._db.execute("DELETE FROM items WHERE last_seen < ?", (now - ITEMS_KEEP_SECONDS,))
@@ -465,10 +519,51 @@ class Store:
             f"SELECT * FROM items WHERE source IN ({marks}) AND changed_at > ? ORDER BY changed_at DESC, rowid DESC",
             (*sources, since),
         )
+        return [_stored_item(r) for r in rows]
+
+    def alert_delivered(self, monitor_id: str, source: str, since: int) -> bool:
+        """Whether a delivered report of this monitor carried this source's alert
+        since then (as long as reports are kept: REPORTS_KEEP_PER_GROUP)."""
+        row = self._db.execute(
+            "SELECT 1 FROM reports, json_each(reports.monitors) m, json_each(reports.alerted) a "
+            "WHERE reports.status = ? AND reports.at >= ? AND m.value = ? AND a.value = ? LIMIT 1",
+            (OK, since, monitor_id, source),
+        ).fetchone()
+        return row is not None
+
+    def delivered_rows(self, monitor: Monitor, days: Sequence[str]) -> list[dict[str, Any]]:
+        """The rows of this monitor's delivered reports (as long as they are kept:
+        REPORTS_KEEP_PER_GROUP) of events starting on one of these days: what its
+        person was told."""
+        if not days:
+            return []
+        rows = self._db.execute(
+            "SELECT reports.digest FROM reports, json_each(reports.monitors) m WHERE reports.status = ? "
+            "AND m.value = ? AND reports.upto <= ? ORDER BY reports.at",
+            (OK, monitor.id, monitor.delivered_upto),
+        )
+        wanted = set(days)
         return [
-            StoredItem(r["source"], r["key"], json.loads(r["data"]), r["first_seen"], r["changed_at"], r["last_seen"])
-            for r in rows
+            row
+            for (digest,) in rows
+            for row in json.loads(digest)
+            if row.get("monitor") == monitor.name and str(row.get("when", ""))[:10] in wanted
         ]
+
+    def items_starting_on(
+        self, sources: Sequence[str], days: Sequence[str], seen_from: int, seen_by: int
+    ) -> list[StoredItem]:
+        """The items of these sources that start on one of these days (YYYY-MM-DD)
+        and were first seen between those times."""
+        if not sources or not days:
+            return []
+        source_marks, day_marks = ",".join("?" * len(sources)), ",".join("?" * len(days))
+        rows = self._db.execute(
+            f"SELECT * FROM items WHERE source IN ({source_marks}) AND first_seen BETWEEN ? AND ? "
+            f"AND substr(json_extract(data, '$.start'), 1, 10) IN ({day_marks}) ORDER BY first_seen, rowid",
+            (*sources, seen_from, seen_by, *days),
+        )
+        return [_stored_item(r) for r in rows]
 
     def count_items(self, source: str) -> int:
         return self._db.execute("SELECT COUNT(*) FROM items WHERE source = ?", (source,)).fetchone()[0]
@@ -498,6 +593,7 @@ class Store:
             include=json.loads(row["include"]),
             exclude=json.loads(row["exclude"]),
             where=json.loads(row["where_terms"]),
+            where_unknown=row["where_unknown"],
             days_ahead=row["days_ahead"],
             news=bool(row["news"]),
             schedule=row["schedule"],
@@ -509,6 +605,7 @@ class Store:
             paused=bool(row["paused"]),
             last_empty=row["last_empty"],
             set_up_in=row["set_up_in"],
+            from_now_at=row["from_now_at"],
         )
 
     def monitors(self, agent_id: str | None = None) -> list[Monitor]:
@@ -541,6 +638,7 @@ class Store:
             json.dumps(m.include),
             json.dumps(m.exclude),
             json.dumps(m.where),
+            m.where_unknown,
             m.days_ahead,
             int(m.news),
             m.schedule,
@@ -550,21 +648,25 @@ class Store:
             current = self.monitor_named(m.agent_id, m.name)
             if current:
                 self._db.execute(
-                    "UPDATE monitors SET sources=?, include=?, exclude=?, where_terms=?, days_ahead=?, news=?, "
-                    "schedule=?, conversation=?, set_up_in=?, updated=?, paused=0, failures=0 WHERE id=?",
+                    "UPDATE monitors SET sources=?, include=?, exclude=?, where_terms=?, where_unknown=?, "
+                    "days_ahead=?, news=?, schedule=?, conversation=?, set_up_in=?, updated=?, paused=0, failures=0 "
+                    "WHERE id=?",
                     (*values, m.set_up_in, now, current.id),
                 )
                 monitor_id = current.id
             else:
                 monitor_id = uuid.uuid4().hex[:16]
                 self._db.execute(
-                    "INSERT INTO monitors (sources, include, exclude, where_terms, days_ahead, news, schedule, "
-                    "conversation, set_up_in, created, updated, id, agent_id, name) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO monitors (sources, include, exclude, where_terms, where_unknown, days_ahead, news, "
+                    "schedule, conversation, set_up_in, created, updated, id, agent_id, name) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (*values, m.set_up_in, now, now, monitor_id, m.agent_id, m.name),
                 )
             if delivered_upto is not None:
-                self._db.execute("UPDATE monitors SET delivered_upto = ? WHERE id = ?", (delivered_upto, monitor_id))
+                self._db.execute(
+                    "UPDATE monitors SET delivered_upto = ?, from_now_at = ? WHERE id = ?",
+                    (delivered_upto, delivered_upto, monitor_id),
+                )
         stored = self.monitor(monitor_id)
         assert stored is not None
         return stored
@@ -721,10 +823,6 @@ class Store:
                 self._db.execute(
                     f"UPDATE monitors SET delivered_upto = MAX(delivered_upto, ?), failures = 0 WHERE id IN ({marks})",
                     (report.upto, *report.monitors),
-                )
-                self._db.executemany(
-                    "UPDATE source_state SET alerted_at = ? WHERE name = ? AND unhealthy_since IS NOT NULL",
-                    [(report.at, n) for n in report.alerted],
                 )
             else:
                 self._db.execute(

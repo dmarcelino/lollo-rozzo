@@ -1,0 +1,47 @@
+[project]
+name = "lollo-browser"
+version = "0.1.0"
+description = "Lollo browser: agents' MCP tools for a sandboxed Chromium, with per-task sessions and masked secrets"
+requires-python = ">=3.14"
+# Pinned: this is an application image, rebuilt on every `lolloctl up`.
+# Playwright must match the engine's playwright-core major.minor (1.65), or the
+# engine refuses the connection (design decision 2); bump both together.
+dependencies = [
+  "mcp==2.3.0",
+  "anyio==4.16.0",
+  "starlette==1.10.0",
+  "uvicorn==0.54.0",
+  "python-multipart==0.0.34",
+  "jinja2==3.1.6",
+  "pyjwt[crypto]==2.15.1",
+  "cryptography==50.0.2",
+  # uvicorn's WebSocket support, for the live view.
+  "websockets==17.2",
+  "playwright==1.65.2",
+  # The Public Suffix List snapshot bundled with the release; never fetched.
+  "tldextract==5.4.0",
+  # Hosts in punycode, as Chromium writes them (UTS 46); tldextract needs it too.
+  "idna==3.20",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0"]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lollo_browser = ["templates/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]

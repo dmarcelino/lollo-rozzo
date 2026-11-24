@@ -6,10 +6,13 @@
 # app-server (compose/doc-tools.yml): one copy per host, never run as a container.
 # `tests/run-sidecar.sh doc-tools` builds the `test` stage and runs it.
 #
-# Upgrading OfficeAgent: change OFFICEAGENT_VERSION and OFFICEAGENT_SHA256 (from
-# the release's SHA256SUMS, checked against `gh attestation verify`).
+# Upgrading OfficeAgent: change OFFICEAGENT_VERSION, then run
+# `scripts/renovate-post-upgrade.sh officeagent`, which sets OFFICEAGENT_SHA256_AMD64
+# and OFFICEAGENT_SHA256_ARM64 (the linux-x64 and linux-arm64 tarballs) from the
+# release's SHA256SUMS, checked against `gh attestation verify`.
 ARG OFFICEAGENT_VERSION=1.3.0
-ARG OFFICEAGENT_SHA256=434b74bdcc9017a3030ea22c3536bf528d82597a9aabd7fb686126f0e3c2772f
+ARG OFFICEAGENT_SHA256_AMD64=434b74bdcc9017a3030ea22c3536bf528d82597a9aabd7fb686126f0e3c2772f
+ARG OFFICEAGENT_SHA256_ARM64=6c62b2b0a1345c4602394492f9d38fc7ecb394de09fe6d526ef6c255408e286b
 ARG PYTHON_VERSION=3.12.16
 
 FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
@@ -24,11 +27,17 @@ COPY --from=uv /uv /usr/local/bin/uv
 
 FROM base AS office
 ARG OFFICEAGENT_VERSION
-ARG OFFICEAGENT_SHA256
-RUN [ "$(dpkg --print-architecture)" = amd64 ] || { echo "doc-tools: OfficeAgent is pinned for x86_64 only" >&2; exit 1; }
-RUN curl -fsSL -o /tmp/oa.tgz \
-      "https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v${OFFICEAGENT_VERSION}/officeagent-mcp-linux-x64.tar.gz" \
- && echo "${OFFICEAGENT_SHA256}  /tmp/oa.tgz" | sha256sum -c - \
+ARG OFFICEAGENT_SHA256_AMD64
+ARG OFFICEAGENT_SHA256_ARM64
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) arch=x64 sum=$OFFICEAGENT_SHA256_AMD64 ;; \
+      arm64) arch=arm64 sum=$OFFICEAGENT_SHA256_ARM64 ;; \
+      *) echo "doc-tools: no OfficeAgent build for ${TARGETARCH:-an unknown platform}" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL -o /tmp/oa.tgz \
+      "https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v${OFFICEAGENT_VERSION}/officeagent-mcp-linux-${arch}.tar.gz" \
+ && echo "${sum}  /tmp/oa.tgz" | sha256sum -c - \
  && mkdir -p /opt/lollo-doc-tools/office \
  && tar -xzf /tmp/oa.tgz -C /opt/lollo-doc-tools/office --no-same-owner --strip-components=1 \
  && rm /tmp/oa.tgz \

@@ -327,7 +327,7 @@
       "items": [
         "Page at /news-radar/ on the lollo host: an Access JWT of the lollo's own application, Fetch Metadata, CSRF and Origin on every POST",
         "/mcp for agents: the host lollo-news-radar only, no Origin; the tunnel never routes it",
-        "Fetches public addresses only, honours robots.txt, runs no script; no model",
+        "Fetches public addresses only, honours robots.txt (a feed's own URL excepted), runs no script; no model",
         "Never connects to the app-server; uid 10002, read-only, no capabilities"
       ]
     },

@@ -3,15 +3,16 @@
 The CLI's offline tests and the scripts that run every other test suite. Each folder's own tests (the sidecars' pytest, the executor's `node --test`, the editor image's `test.sh`) are described in that folder's README. What to run before changing what: [CONTRIBUTING.md](../CONTRIBUTING.md#building-and-testing).
 
 ## Build and test
-No build step. Before changing a file here, run what it runs: `tests/run.sh` for `run.sh` or a stub, the folder's suite for `run-sidecar.sh` (every folder it takes, for a change to the script itself), `tests/run-pipelock.sh` for itself, and `node --test tests/<name>.test.mjs` for a `*.test.mjs`. Shellcheck covers `run*.sh` and `stubs/*` ([CONTRIBUTING.md](../CONTRIBUTING.md#building-and-testing) has the line).
+No build step. Before changing a file here, run what it runs: `tests/run.sh` for `run.sh` or a stub, the folder's suite for `run-sidecar.sh` (every folder it takes, for a change to the script itself), `tests/run-pipelock.sh` and `tests/run-browser-acceptance.sh` for themselves, and `node --test tests/<name>.test.mjs` for a `*.test.mjs`. Shellcheck covers `run*.sh` and `stubs/*` ([CONTRIBUTING.md](../CONTRIBUTING.md#building-and-testing) has the line).
 
 ## Files
 | File | What it does |
 |---|---|
 | `run.sh` | The CLI's tests, and `scripts/renovate-post-upgrade.sh`'s (`test_post_upgrade_*`): every `test_*` function, or those whose name contains the argument (`tests/run.sh test_add_`) |
-| `stubs/` | `docker`, `curl`, `dig`, `gh` and `secret-tool` stand-ins that `run.sh` puts first on `PATH` |
+| `stubs/` | `docker`, `curl`, `dig`, `gh`, `secret-tool`, `security`, `uname`, `colima` and `ssh` stand-ins that `run.sh` puts first on `PATH` |
 | `run-sidecar.sh <dir>` | Builds a sidecar's image to its `test` stage and runs its tests in it; extra arguments go to pytest |
 | `run-pipelock.sh` | The pipelock image and config against a real pipelock ([pipelock/README.md](../pipelock/README.md#build-and-test)) |
+| `run-browser-acceptance.sh` | The browser's acceptance suite (`browser/acceptance/`) against both real images and pipelock ([browser/README.md](../browser/README.md#build-and-test)) |
 | `mcp-servers.test.mjs` | `lib/mcp-servers.mjs` against temp settings files, with hooks that land a concurrent write before and after its rename |
 | `check-doc-links.test.mjs` | `scripts/check-doc-links.mjs` against temp Markdown trees |
 
@@ -19,7 +20,7 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 - Each test gets a copy of the repo in a temp dir: the code in `$H` (`$T/home`, `LOLLO_HOME`), its data in `$D` (`$H/data`, a clone's default `LOLLO_DATA`) and Lettuce's source at `config.env.example`'s tag in `$U` (`$D/upstream/$REF`). It runs under `set -e`, so a failing assert ends it.
 - Tests run in parallel, `TEST_JOBS` at a time (default: one per CPU; `TEST_JOBS=1` runs them one by one). Each prints its block, failure details then `ok` or `FAIL`, when it ends, so the order varies; the failures are listed again at the end. A test therefore keeps everything it writes under its own `$T` and never relies on another test's files or on timing. `TMPDIR` points into the run's own folder, removed when it ends, so every temp dir (the tests' and lolloctl's) goes with it.
 - `ctl` runs `lolloctl` with `LOLLO_DATA` set to `$CTL_DATA`, empty by default, so the tester's own environment never reaches it. `release_on` turns the copy into a released lolloctl: a `$H/RELEASE`, `CTL_DATA=$D`, and its container's mounts (`mounts PATH...`, in `$T/mounts.json`). `wrapper_in DIR` and `wctl DIR ARGS...` run the release wrapper from `DIR/bin`.
-- `tests/stubs/{docker,curl,dig,gh,secret-tool}` come first on `PATH`. Nothing reaches the network, Docker or the real home.
+- `tests/stubs/{docker,curl,dig,gh,secret-tool,security,uname,colima,ssh}` come first on `PATH`. Nothing reaches the network, Docker or the real home.
 - `lolloctl` runs docker under `env -i`, so the stubs read their settings from `$T/stub.env`, not the environment. Write one with `stub KEY=value`. Stub values can't hold spaces, since `stub.env` is sourced.
 
 ## The stubs
@@ -34,15 +35,16 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 
 ### docker
 - **Rendered config.** `compose config --format json` returns `$T/compose-config.json`, which tests overwrite to simulate rendered configs. It fills `${KEY}` from the `--env-file`, and logs that file's `COMPOSE_PROFILES` as a `docker-env-file` line in `calls.log`. When set, it logs `DOC_TOOLS_NETWORK` and `DOC_TOOLS_VOLUME` as a `docker-env` line. Every `compose` call logs a `docker-env-images` line: `LOLLO_HOME`, `APP_SERVER_IMAGE`, `LETTA_IMAGE_NS` and, in release mode, `LOLLO_IMAGE_VAULT`.
-- **Services.** `compose config --services` lists `app-server`, `bff` and the services of each profile in the `--env-file`'s `COMPOSE_PROFILES`, like upstream: `lollo-gmail-triggers`, `lollo-news-radar` and `lollo-pipelock` for their profiles, `lollo-code-server`, `lollo-code-server-editor` and `lollo-code-server-exec` for `lollo-code-server`, `lollo-outlook` for its profile, and `landing` with any profile `compose/landing.yml` gives it.
-- **Containers.** `docker ps -a --filter label=com.docker.compose.project=...` answers from `$T/containers.txt` lines of `project service` (helper `containers NAME SERVICE...`). `compose ps --status running --services` counts every container of the project there as running.
+- **Services.** `compose config --services` lists `app-server`, `bff` and the services of each profile in the `--env-file`'s `COMPOSE_PROFILES`, like upstream: `lollo-gmail-triggers`, `lollo-news-radar` and `lollo-pipelock` for their profiles, `lollo-code-server`, `lollo-code-server-editor` and `lollo-code-server-exec` for `lollo-code-server`, `lollo-outlook` for its profile, `lollo-browser-engine` and `lollo-browser` for `lollo-browser`, `landing` with any profile `compose/landing.yml` gives it, and `lollo-notifications` with any profile `compose/notifications.yml` gives it.
+- **Containers.** `docker ps -a --filter label=com.docker.compose.project=...` answers from `$T/containers.txt` lines of `project service` (helper `containers NAME SERVICE...`). `compose ps --status running --services` counts every container of the project there as running, but one with a third word `paused` (helper `paused NAME SERVICE...`); `ps --status running --status paused --status restarting --services` counts them all.
 - **`exec`.** `letta agents list` inside `compose exec` answers from `$T/agents.json` (helper `agents NAME...`, ids `agent-1`, `agent-2`, ...) and swallows stdin like the real thing. Any other `exec`:
   - appends its stdin to `$T/exec-stdin.log`;
   - saves its `sh -c` script to `$T/exec-script` and the arguments after it, NUL-separated, to `$T/exec-args`. `run_exec_script ROOT [STDIN]` replays the script with `/root/.letta` and `/etc/cron.d` under ROOT; `exec_args` prints the arguments;
   - prints `$T/exec-stdout`, or `$T/exec-stdout-<group>` for a `lib/mcp-servers.mjs` run of that group when it exists;
   - exits with `STUB_EXEC_RC`. `STUB_EXEC_FAIL_GROUP=<group>` makes that group's runs exit 3.
 - **`run`.** Writes the value of each `-e NAME` to `$T/run-env.log`, so tests can tell values passed through the environment from argv. Saves its `sh -c` script to `$T/run-script`. Creates the `.partial-*` it is given in the directory mounted at `/dst`, like the backup copy. Exits with `STUB_RUN_RC`, or 1 when its arguments contain `STUB_RUN_FAIL` (only the first `STUB_RUN_FAIL_TIMES` times when that is set).
-- **The host and the registry.** `version --format` answers `STUB_PLATFORM` (default `linux/amd64`); `manifest inspect` publishes the image for the platforms in `STUB_MANIFEST_PLATFORMS`, or fails when it is unset; `pull` exits with `STUB_PULL_RC`; `inspect --format {{json .Mounts}}` (`check_mounts`) prints `$T/mounts.json`, or fails without it.
+- **The host and the registry.** `version --format` answers `STUB_PLATFORM` (default `linux/amd64`); `info --format` fills `{{.ID}}` with `STUB_DOCKER_ID` (default `daemon-1`) and `{{.Name}}` with `STUB_DOCKER_NAME` (default `docker-host`), or fails with `STUB_DOCKER_INFO_RC`; a `run` with `--entrypoint stat` (the wrapper on macOS reading the socket's group) prints `STUB_SOCKET_GID` (default 0) and `STUB_SOCKET_MODE` (default 660), or fails with `STUB_SOCKET_GID_RC`; `manifest inspect` publishes the image for the platforms in `STUB_MANIFEST_PLATFORMS`, or fails when it is unset; `pull` exits with `STUB_PULL_RC`; for a dev build's image (`fetch_dev_wrapper`), `image inspect --format {{json .RepoDigests}}` answers the name's digest `sha256:0…07`, and a `run --rm --entrypoint cat` of its `RELEASE` prints `VERSION=$STUB_DEV_VERSION`, of its `release/lolloctl-wrapper.sh` this repo's template (fails with `STUB_DEV_NO_WRAPPER` set); `inspect --format {{json .Mounts}}` (`check_mounts`) prints `$T/mounts.json`, or fails without it.
+- **The browser's engine.** Starting it alone (`compose ... up -d ... lollo-browser-engine`) exits with `STUB_ENGINE_UP_RC`, or 1 for the projects listed in `STUB_ENGINE_UP_FAIL` (`lollo-<name>`, space-separated); `compose ... logs ... lollo-browser-engine` prints `$T/engine-logs`.
 - **Images, volumes, pause.** `image inspect` answers a Compose-built image's config (fails with `STUB_IMAGE_RC`, or for an image in `STUB_IMAGES_MISSING`). `volume inspect` exits with `STUB_VOLUME_RC`, or 1 for a volume named in `STUB_VOLUMES_MISSING`. `compose pause` exits with `STUB_PAUSE_RC`. `restart --no-deps bff` exits with `STUB_RESTART_RC`.
 - **Doc-tools resources.**
   - Networks live in `$T/networks` (`name label internal attached-ids`): `network ls/inspect/create/connect/disconnect/rm`, with `STUB_NETWORK_LS_RC`, `STUB_NETWORK_CREATE_RC` and `STUB_NETWORK_RM_RC`.
@@ -52,9 +54,12 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
   - A `run` mounting a tools volume answers the marker check from `$T/volumes`, or, for the fill, saves its stdin to `$T/fill-stdin` and marks the volume complete.
   - `ps -aq --filter label=lolloctl.doc-tools=fill` prints `$T/fill-containers`.
 
-### dig, gh and secret-tool
+### dig, gh, secret-tool, security, uname, colima and ssh
 - `dig` answers from `$T/dns.txt` lines of `name TYPE answer`.
-- `gh auth token` and `secret-tool` print `STUB_GH_TOKEN` and `STUB_SECRET_TOOL`, or fail like a logged-out tool.
+- `gh auth token`, `secret-tool` and macOS's `security find-generic-password` print `STUB_GH_TOKEN`, `STUB_SECRET_TOOL` and `STUB_SECURITY`, or fail like a logged-out tool.
+- `uname -s` prints `STUB_UNAME_S` when set (`Darwin` for the wrapper on macOS); anything else is the real `uname`.
+- `colima` logs `colima <args>`; `colima ssh-config --profile P` prints a config for the host `colima` (`colima-P` for another profile); `colima ssh --profile P -- test -d PATH` fails for a path under one of `STUB_COLIMA_UNSHARED`'s (space-separated), as a path the VM does not share; any call fails with `STUB_COLIMA_RC`.
+- `ssh` logs `ssh <args>`. A tunnel (`-N`) writes its pid to `$T/tunnel.pid` and stays up until killed (or exits with `STUB_SSH_TUNNEL_RC`); `... test -S PATH` exits `STUB_SSH_TEST_RC` (default 0).
 - `gh api PATH [--jq EXPR]` logs `gh api PATH` and answers from `$T/gh-api/<PATH with / as _>.json` (helpers `gh_api PATH JSON` and `release_assets REPO TAG NAME=DIGEST...`), through `jq -r` with `--jq`; a missing file fails like a 404.
 - `gh attestation verify FILE --repo REPO` logs `gh attestation verify <file name> --repo REPO` and exits `STUB_GH_ATTEST_RC` (default 0).
 
@@ -66,6 +71,7 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 - `calls` prints the Cloudflare calls (`METHOD PATH`), `body_of METHOD PATH` the last such call's body, `senv NAME KEY` a `stack.env` value.
 - `added` makes a fresh `alfred` stack. `add` runs once per run for each starting state (everything under `$T`, and `CTL_DATA`); later tests that start from the same state get a copy, with the first test's `$T` replaced by theirs. The copy has the same secrets, so a test of what `add` itself does or makes, or of secrets differing, runs `ctl add`.
 - `config_edit` applies a jq filter to the rendered config; `line_of TEXT` orders calls.
+- `jq` is no stub, so the stubs' logs never see its arguments: `log_jq_argv` puts a wrapper first on `ctl`'s `PATH` that logs them to `$T/jq-argv.log`, then runs the real `jq`, for tests that a secret never reaches its argv.
 - Toolbox tests run with `HOME=$T/u` (helper `tb`), so the real home is never read.
 
 ### Per feature
@@ -73,12 +79,14 @@ No build step. Before changing a file here, run what it runs: `tests/run.sh` for
 
 | Feature | Helpers |
 |---|---|
-| vault | `vault_config`, `with_vault` |
+| vault | `vault_config` (also the notifications service), `with_vault` |
+| notifications | `notifications_config` (the `lollo-notifications` service as Compose renders it; `vault_config` and `browser_config` call it), `notifications_refused` (with the vault on), `NS` (the jq path of the service), `with_profiles LIST` (alfred and `config.env` on LIST), `NOTIFS` (its expected tunnel rule) |
 | pipelock | `pipelock_config`, `with_pipelock` (also set the app-server's proxy variables) |
 | Gmail triggers | `triggers_config`, `with_triggers` (also place a placeholder `landing/executor/run.mjs` in the test's copy), `triggers_refused`; `state_elsewhere` (a `LETTA_STATE_DIR` outside `stacks/`), `installed_up` (a running stack with the executor installed), `partial_stream` (an installer tar missing a file) |
 | news-radar | `news_radar_config`, `with_news_radar`, `news_radar_refused`, `MS` (the jq path of the service) |
 | Outlook | `outlook_config`, `with_outlook`, `outlook_refused`, `OL` (the jq path of the service) |
 | lollo host | `landing_config` (the `landing` service as Compose renders it; also places the placeholder executor), `LOLLO_ENV` (what every lollo service's environment renders to), `taken_lollos LABEL` (every lollo name `pick_lollo_hostname` tries), `with_all_lollos`, `lollo_refused`, `ingress` (the tunnel rules a call sent), `LANDING`/`LOLLO_404`/`LETTUCE_TAIL` (expected rules), `executor_cron_text`, `EXECUTOR_ARGS` |
-| `mcp` | `mcp_answer JSON [GROUP]` (what the script would print), `MCP_ADD`/`MCP_REMOVE` (document tools) and `VAULT_ADD`/`VAULT_REMOVE` (its `exec` calls as `calls.log` shows them; the News Radar group's are the same with `news-radar`), `OUTLOOK_ADD` (Outlook's), `with_docs_and_vault` (both profiles on for alfred), `bff_restarts` (the BFF's lone restarts) |
+| `mcp` | `mcp_answer JSON [GROUP]` (what the script would print), `MCP_ADD`/`MCP_REMOVE` (document tools) and `VAULT_ADD`/`VAULT_REMOVE` (its `exec` calls as `calls.log` shows them; the News Radar group's are the same with `news-radar`; `BROWSER_ADD`/`BROWSER_REMOVE` the browser's), `OUTLOOK_ADD` (Outlook's), `with_docs_and_vault` (both profiles on for alfred), `bff_restarts` (the BFF's lone restarts) |
 | doc-tools | `docs_config [NAME]`, `with_docs` (also write `$T/shared-config.json` from the flags of the real `compose/shared/gotenberg.yml`), `docs_tree` (a `doc-tools/` to hash), `docs_tag` (the tag lolloctl computes), `docs_refused`, `tools_volume NAME COMPLETE [IN_USE]`, `CHECK_RUN`/`FILL_RUN` (their flags as `calls.log` shows them) |
+| browser | `browser_config` (the engine, `lollo-browser`, pipelock on the `browser` network and the network, taken from a real render; also writes a placeholder `browser/engine/seccomp.json` in the test's copy), `with_browser` (also `lollo-pipelock`, with `pipelock_config`), `browser_refused`; `BE`/`BS` (the jq paths of the engine and `lollo-browser`) |
 | code editor | `code_config` (the three services, networks and volumes as Compose renders them for alfred, taken from a real render), `with_code` (also sets the profile), `code_refused`; `CG`/`CE`/`CX` (the jq paths of the gate, the editor and the shell) |

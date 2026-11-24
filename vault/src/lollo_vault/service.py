@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from secrets import token_urlsafe
-from typing import Any
+from secrets import token_hex, token_urlsafe
+from typing import Any, Protocol
 
 import anyio
 
@@ -29,38 +30,97 @@ from .config import (
     MAX_PENDING,
     MAX_PURPOSE_LENGTH,
     MAX_WAIT_SECONDS,
+    NOTICE_RETRY_FIRST_SECONDS,
+    NOTICE_RETRY_FOR_SECONDS,
+    NOTICE_RETRY_MAX_SECONDS,
     PREFIX,
     REQUEST_TTL_SECONDS,
     RESULT_TTL_SECONDS,
 )
 from .kinds import may_share_without_asking, preview
 from .logs import SECRET_FILTER
-from .push import Pusher
 from .vault import AUTO, Locked, Secret, Vault, VaultError
 
 log = logging.getLogger("lollo_vault")
 
 PENDING, DONE, DENIED, EXPIRED = "pending", "done", "denied", "expired"
 PLACEHOLDERS, TEXT = "placeholders", "text"
+# Why a handle can no longer be redeemed.
+USED, LOCKED = "used", "locked"
 SKILL_DIR = "/root/.letta/skills/using-vault-secrets"
 VAULT_RUN = f"python3 {SKILL_DIR}/vault-run"
 VAULT_FILL = f"python3 {SKILL_DIR}/vault-fill"
+VAULT_WAIT = f"python3 {SKILL_DIR}/vault-wait"
+MCP_SH = "sh /root/.letta/skills/mcp-servers/scripts/mcp.sh"
 # Prefixes the variable names, so two secrets with the same fields (two
 # addresses) can go into one command: VAULT_HOME_CITY, VAULT_WORK_CITY.
 ALIAS = re.compile(r"[A-Za-z][A-Za-z0-9]{0,19}")
 
-# Pushes asking to unlock are sent at most this often.
+# Notices asking to unlock are sent at most this often.
 UNLOCK_NOTICE_SECONDS = 300
 
+
+class Notifier(Protocol):
+    """lollo_common.notify.Notifier: hands a notice to lollo-notifications, which
+    pushes it to every device the person enabled. Both return True once the
+    service took it (202), and never raise."""
+
+    async def send(self, payload: dict[str, str]) -> bool: ...
+
+    async def accept(self, payload: dict[str, str]) -> bool: ...
+
+
+class EraseLimit(Protocol):
+    """The cap on erase requests per person (app.RateLimiter)."""
+
+    def full(self, key: str) -> bool: ...
+
+    def count(self, key: str) -> None: ...
+
+
+class TooManyErases(Exception):
+    """The person has set off as many erase notices as the cap allows."""
+
+
+def wait_command(rid: str) -> str:
+    return f"{VAULT_WAIT} {rid}"
+
+
 # Nothing starts an agent's turn when the user answers: an agent that ends its
-# turn with nothing waiting never collects what the user approved.
-KEEP_WAITING = (
-    f"Wait for the answer before you end your turn: call get_result with this id and wait_seconds "
-    f"{MAX_WAIT_SECONDS}, and call it again until the status is no longer pending (the request expires after "
-    f"{REQUEST_TTL_SECONDS // 60} minutes). If you can run a command in the background, run each call as its own "
-    "background command, so you are told when it finishes. Don't end your turn with nothing waiting: nothing "
-    "tells you when the user answers."
-)
+# turn with nothing waiting never collects what the user approved. So every
+# pending answer carries the one command that waits, ready to run.
+#
+# The user sees only what the agent writes, not this answer. Agents that went on
+# working after a request never wrote the link; told to write it first, small
+# models sent it as a text-only response, which ends a letta-code turn, before
+# starting their wait. So the reply opens with three short steps, the tool call
+# first (one model that got it right named run_in_background, the others didn't),
+# and explains afterwards.
+def next_steps(rid: str, url: str, *, again: bool = False) -> str:
+    give = (
+        f"If you haven't given the user this link yet, do it in the same response, or after it: {url}"
+        if again
+        else f"In the same response, or after it, give the user this link: {url}"
+    )
+    return (
+        f"Next, in this order: 1. Call Bash with run_in_background: true and the command {wait_command(rid)} (add "
+        f"the ids of your other pending requests to it). 2. {give} 3. End your turn and leave the command running."
+    )
+
+
+def keep_waiting(rid: str) -> str:
+    return (
+        "Why: the user sees only what you write, not this answer, and may not get a notification. A response with "
+        "no tool call ends your turn, so a link written before the command leaves nothing waiting; if you go on "
+        "working instead, put each link in the same response as your next tool call. Run the command even if this "
+        "is the only request, or one you make again later in the task. Run only one, with every pending request's "
+        "id: it waits until every request is answered, then collects them together and prints the answers, and "
+        "you are told it finished. Don't start it for each request, or a handle's minutes start before the others "
+        "are answered. Don't stop it: its notification starts your next turn. Without a shell, call get_result with "
+        f"this id and wait_seconds {MAX_WAIT_SECONDS}, and call it again until the status is no longer pending "
+        f"(the request expires after {REQUEST_TTL_SECONDS // 60} minutes). Don't end your turn with nothing "
+        "waiting: nothing tells you when the user answers."
+    )
 
 
 def rules(purpose: str) -> str:
@@ -125,30 +185,69 @@ def env_name(key: str, alias: str = "") -> str:
 
 
 class Service:
-    def __init__(self, vault: Vault, pusher: Pusher, public_origin: str):
+    def __init__(
+        self,
+        vault: Vault,
+        notifier: Notifier,
+        public_origin: str,
+        sleep: Callable[[float], Awaitable[None]] = anyio.sleep,
+    ):
         self.vault = vault
-        self.pusher = pusher
+        self.notifier = notifier
         self._origin = public_origin
+        # The wait between a notice's tries (tests advance their clock instead).
+        self._sleep = sleep
         self._requests: dict[str, Request] = {}
         self._handles: dict[str, Handle] = {}
+        # Handles that can no longer be redeemed, by id only (never their values),
+        # until they would have expired: so vault-run can say why one is refused.
+        self._spent: dict[str, tuple[str, int]] = {}
         self._tasks: anyio.abc.TaskGroup | None = None
         self._last_unlock_notice = -UNLOCK_NOTICE_SECONDS
         # An erase that came due while the server was down still waits this long.
         self._erase_not_before = vault.now() + ERASE_GRACE_SECONDS
+        # True while the notice of such an erase waits for the notifications
+        # service: until it takes it, the erase cannot run (announce_overdue_erase).
+        self._erase_held = False
+        # One erase request at a time, from its check to its schedule, so two at
+        # once send one notice. Unlocking never takes it: the schedule re-checks.
+        self._erase_lock = anyio.Lock()
 
     def bind_task_group(self, tg: anyio.abc.TaskGroup | None) -> None:
         self._tasks = tg
 
-    def _spawn_push(self, payload: dict[str, str]) -> None:
+    def _spawn(self, fn: Callable[..., Awaitable[Any]], *args: Any) -> None:
         if self._tasks is None:
             raise RuntimeError("service task group is not running")
-        self._tasks.start_soon(self._push, payload)
+        self._tasks.start_soon(fn, *args)
+
+    def _spawn_push(self, payload: dict[str, str]) -> None:
+        """Once, in the background: a request or a locked vault does not wait for it."""
+        self._spawn(self._push, payload)
 
     async def _push(self, payload: dict[str, str]) -> None:
         try:
-            await self.pusher.send(payload)
+            await self.notifier.send(payload)
         except Exception as e:
-            log.warning("push failed error=%s", type(e).__name__)
+            log.warning("notification failed tag=%s error=%s", payload.get("tag"), type(e).__name__)
+
+    async def _retry(self, payload: dict[str, str], until: Callable[[], bool], deadline: int | None) -> bool:
+        """Hands `payload` over until the service takes it (True), `until()` says it
+        no longer matters, or the vault's clock passes `deadline` (False). The
+        wait between tries grows from 5 s to a minute."""
+        wait = NOTICE_RETRY_FIRST_SECONDS
+        while not until():
+            try:
+                if await self.notifier.accept(payload):
+                    return True
+            except Exception as e:
+                log.warning("notification failed tag=%s error=%s", payload.get("tag"), type(e).__name__)
+            if deadline is not None and self.vault.now() + wait > deadline:
+                log.warning("notification dropped after retries tag=%s", payload.get("tag"))
+                return False
+            await self._sleep(wait)
+            wait = min(wait * 2, NOTICE_RETRY_MAX_SECONDS)
+        return False
 
     def url(self, path: str) -> str:
         return f"{self._origin}{PREFIX}/{path}"
@@ -159,7 +258,7 @@ class Service:
             self._last_unlock_notice = now
             self._spawn_push(
                 {
-                    "title": "Vault locked",
+                    "title": "Locked",
                     "body": "An agent wants to use your vault. Unlock it to continue.",
                     "url": f"{PREFIX}/",
                     "tag": "vault-locked",
@@ -167,44 +266,98 @@ class Service:
             )
         return {
             "locked": True,
-            "message": "The user's vault is locked. Send them this link in your reply now, since they may not "
-            f"get a notification, and ask them to unlock it: {self.url('')} Then try again.",
+            "message": "The user's vault is locked. The user sees only what you write, not this answer, and may not "
+            f"get a notification, so give them this link and ask them to unlock it, then retry: {self.url('')}",
         }
 
     # ── erase without the passphrase ─────────────────────────────────────────
     # Every step is announced on every device, so whoever has the passphrase
     # hears of an erase they did not ask for while there is time to stop it.
-    def _erase_notice(self, tag: str, title: str, body: str) -> None:
+    # The erase's clock runs only once lollo-notifications has taken the notice
+    # that starts it: "scheduled", or "erase in 1 hour" after a restart. The
+    # "cancelled" and "done" notices are retried, and never hold anything up.
+    @staticmethod
+    def _erase_notice(tag: str, title: str, body: str) -> dict[str, str]:
         # A tag per kind of notice: the same tag would silently replace one still on screen.
-        self._spawn_push({"title": title, "body": body, "url": f"{PREFIX}/", "tag": f"vault-erase-{tag}"})
+        return {"title": title, "body": body, "url": f"{PREFIX}/", "tag": f"vault-erase-{tag}"}
+
+    def _spawn_later_notice(self, notice: dict[str, str]) -> None:
+        deadline = self.vault.now() + NOTICE_RETRY_FOR_SECONDS
+        self._spawn(self._retry, notice, lambda: False, deadline)
+
+    def _erase_due_from(self) -> int:
+        # While its notice waits for the service, the grace is always still ahead.
+        return self.vault.now() + ERASE_GRACE_SECONDS if self._erase_held else self._erase_not_before
 
     def pending_erase(self) -> tuple[int, str] | None:
         """(when it will really run, who asked), counting the wait after a restart."""
         pending = self.vault.pending_erase()
-        return None if pending is None else (max(pending[0], self._erase_not_before), pending[1])
+        return None if pending is None else (max(pending[0], self._erase_due_from()), pending[1])
 
     def announce_overdue_erase(self) -> None:
-        """At startup: an erase due within the grace period gets a last notice."""
+        """At startup: an erase due within the grace period gets a last notice, tried
+        until the service takes it. Until then the erase cannot run, and the grace
+        counts from that moment."""
         pending = self.vault.pending_erase()
-        if pending is not None and pending[0] < self._erase_not_before:
-            self._erase_notice(
-                "restart",
-                f"Vault erase in {ERASE_GRACE}",
-                f"The server restarted around the time your vault's erase was due. It is erased in {ERASE_GRACE} "
-                "unless someone unlocks the vault or cancels the erase.",
-            )
+        if pending is None or pending[0] >= self._erase_not_before:
+            return
+        self._erase_held = True
+        self._spawn(self._announce_overdue, pending)
 
-    def schedule_erase(self, email: str) -> int:
-        at, new = self.vault.schedule_erase(email)
-        if new:
-            self.vault.audit(email, "scheduled an erase")
-            self._erase_notice(
+    async def _announce_overdue(self, pending: tuple[int, str]) -> None:
+        notice = self._erase_notice(
+            "restart",
+            f"Erase in {ERASE_GRACE}",
+            f"The server restarted around the time your vault's erase was due. It is erased in {ERASE_GRACE} "
+            "unless someone unlocks the vault or cancels the erase.",
+        )
+        try:
+            # Cancelled or unlocked meanwhile: the "cancelled" notice tells the rest.
+            if await self._retry(notice, lambda: self.vault.pending_erase() != pending, None):
+                self._erase_not_before = self.vault.now() + ERASE_GRACE_SECONDS
+                log.info("overdue erase announced, grace starts now")
+        finally:
+            self._erase_held = False
+
+    async def schedule_erase(self, email: str, limit: EraseLimit | None = None) -> int | None:
+        """When the erase runs, or None when the notifications service did not take
+        the notice: then nothing is scheduled. `limit` caps how often one person
+        sets off a "scheduled" notice: TooManyErases when they have used it up,
+        and only an erase this call scheduled counts."""
+        async with self._erase_lock:
+            self.vault.check_erasable()
+            pending = self.vault.pending_erase()
+            if pending is not None:
+                return pending[0]  # already scheduled and announced: no second notice
+            if limit is not None and limit.full(email):
+                raise TooManyErases
+            notice = self._erase_notice(
                 "scheduled",
-                "Vault erase scheduled",
+                "Erase scheduled",
                 f"{email} asked to erase your vault. Everything in it is deleted in {ERASE_DELAY} "
                 "unless someone unlocks the vault or cancels the erase.",
             )
-        return at
+            if not await self.notifier.accept(notice):
+                log.warning("erase not scheduled: the notifications service did not take its notice")
+                return None
+            try:
+                # Re-checks: the vault may have been unlocked while the notice waited.
+                at, new = self.vault.schedule_erase(email)
+            except VaultError:
+                log.info("erase not scheduled: the vault changed while its notice waited")
+                self._spawn_later_notice(
+                    self._erase_notice(
+                        "cancelled",
+                        "Erase cancelled",
+                        "The vault was unlocked before the erase was scheduled. Nothing will be deleted.",
+                    )
+                )
+                raise
+            if new:
+                self.vault.audit(email, "scheduled an erase")
+                if limit is not None:
+                    limit.count(email)
+            return at
 
     def cancel_erase(self, email: str) -> bool:
         if not self.vault.cancel_erase():
@@ -216,20 +369,23 @@ class Service:
         """After `cancel_erase`, or an unlock that cancelled one."""
         self.vault.audit(email, "cancelled the scheduled erase" + (" by unlocking" if by_unlock else ""))
         how = "unlocked the vault, which cancels" if by_unlock else "cancelled"
-        self._erase_notice("cancelled", "Vault erase cancelled", f"{email} {how} the erase. Nothing was deleted.")
+        self._spawn_later_notice(
+            self._erase_notice("cancelled", "Erase cancelled", f"{email} {how} the erase. Nothing was deleted.")
+        )
 
     def erase_if_due(self) -> bool:
         """Run from housekeeping, which must go on (expiry, auto-lock) if this fails;
         a failed erase stays scheduled and is tried again on the next pass."""
         try:
-            by = self.vault.erase_if_due(not_before=self._erase_not_before)
+            by = self.vault.erase_if_due(not_before=self._erase_due_from())
         except Exception as e:
             log.warning("scheduled erase failed error=%s", type(e).__name__)
             return False
         if by is None:
             return False
         self.vault.audit(by, f"erased the vault (scheduled {ERASE_DELAY} earlier)")
-        self._erase_notice("done", "Vault erased", "Your vault was erased as scheduled. Open it to create a new one.")
+        done = "Your vault was erased as scheduled. Open it to create a new one."
+        self._spawn_later_notice(self._erase_notice("done", "Erased", done))
         return True
 
     # ── housekeeping ─────────────────────────────────────────────────────────
@@ -237,6 +393,8 @@ class Service:
         now = self.vault.now()
         if not self.vault.is_unlocked():
             # Values the agent has not collected are not kept past a lock.
+            for hid, handle in self._handles.items():
+                self._spent[hid] = (LOCKED, handle.expires_at)
             self._handles.clear()
             for req in self._requests.values():
                 if req.values is not None:
@@ -249,6 +407,9 @@ class Service:
         for hid, handle in list(self._handles.items()):
             if handle.expires_at <= now:
                 del self._handles[hid]
+        for hid, (_, expires_at) in list(self._spent.items()):
+            if expires_at <= now:
+                del self._spent[hid]
 
     def pending(self) -> list[Request]:
         self.expire()
@@ -327,8 +488,13 @@ class Service:
             "run": f"{VAULT_RUN} {handle.id} -- <command reading ${next(iter(names.values()))}>",
             "message": "Put the placeholders where the values go (a template file for vault-fill, or $VAULT_... "
             "in a command) and run it with vault-run once, within "
-            f"{HANDLE_TTL_SECONDS // 60} minutes; load the using-vault-secrets skill for how. Never open the "
-            "filled file or print the values.",
+            f"{HANDLE_TTL_SECONDS // 60} minutes; load the using-vault-secrets skill for how. For an MCP tool's "
+            "arguments, write them as a JSON template with the placeholders and pipe it into the tool inside "
+            f"vault-run, the whole pipe in bash -c: {VAULT_RUN} {handle.id} -- bash -c 'set -o pipefail; "
+            f"{VAULT_FILL} args.tmpl.json - | {MCP_SH} call <tool> --args-file -' (a pipe outside it would send "
+            "[VAULT_...] instead of the values; and never $VAULT_... in the arguments: your shell would expand it to "
+            "nothing first). The first vault-run uses the handle up, "
+            "even if its command fails. Never open the filled file or print the values.",
         }
 
     def redeem(self, handle_ids: Any, taken: Any = ()) -> tuple[int, dict[str, Any]]:
@@ -345,8 +511,31 @@ class Service:
         ):
             return 400, {"error": "expected 1 to 10 different handles"}
         handles = [self._handles.get(h) for h in handle_ids]
-        if any(h is None for h in handles):
-            return 404, {"error": "unknown or expired handle; request that secret again (the others are still valid)"}
+        refused = [h for h, handle in zip(handle_ids, handles, strict=True) if handle is None]
+        if refused:
+            # The first refused handle's reason; the others are valid only when it is the only one refused.
+            if len(refused) > 1:
+                others = f" ({len(refused) - 1} more of these handles can't be used either: request those again too)"
+            else:
+                others = " (the others are still valid)" if len(handle_ids) > 1 else ""
+            reason = self._spent.get(refused[0], (None, 0))[0]
+            if reason == USED:
+                error = (
+                    "already used: an earlier vault-run took this handle, even if its command failed; request "
+                    f"that secret again{others}"
+                )
+                return 410, {"error": error}
+            if reason == LOCKED:
+                error = (
+                    "dropped when the vault locked (or was erased); request that secret again once it is unlocked"
+                    f"{others}"
+                )
+                return 410, {"error": error}
+            error = (
+                f"unknown or expired handle (almost always: already used, or older than {HANDLE_TTL_SECONDS // 60} "
+                f"minutes); request that secret again{others}"
+            )
+            return 404, {"error": error}
         names = [n for h in handles for n in h.env]  # type: ignore[union-attr]
         twice = sorted({n for n in names if names.count(n) > 1})
         if twice:
@@ -363,6 +552,7 @@ class Service:
         for handle in handles:
             assert handle is not None
             del self._handles[handle.id]
+            self._spent[handle.id] = (USED, handle.expires_at)
             detail = f"{handle.secret_name}: {handle.labels}. Purpose: {handle.purpose}"
             with SECRET_FILTER.guarding(handle.env.values()):
                 self.vault.audit("agent", "given to a command", handle.secret_id, detail)
@@ -442,7 +632,8 @@ class Service:
             return {"status": "refused", "error": "too many requests are waiting; ask the user to answer them first"}
         now = self.vault.now()
         req = Request(
-            id=token_urlsafe(16),
+            # Hex: the id is also the notice's tag, which takes only a-z, 0-9 and -.
+            id=token_hex(16),
             secret_id=secret.id,
             secret_name=secret.name,
             secret_kind=secret.kind_label,
@@ -471,12 +662,15 @@ class Service:
         return {
             "id": req.id,
             "status": PENDING,
+            "wait_command": wait_command(req.id),
             "approve_url": approve_url,
-            "message": "Waiting for the user's approval. Send them this link in your reply now, since they may "
-            f"not get a notification: {approve_url} {KEEP_WAITING}",
+            "message": f"Waiting for the user's approval. {next_steps(req.id, approve_url)} {keep_waiting(req.id)}",
         }
 
-    async def get_result(self, rid: str, wait_seconds: float = 0) -> dict[str, Any]:
+    async def get_result(self, rid: str, wait_seconds: float = 0, collect: bool = True) -> dict[str, Any]:
+        """The answer to a request. collect=False reports it without handing over
+        the handle or values (vault-wait, waiting on others before it collects,
+        so no handle's few minutes start early)."""
         wait = max(0.0, min(float(wait_seconds or 0), MAX_WAIT_SECONDS))
         with anyio.move_on_after(wait):
             while (req := self.request(rid) if isinstance(rid, str) else None) and req.status == PENDING:
@@ -485,8 +679,15 @@ class Service:
         if req is None:
             return {"status": "unknown", "error": f"no request '{rid}' (requests are forgotten after a restart)"}
         if req.status == PENDING:
-            message = f"Still waiting for the user's approval. {KEEP_WAITING}"
-            return {"id": rid, "status": PENDING, "approve_url": self.url(f"r/{rid}"), "message": message}
+            url = self.url(f"r/{rid}")
+            message = f"Still waiting for the user's approval. {next_steps(rid, url, again=True)} {keep_waiting(rid)}"
+            return {
+                "id": rid,
+                "status": PENDING,
+                "wait_command": wait_command(rid),
+                "approve_url": url,
+                "message": message,
+            }
         if req.status in (DENIED, EXPIRED):
             return {"id": rid, "status": req.status}
         if req.lost_to_lock:
@@ -494,6 +695,8 @@ class Service:
             return {"id": rid, "status": EXPIRED, "note": note}
         if req.values is None:
             return {"id": rid, "status": DONE, "note": "the values were already returned"}
+        if not collect:
+            return {"id": rid, "status": DONE}
         values, req.values = req.values, None
         delivered = self._deliver(
             req.secret_id, req.secret_name, req.labels, values, req.delivery, req.purpose, req.alias

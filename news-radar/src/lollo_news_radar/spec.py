@@ -17,7 +17,7 @@ from .fetch import FetchError, check_url
 
 KINDS = ("rss", "json", "html", "schema_org", "ical", "sitemap")
 ITEM_KINDS = ("event", "article")
-ITEM_FIELDS = ("title", "url", "start", "end", "venue", "summary", "image", "published", "outlet")
+ITEM_FIELDS = ("title", "url", "start", "end", "venue", "locality", "summary", "image", "published", "outlet")
 EXTRA_NAME = re.compile(r"[a-z][a-z0-9_]{0,30}")
 PARAM = re.compile(r"[A-Za-z0-9_.\[\]-]{1,40}")
 LANGUAGE = re.compile(r"[a-z]{2,3}")
@@ -28,6 +28,7 @@ MAX_MATCH_TEXT = 200
 MAX_SITEMAP_NAMES = 5
 MAX_EXPRESSION = 300
 MAX_EVERY = 7 * 86400
+MAX_PLACE = 60
 
 # schema.org's Event and its subtypes, then the other types kept by default.
 EVENT_TYPES = (
@@ -87,18 +88,30 @@ class Spec:
     # A field or extra whose value names one item seen several times (a film in
     # several formats): a report shows such items as one row with its variants.
     group_by: str = ""
+    # The town every item of the source is in, when its items don't say (a
+    # single-venue agenda): where uses it for items without a venue or locality.
+    place: str = ""
     raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     @property
     def fingerprint(self) -> str:
-        """The same for two specs that read the same items, whatever their key order
-        and however often they run: a passing source_test covers a new interval too."""
-        what = {k: v for k, v in self.raw.items() if k != "every"}
+        """The same for two specs that read the same items, whatever their key order,
+        however often they run and whatever place they give: a passing source_test
+        covers a new interval or place too."""
+        what = {k: v for k, v in self.raw.items() if k not in ("every", "place")}
         return hashlib.sha256(json.dumps(what, sort_keys=True).encode()).hexdigest()
 
     @property
     def extra_names(self) -> tuple[str, ...]:
         return tuple((self.extract.get("extra") or {}).keys())
+
+
+def town(value: Any) -> str:
+    """A town as given (a source's place, a place map entry's locality), with its
+    spaces tidied; "" when it isn't 1 to MAX_PLACE characters of text."""
+    if not isinstance(value, str) or not 0 < len(value.strip()) <= MAX_PLACE:
+        return ""
+    return " ".join(value.split())
 
 
 def _text(obj: dict[str, Any], key: str, limit: int, required: bool = True) -> str:
@@ -177,7 +190,20 @@ def parse_spec(obj: Any, min_interval: int) -> Spec:
     """A validated Spec, or SpecError saying what is wrong."""
     if not isinstance(obj, dict):
         raise SpecError("a spec is a JSON object")
-    allowed = {"name", "url", "kind", "item_kind", "every", "extract", "pages", "follow", "dates", "watch", "group_by"}
+    allowed = {
+        "name",
+        "url",
+        "kind",
+        "item_kind",
+        "every",
+        "extract",
+        "pages",
+        "follow",
+        "dates",
+        "watch",
+        "group_by",
+        "place",
+    }
     unknown = sorted(set(obj) - allowed)
     if unknown:
         hints = [f"{u} (it goes inside {PLACES[u].split('.')[0]}: {PLACES[u]})" if u in PLACES else u for u in unknown]
@@ -336,6 +362,10 @@ def parse_spec(obj: Any, min_interval: int) -> Spec:
     ):
         raise SpecError(f"group_by: {group_by!r:.40} is not a field or extra of this source")
 
+    place = town(obj.get("place"))
+    if obj.get("place") is not None and not place:
+        raise SpecError(f"place is the town the source's items are in, at most {MAX_PLACE} characters")
+
     raw: dict[str, Any] = {
         "name": name,
         "url": url,
@@ -354,4 +384,8 @@ def parse_spec(obj: Any, min_interval: int) -> Spec:
         raw["watch"] = list(watch)
     if group_by:
         raw["group_by"] = group_by
-    return Spec(name, url, kind, item_kind, every, extract, pages, follow, languages, watch, key, group_by or "", raw)
+    if place:
+        raw["place"] = place
+    return Spec(
+        name, url, kind, item_kind, every, extract, pages, follow, languages, watch, key, group_by or "", place, raw
+    )

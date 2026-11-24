@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 
 from gmail_triggers.app import EXAMPLES, create_app, gap_text
 from gmail_triggers.config import HANDLED_KEEP_SECONDS, MAX_LISTED_MESSAGES, PREFIX
-from gmail_triggers.store import GAP_DROPPED, GAP_PAUSED, Held, Rule
+from gmail_triggers.store import GAP_DROPPED, GAP_PAUSED, Held, Rule, Run, new_request_id
 
 from .conftest import AGENT, BODY, NAVIGATE, ORIGIN, OTHER_AGENT, TOKEN, make_jwt, write_creds, write_policy
 
@@ -192,6 +192,25 @@ def test_pages_carry_the_security_headers_and_no_script(client, env):
     assert icon.headers["content-type"] == "image/png" and icon.content.startswith(b"\x89PNG")
 
 
+CSP = (
+    "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; "
+    "frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'"
+)
+MANIFEST = '<link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">'
+TOUCH_ICON = '<link rel="apple-touch-icon" href="/assets/icon-192.png">'
+
+
+def test_pages_and_refusals_link_the_lollo_home_screen_app(client):
+    """One Home Screen app for the lollo host: its manifest and icon are the landing page's."""
+    page = client.get(f"{B}/")
+    refusal = client.get(f"{B}/", headers=SCRIPT)
+    assert page.status_code == 200 and refusal.status_code == 403
+    for r in (page, refusal):
+        assert MANIFEST in r.text and TOUCH_ICON in r.text
+        assert f'<link rel="icon" href="{B}/icon-192.png">' in r.text
+        assert r.headers["content-security-policy"] == CSP
+
+
 # -- rules --------------------------------------------------------------------
 
 
@@ -236,6 +255,15 @@ def test_create_edit_toggle_delete(client, env):
         ({"max_per_hour": "0"}, "Runs per hour"),
         ({"max_per_hour": "lots"}, "Runs per hour"),
         ({"conversation": "conv-123"}, "Choose where the agent answers."),
+        ({"conversation": "specific", "conversation_id": "  "}, "Paste the conversation id the agent gave you."),
+        ({"conversation": "specific"}, "Paste the conversation id the agent gave you."),
+        ({"conversation": "specific", "conversation_id": "conv 1"}, "ask the agent again"),
+        ({"conversation": "specific", "conversation_id": "--help"}, "ask the agent again"),
+        ({"conversation": "specific", "conversation_id": "conv;rm"}, "ask the agent again"),
+        ({"conversation": "specific", "conversation_id": "c" + "a" * 100}, "ask the agent again"),
+        ({"conversation": "specific", "conversation_id": "default"}, "is a choice above"),
+        ({"conversation": "specific", "conversation_id": "new"}, "is a choice above"),
+        ({"conversation": "specific", "conversation_id": "`specific`"}, "is a choice above"),
         ({"name": ""}, "Give the trigger a name."),
     ],
 )
@@ -245,6 +273,80 @@ def test_invalid_forms_are_refused_and_redisplayed(client, env, over, problem):
     assert r.status_code == 400
     assert problem in r.text
     assert env.store.rules() == []
+
+
+def test_a_specific_conversation_is_saved_shown_and_left(client, env):
+    env.write_agents()
+    r = post(client, f"{B}/rules", form(conversation="specific", conversation_id="  `conv-abc_1`\n"))
+    assert r.status_code == 303, r.text
+    assert r.headers["location"] == f"{B}/?done=saved-specific"
+    [rule] = env.store.rules()
+    assert rule.conversation == "conv-abc_1"
+    page = client.get(r.headers["location"]).text
+    assert "send a test" in page.lower() and "asks lucius in conversation conv-abc_1" in page
+
+    page = client.get(f"{B}/r/{rule.id}").text
+    assert re.search(r'name="conversation" value="specific" checked', page)
+    assert 'name="conversation_id" value="conv-abc_1"' in page
+    assert "conv-abc_1" in client.get(f"{B}/r/{rule.id}/history").text
+
+    # Back to a new conversation each time: a leftover id in the box is ignored.
+    r = post(client, f"{B}/r/{rule.id}", form(conversation="new", conversation_id="conv-abc_1"))
+    assert r.headers["location"] == f"{B}/?done=saved"
+    assert env.store.rule(rule.id).conversation == "new"
+    page = client.get(f"{B}/r/{rule.id}").text
+    assert re.search(r'name="conversation" value="new" checked', page)
+    assert 'name="conversation_id" value=""' in page
+
+
+def test_a_new_agent_does_not_keep_the_old_agents_conversation(client, env):
+    env.write_agents()
+    rule = saved_rule(env, conversation="conv-abc_1")
+    r = post(
+        client, f"{B}/r/{rule.id}", form(agent_id=OTHER_AGENT, conversation="specific", conversation_id="conv-abc_1")
+    )
+    assert r.status_code == 400
+    assert "That conversation is with lucius: ask hal for one of its conversations" in r.text
+    assert env.store.rule(rule.id).agent_id == AGENT
+
+    # The same agent keeps it; a new agent with its own id, or another choice, saves.
+    r = post(client, f"{B}/r/{rule.id}", form(conversation="specific", conversation_id="conv-abc_1"))
+    assert r.status_code == 303
+    r = post(
+        client, f"{B}/r/{rule.id}", form(agent_id=OTHER_AGENT, conversation="specific", conversation_id="conv-hal")
+    )
+    assert r.status_code == 303
+    rule = env.store.rule(rule.id)
+    assert rule.agent_id == OTHER_AGENT and rule.conversation == "conv-hal"
+    r = post(client, f"{B}/r/{rule.id}", form(agent_id=AGENT, conversation="default", conversation_id="conv-hal"))
+    assert r.status_code == 303 and env.store.rule(rule.id).conversation == "default"
+
+
+def test_a_run_into_a_specific_conversation_says_to_check_it(client, env):
+    specific = saved_rule(env, conversation="conv-abc_1")
+    fresh = saved_rule(env, name="Travel")
+    for rule in (specific, fresh):
+        run = Run(new_request_id(), rule.id, env.store.now(), True, [], 0, "ok", task_id="task-1")
+        env.store.add_run(run)
+    assert "Task created: check the conversation" in client.get(f"{B}/r/{specific.id}/history").text
+    page = client.get(f"{B}/r/{fresh.id}/history").text
+    assert "Task created" in page and "check the conversation" not in page
+    assert client.get(f"{B}/").text.count("Task created: check the conversation") == 1
+
+
+def test_a_wrong_conversation_id_is_shown_again_as_typed(client, env):
+    env.write_agents()
+    r = post(client, f"{B}/rules", form(conversation="specific", conversation_id="conv 1<b>"))
+    assert r.status_code == 400
+    assert re.search(r'name="conversation" value="specific" checked', r.text)
+    assert 'value="conv 1&lt;b&gt;"' in r.text
+    assert env.store.rules() == []
+
+
+def test_a_long_conversation_id_shows_shortened_in_the_list(client, env):
+    saved_rule(env, conversation="conv-" + "a" * 40)
+    page = client.get(f"{B}/").text
+    assert "in conversation conv-aaaaaaaa..." in page and "a" * 40 not in page
 
 
 def test_no_agent_list_means_no_new_rule(client, env):

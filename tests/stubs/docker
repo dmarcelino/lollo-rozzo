@@ -26,6 +26,33 @@ case $args in
   " build "*) exit "${STUB_BUILD_RC:-0}" ;;
   " pull "*) exit "${STUB_PULL_RC:-0}" ;;
   " version --format "*) echo "${STUB_PLATFORM:-linux/amd64}" ;;
+  # The daemon's ID (STUB_DOCKER_ID) and name, which on macOS tells the VM apart
+  # (colima, docker-desktop, orbstack), filled into the format; STUB_DOCKER_INFO_RC
+  # fails it, as when Docker is not running.
+  " info --format "*)
+    [[ ${STUB_DOCKER_INFO_RC:-0} == 0 ]] || exit "$STUB_DOCKER_INFO_RC"
+    out=${args#* info --format }
+    out=${out% }
+    out=${out//'{{.ID}}'/${STUB_DOCKER_ID:-daemon-1}}
+    echo "${out//'{{.Name}}'/${STUB_DOCKER_NAME:-docker-host}}"
+    ;;
+  # fetch_dev_wrapper reading a dev build's image: its RELEASE, whose version is
+  # STUB_DEV_VERSION, and its wrapper template (this repo's), unless
+  # STUB_DEV_NO_WRAPPER says the image has none.
+  " run --rm --entrypoint cat "*"/RELEASE ")
+    printf 'VERSION=%s\nREPOSITORY=example/lollo-rozzo\n' "${STUB_DEV_VERSION:-}"
+    ;;
+  " run --rm --entrypoint cat "*"/release/lolloctl-wrapper.sh ")
+    [[ -z ${STUB_DEV_NO_WRAPPER:-} ]] || exit 1
+    cat "$STUB_ROOT/home/release/lolloctl-wrapper.sh"
+    ;;
+  # The digest a pulled image's name:tag has.
+  " image inspect --format {{json .RepoDigests}} "*) printf '["%s@sha256:%064d"]\n' "${last%:*}" 7 ;;
+  # The wrapper on macOS reading the socket's group inside Docker's VM.
+  " run "*" --entrypoint stat "*)
+    [[ ${STUB_SOCKET_GID_RC:-0} == 0 ]] || exit "$STUB_SOCKET_GID_RC"
+    echo "${STUB_SOCKET_GID:-0} ${STUB_SOCKET_MODE:-660}"
+    ;;
   # The registry: STUB_MANIFEST_PLATFORMS="linux/amd64 ..." publishes the image
   # for those platforms; unset, it is not there.
   " manifest inspect "*)
@@ -184,10 +211,26 @@ case $args in
     done
     exit "${STUB_VOLUME_RC:-0}"
     ;;
+  # Starting the browser's engine alone (start_browser_engine) exits with
+  # STUB_ENGINE_UP_RC, or 1 for the projects in STUB_ENGINE_UP_FAIL (lollo-NAME,
+  # space-separated); its logs are engine-logs.
+  *" up -d "*" lollo-browser-engine ")
+    project=${args#* -p }
+    project=${project%% *}
+    [[ " ${STUB_ENGINE_UP_FAIL:-} " != *" $project "* ]] || exit 1
+    exit "${STUB_ENGINE_UP_RC:-0}"
+    ;;
+  *" logs "*" lollo-browser-engine ") cat "$STUB_ROOT/engine-logs" 2>/dev/null ;;
   *" pause ") exit "${STUB_PAUSE_RC:-0}" ;;
   *" restart --no-deps bff ") exit "${STUB_RESTART_RC:-0}" ;;
   *" ps --status running --services "*)
-    # Every container in $STUB_ROOT/containers.txt counts as running.
+    # Every container in $STUB_ROOT/containers.txt counts as running, but those
+    # marked paused (a third word).
+    project=${args#* -p }
+    project=${project%% *}
+    awk -v p="$project" '$1 == p && $3 != "paused" { print $2 }' "$STUB_ROOT/containers.txt" 2>/dev/null
+    ;;
+  *" ps --status running --status paused --status restarting --services "*)
     project=${args#* -p }
     project=${project%% *}
     awk -v p="$project" '$1 == p { print $2 }' "$STUB_ROOT/containers.txt" 2>/dev/null
@@ -280,6 +323,14 @@ case $args in
         break
       fi
     done
+    # lollo-notifications: once, with any of the profiles compose/notifications.yml gives it.
+    notifications=",$(sed -n 's/^ *profiles: *\[\(.*\)\]/\1/p' "$STUB_ROOT/home/compose/notifications.yml" | tr -d '" '),"
+    for p in "${ps[@]}"; do
+      if [[ $notifications == *",$p,"* ]]; then
+        echo lollo-notifications
+        break
+      fi
+    done
     for p in "${ps[@]}"; do
       case $p in
         search) printf '%s\n' searxng ddg-mcp ;;
@@ -292,6 +343,7 @@ case $args in
         lollo-pipelock) echo lollo-pipelock ;;
         lollo-code-server) printf '%s\n' lollo-code-server lollo-code-server-editor lollo-code-server-exec ;;
         lollo-outlook) echo lollo-outlook ;;
+        lollo-browser) printf '%s\n' lollo-browser-engine lollo-browser ;;
         lollo-doc-tools) ;;
       esac
     done

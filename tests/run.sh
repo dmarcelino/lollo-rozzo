@@ -57,6 +57,8 @@ ingress() { jq -c '.config.ingress' <<<"$(body_of PUT /accounts/acc1/cfd_tunnel/
 # The ingress rules every stack ends with: alfred's lollo host answers 404 to
 # what no lollo rule routes, and Lettuce's host goes to the app-server only.
 LANDING='{"hostname":"alfred-lollo.example.org","path":"^/(assets/[^/]+)?$","service":"http://landing:8000"}'
+# The notifications page, routed with the vault or the browser, before the landing page.
+NOTIFS='{"hostname":"alfred-lollo.example.org","path":"^/notifications(/|$)","service":"http://lollo-notifications:8000"}'
 LOLLO_404='{"hostname":"alfred-lollo.example.org","service":"http_status:404"}'
 LETTUCE_TAIL='{"hostname":"alfred.example.org","service":"http://app-server:8080"},{"service":"http_status:404"}'
 
@@ -93,13 +95,31 @@ landing_config() {
   printf '// test\n' >"$H/landing/executor/tests/run.test.mjs"
 }
 
+# notifications_config -> the rendered config also holds the notifications
+# service compose/notifications.yml renders (on with the vault or the browser)
+notifications_config() {
+  # shellcheck disable=SC2016 # ${KEY} is for the stub, not for bash
+  config_edit '.services["lollo-notifications"] = {"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],"networks":{"default":null},
+    "security_opt":["no-new-privileges:true"],"mem_limit":"134217728","pids_limit":64,
+    "environment":('"$LOLLO_ENV"' + {"LOLLO_VAPID_PUBLIC_KEY":"${LOLLO_VAPID_PUBLIC_KEY}","LOLLO_VAPID_PRIVATE_KEY":"${LOLLO_VAPID_PRIVATE_KEY}",
+      "PUSH_VAPID_CONTACT_EMAIL":"${PUSH_VAPID_CONTACT_EMAIL}","NOTIFY_TOKEN_VAULT":"${NOTIFY_TOKEN_VAULT}","NOTIFY_TOKEN_BROWSER":"${NOTIFY_TOKEN_BROWSER}"}),
+    "volumes":[{"type":"volume","source":"notifications-data","target":"/data","volume":{}}]}'
+}
+NS='.services["lollo-notifications"]'
+
 # vault_config [VAULT_JSON] -> the rendered compose config also holds this
-# vault (default: the hardened one compose/vault.yml renders) and the
-# landing service
+# vault (default: the hardened one compose/vault.yml renders), the
+# notifications service and the landing service
 vault_config() {
-  local vault=${1:-'{"read_only":true,"cap_drop":["ALL"],"environment":'"$LOLLO_ENV"',"volumes":[{"type":"volume","source":"vault-data","target":"/data"}]}'}
-  jq -c --argjson b "$vault" '.services["lollo-vault"] = $b' "$T/compose-config.json" >"$T/c.json"
-  mv "$T/c.json" "$T/compose-config.json"
+  if (($#)); then
+    jq -c --argjson b "$1" '.services["lollo-vault"] = $b' "$T/compose-config.json" >"$T/c.json"
+    mv "$T/c.json" "$T/compose-config.json"
+  else
+    # shellcheck disable=SC2016 # ${KEY} is for the stub, not for bash
+    config_edit '.services["lollo-vault"] = {"read_only":true,"cap_drop":["ALL"],"environment":('"$LOLLO_ENV"' + {"NOTIFY_TOKEN":"${NOTIFY_TOKEN_VAULT}"}),
+      "volumes":[{"type":"volume","source":"vault-data","target":"/data"}]}'
+  fi
+  notifications_config
   landing_config
 }
 
@@ -419,11 +439,12 @@ test_add_writes_private_stack_env() {
   s=$(senv alfred PUSH_VAPID_PRIVATE_KEY)
   ((${#s} == 43)) || fail "PUSH_VAPID_PRIVATE_KEY length ${#s}"
   eq "$(senv alfred PUSH_VAPID_CONTACT_EMAIL)" ops@example.org
-  s=$(senv alfred VAULT_VAPID_PUBLIC_KEY)
-  ((${#s} == 87)) || fail "VAULT_VAPID_PUBLIC_KEY length ${#s}"
-  s=$(senv alfred VAULT_VAPID_PRIVATE_KEY)
-  ((${#s} == 43)) || fail "VAULT_VAPID_PRIVATE_KEY length ${#s}"
-  [[ $(senv alfred VAULT_VAPID_PRIVATE_KEY) != "$(senv alfred PUSH_VAPID_PRIVATE_KEY)" ]] || fail "the vault shares the BFF's VAPID key"
+  s=$(senv alfred LOLLO_VAPID_PUBLIC_KEY)
+  ((${#s} == 87)) || fail "LOLLO_VAPID_PUBLIC_KEY length ${#s}"
+  s=$(senv alfred LOLLO_VAPID_PRIVATE_KEY)
+  ((${#s} == 43)) || fail "LOLLO_VAPID_PRIVATE_KEY length ${#s}"
+  [[ $(senv alfred LOLLO_VAPID_PRIVATE_KEY) != "$(senv alfred PUSH_VAPID_PRIVATE_KEY)" ]] || fail "the lollo shares the BFF's VAPID key"
+  ! grep -qE '^(VAULT|BROWSER)_VAPID_' "$D/stacks/alfred/stack.env" || fail "a retired VAPID pair in a new stack.env"
   ! grep -q '^DEV_BYPASS' "$D/stacks/alfred/stack.env" || fail "DEV_BYPASS in stack.env"
 }
 
@@ -440,7 +461,7 @@ test_add_routes_the_vault_path_with_the_profile() {
   vault_config
   ctl add alfred alfred@example.com
   ok_rc
-  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},'"$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
+  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},'"$NOTIFS,$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
   out_has "Its lollo pages: https://alfred-lollo.example.org/"
 }
 
@@ -450,7 +471,7 @@ test_add_routes_gmail_triggers_with_the_profile() {
   triggers_config
   ctl add alfred alfred@example.com
   ok_rc
-  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},{"hostname":"alfred-lollo.example.org","path":"^/gmail-triggers(/|$)","service":"http://lollo-gmail-triggers:8000"},'"$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
+  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},{"hostname":"alfred-lollo.example.org","path":"^/gmail-triggers(/|$)","service":"http://lollo-gmail-triggers:8000"},'"$NOTIFS,$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
 }
 
 # The landing page links each lollo page profile, lollo-<page>, to /<page>/ on
@@ -758,21 +779,22 @@ test_up_keeps_existing_push_keys() {
   added
   local pub priv
   pub=$(senv alfred PUSH_VAPID_PUBLIC_KEY)
-  priv=$(senv alfred VAULT_VAPID_PRIVATE_KEY)
+  priv=$(senv alfred LOLLO_VAPID_PRIVATE_KEY)
   ctl up alfred
   ok_rc
   eq "$(senv alfred PUSH_VAPID_PUBLIC_KEY)" "$pub"
-  eq "$(senv alfred VAULT_VAPID_PRIVATE_KEY)" "$priv"
+  eq "$(senv alfred LOLLO_VAPID_PRIVATE_KEY)" "$priv"
 }
 
 test_up_makes_no_push_keys() {
-  # New keys would break every device's subscription, so only add makes them.
+  # New keys would break every device's subscription of Lettuce's own
+  # notifications, so only add makes the BFF's.
   added
-  sed -i '/^VAULT_VAPID_PUBLIC_KEY=/d' "$D/stacks/alfred/stack.env"
+  sed -i '/^PUSH_VAPID_PUBLIC_KEY=/d' "$D/stacks/alfred/stack.env"
   ctl up alfred
   bad_rc
-  out_has "alfred: VAULT_VAPID_PUBLIC_KEY is empty"
-  [[ -z $(senv alfred VAULT_VAPID_PUBLIC_KEY) ]] || fail "up made a new key"
+  out_has "alfred: PUSH_VAPID_PUBLIC_KEY is empty"
+  [[ -z $(senv alfred PUSH_VAPID_PUBLIC_KEY) ]] || fail "up made a new key"
   log_lacks "up -d"
 }
 
@@ -863,12 +885,25 @@ test_check_accepts_the_hardened_vault() {
   ok_rc
 }
 
-test_check_refuses_missing_vault_keys() {
+test_check_refuses_missing_lollo_vapid_keys() {
+  local k
+  for k in LOLLO_VAPID_PUBLIC_KEY LOLLO_VAPID_PRIVATE_KEY; do
+    teardown; setup
+    added
+    sed -i "/^$k=/d" "$D/stacks/alfred/stack.env"
+    ctl check alfred
+    bad_rc
+    out_has "alfred: $k is empty (run: lolloctl up alfred, which makes it once)"
+  done
+}
+
+# The retired pairs are left in stack.env, and nothing needs them.
+test_check_needs_no_retired_vapid_keys() {
   added
-  sed -i '/^VAULT_VAPID_PRIVATE_KEY=/d' "$D/stacks/alfred/stack.env"
+  with_vault
+  sed -i '/^VAULT_VAPID_\|^BROWSER_VAPID_/d' "$D/stacks/alfred/stack.env"
   ctl check alfred
-  bad_rc
-  out_has "VAULT_VAPID_PRIVATE_KEY"
+  ok_rc
 }
 
 test_check_refuses_a_vault_that_is_not_hardened() {
@@ -930,7 +965,7 @@ test_check_refuses_the_vault_profile_without_the_vault() {
 # proxy settings from compose/pipelock-proxy.yml
 pipelock_config() {
   local svc=${1:-'{"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],"volumes":[{"type":"volume","source":"pipelock-data","target":"/data"}]}'}
-  local np=localhost,127.0.0.1,::1,lollo-pipelock,lollo-vault,lollo-gmail-triggers,lollo-news-radar,lollo-outlook,landing,searxng,ddg-mcp,google-mcp,host.docker.internal
+  local np=localhost,127.0.0.1,::1,lollo-pipelock,lollo-vault,lollo-gmail-triggers,lollo-news-radar,lollo-outlook,lollo-browser,landing,searxng,ddg-mcp,google-mcp,host.docker.internal
   config_edit '.services["lollo-pipelock"] = '"$svc"'
     | .services["app-server"].environment += {"HTTPS_PROXY":"http://lollo-pipelock:8888","HTTP_PROXY":"http://lollo-pipelock:8888",
       "https_proxy":"http://lollo-pipelock:8888","http_proxy":"http://lollo-pipelock:8888","NO_PROXY":"'"$np"'","no_proxy":"'"$np"'",
@@ -1025,7 +1060,7 @@ test_check_refuses_a_proxy_that_would_see_the_vault_or_the_executor() {
   added
   local k v
   for k in NO_PROXY no_proxy; do
-    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-outlook landing; do
+    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-outlook lollo-browser landing; do
       with_pipelock
       config_edit '.services["app-server"].environment["'"$k"'"] |= (split(",") - ["'"$v"'"] | join(","))'
       ctl check alfred
@@ -1164,7 +1199,7 @@ test_check_refuses_another_service_on_a_symlink_to_the_rules() {
 }
 
 test_check_refuses_volumes_from_gmail_triggers() {
-  triggers_refused ".services.bff.volumes_from = [\"lollo-gmail-triggers:ro\"]" "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session or the code editor (bff from lollo-gmail-triggers)"
+  triggers_refused ".services.bff.volumes_from = [\"lollo-gmail-triggers:ro\"]" "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session, the browser's data, the notification subscriptions or the code editor (bff from lollo-gmail-triggers)"
 }
 
 test_check_refuses_a_volume_bound_to_the_rules() {
@@ -1225,7 +1260,7 @@ test_check_refuses_volumes_from_a_google_creds_holder_whatever_the_profiles() {
     | .services.searxng = {"volumes_from":["service:bff"]}'
   ctl check alfred
   bad_rc
-  out_has "alfred: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session or the code editor (searxng from bff)"
+  out_has "alfred: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session, the browser's data, the notification subscriptions or the code editor (searxng from bff)"
 }
 
 test_check_refuses_volumes_from_the_vault() {
@@ -1487,6 +1522,1014 @@ test_profiles_routes_outlook_and_lists_it_on_the_landing_page() {
   eq "$(senv alfred LOLLO_PROFILES)" lollo-outlook
 }
 
+# ── browser ─────────────────────────────────────────────────────────────────
+# browser_config -> the rendered config also holds the browser's two services,
+# lollo-pipelock on its network and the network itself, as Compose renders
+# compose/browser.yml for alfred (taken from a real render), and the landing
+# service; the test's copy of the code has the engine's seccomp profile
+browser_config() {
+  mkdir -p "$H/browser/engine"
+  printf '{"defaultAction":"SCMP_ACT_ERRNO"}\n' >"$H/browser/engine/seccomp.json"
+  # shellcheck disable=SC2016 # ${KEY} is for the stub, not for bash
+  config_edit '.services["lollo-browser-engine"] = {"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],"shm_size":"536870912",
+      "command":null,"entrypoint":null,
+      "environment":{"BROWSER_ENGINE_SECRET":"${BROWSER_ENGINE_SECRET}","BROWSER_PROXY":"http://lollo-pipelock:8888","TZ":"UTC"},
+      "networks":{"browser":null},"mem_limit":"2147483648","pids_limit":512,
+      "security_opt":["no-new-privileges:true","seccomp='"$H"'/browser/engine/seccomp.json"]}
+    | .services["lollo-browser"] = {"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],
+      "environment":('"$LOLLO_ENV"' + {"BROWSER_ENGINE_SECRET":"${BROWSER_ENGINE_SECRET}","BROWSER_ENGINE_URL":"ws://lollo-browser-engine:3000",
+        "NOTIFY_TOKEN":"${NOTIFY_TOKEN_BROWSER}"}),
+      "networks":{"browser":null,"default":null},"mem_limit":"536870912","pids_limit":128,
+      "security_opt":["no-new-privileges:true"],
+      "volumes":[{"type":"volume","source":"browser-data","target":"/data","volume":{}}],
+      "depends_on":{"lollo-browser-engine":{"condition":"service_healthy","required":true}}}
+    | .services["lollo-pipelock"].networks = {"browser":null,"default":null}
+    | .networks.browser = {"name":"lollo-alfred_browser","ipam":{},"internal":true}'
+  notifications_config
+  landing_config
+}
+
+# with_browser -> alfred runs the lollo-browser profile (with lollo-pipelock), with
+# the services both render
+with_browser() {
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-pipelock,lollo-browser/' "$D/config.env"
+  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-pipelock,lollo-browser/' "$D/stacks/alfred/stack.env"
+  pipelock_config
+  browser_config
+}
+
+# browser_refused JQ EXPECTED -> with alfred's browser edited by the jq filter
+# JQ, `check` fails and says EXPECTED
+browser_refused() {
+  added
+  with_browser
+  config_edit "$1"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: $2"
+}
+BE='.services["lollo-browser-engine"]'
+BS='.services["lollo-browser"]'
+
+test_check_accepts_the_browser_as_rendered() {
+  added
+  with_browser
+  ctl check alfred
+  ok_rc
+}
+
+test_check_browser_refuses_a_missing_service() {
+  browser_refused "del($BE)" "the lollo-browser profile is on but lollo-browser-engine is not in the rendered config"
+  teardown
+  setup
+  browser_refused "del($BS)" "the lollo-browser profile is on but lollo-browser is not in the rendered config"
+}
+
+test_check_browser_refuses_a_writable_root() {
+  browser_refused "del($BE.read_only)" "lollo-browser-engine must have read_only: true"
+  teardown
+  setup
+  browser_refused "del($BS.read_only)" "lollo-browser must have read_only: true"
+}
+
+test_check_browser_refuses_capabilities() {
+  browser_refused "$BE.cap_drop = [\"NET_RAW\"]" "lollo-browser-engine must drop all capabilities"
+  teardown
+  setup
+  browser_refused "$BE.cap_add = [\"SYS_ADMIN\"]" "lollo-browser-engine must not set cap_add"
+  teardown
+  setup
+  browser_refused "$BS.cap_add = [\"SYS_ADMIN\"]" "lollo-browser must not set cap_add"
+}
+
+test_check_browser_refuses_privileges_and_shared_namespaces() {
+  local e
+  for e in "privileged = true|privileged" "pid = \"host\"|pid" "ipc = \"host\"|ipc" "devices = [\"/dev/kvm\"]|devices" \
+    "network_mode = \"host\"|network_mode" "volumes_from = [\"app-server\"]|volumes_from"; do
+    teardown
+    setup
+    browser_refused "$BE.${e%|*}" "lollo-browser-engine must not set ${e#*|}"
+  done
+}
+
+test_check_browser_refuses_no_new_privileges_off() {
+  browser_refused "$BE.security_opt -= [\"no-new-privileges:true\"]" "lollo-browser-engine must have no-new-privileges"
+  teardown
+  setup
+  browser_refused "$BS.security_opt = []" "lollo-browser must have no-new-privileges"
+}
+
+test_check_browser_refuses_no_limits() {
+  browser_refused "del($BE.pids_limit)" "lollo-browser-engine must have a mem_limit and a pids_limit"
+  teardown
+  setup
+  browser_refused "del($BS.mem_limit)" "lollo-browser must have a mem_limit and a pids_limit"
+}
+
+test_check_browser_refuses_a_host_path() {
+  browser_refused "$BE.volumes = [{\"type\":\"bind\",\"source\":\"/srv\",\"target\":\"/srv\"}]" "lollo-browser-engine must not mount host paths"
+  teardown
+  setup
+  browser_refused "$BS.volumes += [{\"type\":\"bind\",\"source\":\"/srv\",\"target\":\"/srv\"}]" "lollo-browser must not mount host paths"
+}
+
+test_check_browser_refuses_a_volume_on_the_engine() {
+  browser_refused "$BE.volumes = [{\"type\":\"volume\",\"source\":\"scratch\",\"target\":\"/home\"}]" "lollo-browser-engine must not mount anything"
+}
+
+test_check_browser_refuses_the_engine_on_another_network() {
+  browser_refused "$BE.networks.default = null" "lollo-browser-engine must be on the browser network only"
+  teardown
+  setup
+  browser_refused "$BE.networks = {\"default\":null}" "lollo-browser-engine must be on the browser network only"
+}
+
+test_check_browser_refuses_another_seccomp_profile() {
+  local s
+  for s in '"seccomp=unconfined"' '"seccomp:unconfined"' '"seccomp=/tmp/other.json"'; do
+    teardown
+    setup
+    browser_refused "$BE.security_opt = [\"no-new-privileges:true\", $s]" "lollo-browser-engine must run with seccomp=$H/browser/engine/seccomp.json and no other"
+  done
+  teardown
+  setup
+  browser_refused "$BE.security_opt += [\"seccomp=unconfined\"]" "lollo-browser-engine must run with seccomp=$H/browser/engine/seccomp.json and no other"
+  teardown
+  setup
+  browser_refused "$BE.security_opt = [\"no-new-privileges:true\"]" "lollo-browser-engine must run with seccomp=$H/browser/engine/seccomp.json and no other"
+}
+
+test_check_browser_refuses_a_missing_seccomp_file() {
+  added
+  with_browser
+  rm "$H/browser/engine/seccomp.json"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: the engine's seccomp profile $H/browser/engine/seccomp.json is missing"
+}
+
+test_check_browser_refuses_unconfined_apparmor() {
+  local s
+  for s in apparmor=unconfined apparmor:unconfined systempaths=unconfined label=disable; do
+    teardown
+    setup
+    browser_refused "$BE.security_opt += [\"$s\"]" "lollo-browser-engine must not set $s"
+  done
+}
+
+test_check_browser_refuses_a_root_engine() {
+  browser_refused "$BE.user = \"0\"" "lollo-browser-engine must not run as root"
+  teardown
+  setup
+  browser_refused "$BE.user = \"root:root\"" "lollo-browser-engine must not run as root"
+}
+
+test_check_browser_refuses_no_sandbox() {
+  local e
+  for e in "command = [\"--no-sandbox\"]" "entrypoint = [\"node\", \"launch.mjs\", \"--no-sandbox\"]" \
+    "entrypoint = \"node launch.mjs --no-zygote\"" "environment.CHROMIUM_FLAGS = \"--disable-namespace-sandbox\"" \
+    "environment.BROWSER_ARGS = \"--no-sandbox\"" "environment.NO_SANDBOX = \"1\"" "command = [\"--disable-setuid-sandbox\"]"; do
+    teardown
+    setup
+    browser_refused "$BE.$e" "lollo-browser-engine must not turn Chromium's sandbox off"
+  done
+}
+
+test_check_browser_refuses_lollo_browser_off_its_networks() {
+  browser_refused "$BS.networks = {\"default\":null}" "lollo-browser must be on the default and browser networks only"
+  teardown
+  setup
+  browser_refused "$BS.networks += {\"code-egress\":null}" "lollo-browser must be on the default and browser networks only"
+}
+
+test_check_browser_refuses_lollo_browser_on_another_volume() {
+  browser_refused "$BS.volumes += [{\"type\":\"volume\",\"source\":\"scratch\",\"target\":\"/scratch\"}]" "lollo-browser may mount only its volume browser-data, at /data"
+  teardown
+  setup
+  browser_refused "$BS.volumes = [{\"type\":\"volume\",\"source\":\"browser-data\",\"target\":\"/srv\"}]" "lollo-browser may mount only its volume browser-data, at /data"
+}
+
+test_check_browser_refuses_the_network_without_pipelock() {
+  browser_refused "del(.services[\"lollo-pipelock\"].networks.browser)" "only lollo-browser-engine, lollo-browser and lollo-pipelock may join the browser network, and all three must (found: lollo-browser,lollo-browser-engine)"
+}
+
+test_check_browser_refuses_another_service_on_its_network() {
+  browser_refused ".services[\"app-server\"].networks = {\"default\":null,\"browser\":null}" "app-server join(s) the browser's network"
+  teardown
+  setup
+  # Under another key, by the network's own name.
+  browser_refused ".networks.b2 = {\"name\":\"lollo-alfred_browser\",\"external\":true} | .services.searxng = {\"networks\":{\"b2\":null}}" "searxng join(s) the browser's network"
+}
+
+test_check_browser_refuses_a_network_that_is_not_internal() {
+  browser_refused "del(.networks.browser.internal)" "the browser network must be internal"
+}
+
+test_check_browser_refuses_another_access_audience() {
+  browser_refused "$BS.environment.CF_ACCESS_AUD = \"\${CF_ACCESS_AUD}\"" "lollo-browser must accept only the lollo's Access application"
+}
+
+test_check_browser_refuses_a_missing_or_malformed_secret() {
+  local k
+  for k in "" short "$(printf 'a%.0s' {1..42})" "$(printf 'a%.0s' {1..42})+"; do
+    teardown
+    setup
+    added
+    with_browser
+    sed -i "s/^BROWSER_ENGINE_SECRET=.*/BROWSER_ENGINE_SECRET=$k/" "$D/stacks/alfred/stack.env"
+    ctl check alfred
+    bad_rc
+    out_has "alfred: BROWSER_ENGINE_SECRET must be at least 43 base64url characters"
+  done
+}
+
+# Whatever the profiles: browser-data outlives the profile, and the engine's
+# network leads to pipelock.
+test_check_refuses_another_service_on_the_browser_volume_whatever_the_profiles() {
+  added
+  config_edit '.services.bff.volumes = [{"type":"volume","source":"browser-data","target":"/x"}]'
+  ctl check alfred
+  bad_rc
+  out_has "alfred: bff mount(s) the browser's volume (its kept sign-ins, settings and audit log); only lollo-browser may"
+  teardown
+  setup
+  added
+  with_browser
+  config_edit "$BE.volumes = [{\"type\":\"volume\",\"source\":\"browser-data\",\"target\":\"/data\"}]"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: lollo-browser-engine mount(s) the browser's volume"
+}
+
+test_check_refuses_volumes_from_the_browser_whatever_the_profiles() {
+  added
+  config_edit '.services.searxng.volumes_from = ["lollo-browser"]'
+  ctl check alfred
+  bad_rc
+  out_has "searxng from lollo-browser"
+  teardown
+  setup
+  added
+  with_browser
+  config_edit '.services.searxng.volumes_from = ["service:lollo-browser:ro"]'
+  ctl check alfred
+  bad_rc
+  out_has "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session, the browser's data, the notification subscriptions or the code editor (searxng from lollo-browser)"
+}
+
+test_check_refuses_sharing_the_browsers_network_namespace_whatever_the_profiles() {
+  local m
+  for m in service:lollo-browser-engine service:lollo-browser container:lollo-alfred-lollo-browser-engine-1; do
+    teardown
+    setup
+    added
+    config_edit ".services.searxng.network_mode = \"$m\""
+    ctl check alfred
+    bad_rc
+    out_has "alfred: searxng shares the network namespace of the browser ($m)"
+  done
+}
+
+# pipelock is on the browser's network whatever the profiles, so its namespace
+# leads to the engine's ports as well.
+test_check_refuses_sharing_pipelocks_network_namespace_whatever_the_profiles() {
+  local m
+  for m in service:lollo-pipelock container:lollo-alfred-lollo-pipelock-1; do
+    teardown
+    setup
+    added
+    config_edit ".services.searxng.network_mode = \"$m\""
+    ctl check alfred
+    bad_rc
+    out_has "alfred: searxng shares the network namespace of lollo-pipelock ($m), which is on the browser's network"
+  done
+}
+
+test_check_refuses_sharing_pipelocks_network_namespace_with_the_browser_on() {
+  added
+  with_browser
+  config_edit '.services.searxng.network_mode = "service:lollo-pipelock"'
+  ctl check alfred
+  bad_rc
+  out_has "alfred: searxng shares the network namespace of lollo-pipelock (service:lollo-pipelock), which is on the browser's network"
+}
+
+test_check_refuses_another_service_on_the_browser_network_whatever_the_profiles() {
+  added
+  config_edit '.services.searxng.networks = {"default":null,"browser":null} | .networks.browser = {"internal":true}'
+  ctl check alfred
+  bad_rc
+  out_has "alfred: searxng join(s) the browser's network; only lollo-browser-engine, lollo-browser and lollo-pipelock may"
+}
+
+test_check_accepts_pipelock_alone_on_the_browser_network() {
+  # compose/browser.yml puts pipelock on the network whatever the profiles.
+  added
+  with_pipelock
+  config_edit '.services["lollo-pipelock"].networks = {"browser":null,"default":null} | .networks.browser = {"internal":true}'
+  ctl check alfred
+  ok_rc
+}
+
+test_check_pipelock_requires_the_browser_in_no_proxy() {
+  # Agents pipe vault values into lollo-browser's tools; pipelock must not see them.
+  local k
+  for k in NO_PROXY no_proxy; do
+    teardown
+    setup
+    added
+    with_pipelock
+    config_edit '.services["app-server"].environment["'"$k"'"] |= (split(",") - ["lollo-browser"] | join(","))'
+    ctl check alfred
+    bad_rc
+    out_has "the app-server's $k must list lollo-browser"
+  done
+  grep -q '^  NO_PROXY: [^ ]*,lollo-browser,' "$ROOT/compose/pipelock-proxy.yml" || fail "compose/pipelock-proxy.yml's NO_PROXY lacks lollo-browser"
+  grep -q '^  no_proxy: [^ ]*,lollo-browser,' "$ROOT/compose/pipelock-proxy.yml" || fail "compose/pipelock-proxy.yml's no_proxy lacks lollo-browser"
+}
+
+test_profiles_refuses_the_browser_without_pipelock() {
+  added
+  ctl profiles cloudflared,lollo-browser
+  bad_rc
+  out_has "the lollo-browser profile needs lollo-pipelock"
+  eq "$(grep ^PROFILES= "$D/config.env")" PROFILES=cloudflared,search
+  eq "$(senv alfred COMPOSE_PROFILES)" cloudflared,search
+  log_lacks "curl PUT"
+  log_lacks "up -d"
+}
+
+test_check_refuses_the_browser_without_pipelock() {
+  added
+  with_browser
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-browser/' "$D/config.env"
+  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-browser/' "$D/stacks/alfred/stack.env"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: the lollo-browser profile needs lollo-pipelock"
+}
+
+test_profiles_turns_the_browser_on_with_pipelock() {
+  added
+  pipelock_config
+  browser_config
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  ok_rc
+  eq "$(senv alfred COMPOSE_PROFILES)" cloudflared,lollo-pipelock,lollo-browser
+  eq "$(senv alfred LOLLO_PROFILES)" lollo-browser
+  [[ $(ingress) == '[{"hostname":"alfred-lollo.example.org","path":"^/browser(/|$)","service":"http://lollo-browser:8000"},'"$NOTIFS,$LANDING,"* ]] ||
+    fail "no /browser/ route: $(ingress)"
+}
+
+test_add_gives_the_browser_its_own_secret() {
+  ctl add alfred alfred@example.com
+  ok_rc
+  [[ $(senv alfred BROWSER_ENGINE_SECRET) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "BROWSER_ENGINE_SECRET: $(senv alfred BROWSER_ENGINE_SECRET)"
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+  ctl add hal hal@example.com
+  ok_rc
+  [[ $(senv alfred BROWSER_ENGINE_SECRET) != "$(senv hal BROWSER_ENGINE_SECRET)" ]] || fail "same engine secret"
+}
+
+test_up_keeps_the_browser_secret() {
+  added
+  local secret
+  secret=$(senv alfred BROWSER_ENGINE_SECRET)
+  [[ -n $secret ]] || fail "add made no browser secret"
+  with_browser
+  ctl up alfred
+  ok_rc
+  eq "$(senv alfred BROWSER_ENGINE_SECRET)" "$secret"
+}
+
+test_up_gives_an_older_stack_the_browser_secret() {
+  added
+  sed -i '/^BROWSER_/d' "$D/stacks/alfred/stack.env"
+  ctl up alfred
+  ok_rc
+  ! grep -q '^BROWSER_VAPID_' "$D/stacks/alfred/stack.env" || fail "up made the browser a VAPID pair"
+  [[ $(senv alfred BROWSER_ENGINE_SECRET) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "no engine secret"
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+}
+
+test_profiles_gives_an_older_stack_the_browser_secret_before_checking() {
+  added
+  sed -i '/^BROWSER_/d' "$D/stacks/alfred/stack.env"
+  pipelock_config
+  browser_config
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  ok_rc
+  [[ $(senv alfred BROWSER_ENGINE_SECRET) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "no engine secret"
+}
+
+test_up_starts_the_browser_engine_first() {
+  added
+  with_browser
+  ctl up alfred
+  ok_rc
+  local engine main
+  engine=$(line_of "up -d --no-build --pull missing --wait --wait-timeout 180 lollo-browser-engine")
+  main=$(line_of "up -d --no-build --pull missing --remove-orphans")
+  ((engine < main)) || fail "the engine started after the rest ($engine, $main)"
+  log_lacks "stop lollo-browser-engine"
+}
+
+test_up_starts_no_engine_alone_without_the_browser() {
+  added
+  ctl up alfred
+  ok_rc
+  log_lacks "lollo-browser-engine"
+}
+
+test_up_refuses_the_browser_when_its_sandbox_fails() {
+  added
+  with_browser
+  stub STUB_ENGINE_UP_RC=1
+  printf '%s\n' "lollo-browser-engine-1  | Zygote could not fork" "lollo-browser-engine-1  | lollo-browser-engine: Chromium's sandbox failed" >"$T/engine-logs"
+  ctl up alfred
+  bad_rc
+  out_has "alfred: Chromium's sandbox cannot start on this host, so the browser does not run"
+  out_has "user.max_user_namespaces"
+  out_has 'docs/browser.md, "Running it"'
+  # One try, with the sandbox; the engine is stopped and the rest never starts.
+  eq "$(grep -c -- '--wait --wait-timeout 180 lollo-browser-engine' "$T/calls.log")" 1
+  log_has "stop lollo-browser-engine"
+  log_lacks "--remove-orphans"
+  log_lacks "no-sandbox"
+}
+
+# profiles has written every list before it starts the stacks, so a stack whose
+# engine fails must not keep the others from starting, and the way out is `up`.
+test_profiles_starts_the_other_stacks_when_one_browser_sandbox_fails() {
+  ctl add alfred alfred@example.com
+  ctl add hal hal@example.com
+  ok_rc
+  pipelock_config
+  browser_config
+  printf '%s\n' "lollo-browser-engine-1  | lollo-browser-engine: Chromium's sandbox failed" >"$T/engine-logs"
+  containers hal app-server
+  : >"$T/calls.log"
+  stub STUB_ENGINE_UP_FAIL=lollo-alfred
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  bad_rc
+  out_has "alfred: Chromium's sandbox cannot start on this host"
+  grep -q '^docker compose -p lollo-alfred .* stop lollo-browser-engine' "$T/calls.log" || fail "alfred's engine not stopped"
+  grep -q '^docker compose -p lollo-alfred .* --remove-orphans' "$T/calls.log" && fail "alfred started without its engine"
+  grep -q '^docker compose -p lollo-hal .* up -d --no-build --pull missing --remove-orphans' "$T/calls.log" || fail "hal not started"
+  out_has "the profiles are set, but these stacks did not start: alfred"
+  out_has "fix the cause, then run: lolloctl up alfred"
+  out_lacks "run the same command again"
+  eq "$(senv alfred COMPOSE_PROFILES)" cloudflared,lollo-pipelock,lollo-browser
+  eq "$(senv hal COMPOSE_PROFILES)" cloudflared,lollo-pipelock,lollo-browser
+}
+
+test_profiles_names_up_all_when_every_browser_sandbox_fails() {
+  ctl add alfred alfred@example.com
+  ctl add hal hal@example.com
+  ok_rc
+  pipelock_config
+  browser_config
+  printf '%s\n' "lollo-browser-engine-1  | lollo-browser-engine: Chromium's sandbox failed" >"$T/engine-logs"
+  : >"$T/calls.log"
+  stub STUB_ENGINE_UP_RC=1
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  bad_rc
+  out_has "alfred: Chromium's sandbox cannot start on this host"
+  out_has "hal: Chromium's sandbox cannot start on this host"
+  log_lacks "--remove-orphans"
+  out_has "the profiles are set, but these stacks did not start: alfred hal"
+  out_has "fix the cause, then run: lolloctl up all"
+}
+
+# A stack that did not start still runs its old app-server, whose Settings ->
+# MCP lists the servers of the profiles now off: their containers stay until
+# its `up` drops those entries, and a re-run then removes them.
+test_profiles_keeps_dropped_services_of_a_stack_that_did_not_start() {
+  ctl add alfred alfred@example.com
+  ctl add hal hal@example.com
+  ok_rc
+  local n
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-vault/' "$D/config.env"
+  for n in alfred hal; do
+    sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-vault/' "$D/stacks/$n/stack.env"
+    echo "VAULT_MCP_REGISTERED=1" >>"$D/stacks/$n/stack.env"
+    containers "$n" app-server bff cloudflared lollo-vault
+  done
+  vault_config
+  pipelock_config
+  browser_config
+  printf '%s\n' "lollo-browser-engine-1  | lollo-browser-engine: Chromium's sandbox failed" >"$T/engine-logs"
+  mcp_answer '{"added":[],"present":[],"conflicts":[],"removed":["vault"],"attempts":1}' vault
+  : >"$T/calls.log"
+  stub STUB_ENGINE_UP_FAIL=lollo-alfred
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  bad_rc
+  out_has "alfred: Chromium's sandbox cannot start on this host"
+  # alfred: the vault, its entry in Settings -> MCP and its marker all stay.
+  grep -q '^docker compose -p lollo-alfred .* rm -sf' "$T/calls.log" && fail "alfred's vault removed before it started"
+  grep -q "^docker compose -p lollo-alfred .* $VAULT_REMOVE" "$T/calls.log" && fail "alfred's vault entry removed before it started"
+  eq "$(senv alfred VAULT_MCP_REGISTERED)" 1
+  out_has "alfred: keeping lollo-vault (their profile is off) until it starts"
+  # hal started: its vault and its entry go.
+  grep -q '^docker compose -p lollo-hal .* rm -sf lollo-vault$' "$T/calls.log" || fail "hal's vault not removed"
+  grep -q "^docker compose -p lollo-hal .* $VAULT_REMOVE" "$T/calls.log" || fail "hal's vault entry not removed"
+  eq "$(senv hal VAULT_MCP_REGISTERED)" ""
+  out_has "the profiles are set, but these stacks did not start: alfred"
+  out_has "fix the cause, then run: lolloctl up alfred, then the same command again"
+}
+
+test_up_fails_clearly_when_the_browser_engine_is_not_healthy() {
+  added
+  with_browser
+  stub STUB_ENGINE_UP_RC=1
+  printf '%s\n' "lollo-browser-engine-1  | Error: something else" >"$T/engine-logs"
+  ctl up alfred
+  bad_rc
+  out_has "alfred: the browser's engine did not become healthy; see: lolloctl compose alfred logs lollo-browser-engine"
+  out_lacks "sandbox cannot start"
+  log_has "stop lollo-browser-engine"
+  log_lacks "--remove-orphans"
+}
+
+test_up_routes_nothing_for_the_browser() {
+  # up makes no Cloudflare call, with the browser too.
+  added
+  with_browser
+  ctl up alfred
+  ok_rc
+  log_lacks "curl "
+}
+
+test_remove_says_the_browser_data_goes_too() {
+  added
+  ctl remove alfred <<<"alfred"
+  ok_rc
+  out_has "Its browser's kept sign-ins, settings and audit log are deleted too"
+  log_has "volume inspect lollo-alfred_browser-data"
+}
+
+test_remove_says_nothing_of_browser_data_that_does_not_exist() {
+  added
+  stub STUB_VOLUMES_MISSING=lollo-alfred_browser-data
+  ctl remove alfred <<<"alfred"
+  ok_rc
+  out_lacks "Its browser's"
+}
+
+test_backup_never_copies_the_browser_data() {
+  backed
+  with_browser
+  ctl backup alfred "$B"
+  ok_rc
+  log_lacks "browser-data"
+  log_lacks "/src/browser"
+}
+
+test_the_browser_volume_is_not_in_backup_volumes() {
+  local vols
+  vols=$(sed -n '/^BACKUP_VOLUMES=(/,/^)/p' "$ROOT/lolloctl")
+  [[ -n $vols ]] || fail "no BACKUP_VOLUMES"
+  [[ $vols != *browser* ]] || fail "BACKUP_VOLUMES has the browser's volume"
+}
+
+# ── notifications ───────────────────────────────────────────────────────────
+# notifications_refused JQ EXPECTED -> with the vault on and the rendered config
+# edited by the jq filter JQ, `check` fails and says EXPECTED (on a fresh
+# fixture, so a test may call it more than once)
+notifications_refused() {
+  teardown
+  setup
+  added
+  with_vault
+  config_edit "$1"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: $2"
+}
+
+# with_profiles LIST -> alfred and config.env run LIST
+with_profiles() {
+  sed -i "s/^PROFILES=.*/PROFILES=$1/" "$D/config.env"
+  sed -i "s/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=$1/" "$D/stacks/alfred/stack.env"
+}
+
+# Compose starts the service with either sender's profile, and with no other:
+# the stub lists its services from compose/notifications.yml's profiles.
+test_compose_renders_the_notifications_service_with_either_sender_only() {
+  added
+  local list
+  for list in cloudflared,lollo-vault cloudflared,lollo-pipelock,lollo-browser cloudflared,lollo-vault,lollo-pipelock,lollo-browser; do
+    with_profiles "$list"
+    ctl compose alfred config --services
+    ok_rc
+    eq "$(grep -cx lollo-notifications "$OUT")" 1
+  done
+  for list in cloudflared cloudflared,google,lollo-gmail-triggers,lollo-news-radar,lollo-code-server,lollo-pipelock; do
+    with_profiles "$list"
+    ctl compose alfred config --services
+    ok_rc
+    ! grep -qx lollo-notifications "$OUT" || fail "lollo-notifications rendered with $list"
+  done
+}
+
+test_the_notifications_overlay_has_exactly_the_senders_profiles() {
+  local senders yml
+  senders=$(. "$ROOT/lib/common.sh" && for e in "${NOTIFY_SOURCES[@]}"; do echo "${e#* }"; done | sort | paste -sd,)
+  yml=$(sed -n 's/^ *profiles: *\[\(.*\)\]/\1/p' "$ROOT/compose/notifications.yml" | tr -d '" ' | tr , '\n' | sort | paste -sd,)
+  [[ -n $senders ]] || fail "no NOTIFY_SOURCES"
+  eq "$yml" "$senders"
+  eq "$(grep -c '^ *profiles:' "$ROOT/compose/notifications.yml")" 1
+}
+
+# What each overlay hands over: the lollo's private key only to the service,
+# each token only to it and its own sender, which no longer has a VAPID pair.
+test_the_overlays_hand_each_notify_secret_only_to_its_holders() {
+  eq "$(grep -l 'LOLLO_VAPID_PRIVATE_KEY' "$ROOT"/compose/*.yml | xargs -n1 basename | paste -sd' ')" notifications.yml
+  eq "$(grep -l 'NOTIFY_TOKEN_VAULT' "$ROOT"/compose/*.yml | xargs -n1 basename | paste -sd' ')" "notifications.yml vault.yml"
+  eq "$(grep -l 'NOTIFY_TOKEN_BROWSER' "$ROOT"/compose/*.yml | xargs -n1 basename | paste -sd' ')" "browser.yml notifications.yml"
+  # shellcheck disable=SC2016 # the overlays' own text
+  grep -qxF '      NOTIFY_TOKEN: ${NOTIFY_TOKEN_VAULT:-}' "$ROOT/compose/vault.yml" || fail "the vault lacks its token"
+  # shellcheck disable=SC2016 # the overlays' own text
+  grep -qxF '      NOTIFY_TOKEN: ${NOTIFY_TOKEN_BROWSER:-}' "$ROOT/compose/browser.yml" || fail "the browser lacks its token"
+  ! grep -qE 'VAPID' "$ROOT/compose/vault.yml" "$ROOT/compose/browser.yml" || fail "a sender still gets a VAPID key"
+  local k
+  for k in CF_ACCESS_AUD:CF_LOLLO_AUD PUBLIC_ORIGIN:LOLLO_ORIGIN LOLLO_VAPID_PUBLIC_KEY:LOLLO_VAPID_PUBLIC_KEY \
+    LOLLO_VAPID_PRIVATE_KEY:LOLLO_VAPID_PRIVATE_KEY NOTIFY_TOKEN_VAULT:NOTIFY_TOKEN_VAULT NOTIFY_TOKEN_BROWSER:NOTIFY_TOKEN_BROWSER; do
+    grep -qxF "      ${k%%:*}: \${${k#*:}:-}" "$ROOT/compose/notifications.yml" || fail "the service lacks ${k%%:*}"
+  done
+}
+
+test_add_gives_the_notifications_service_its_keys_and_tokens() {
+  ctl add alfred alfred@example.com
+  ok_rc
+  [[ $(senv alfred LOLLO_VAPID_PUBLIC_KEY) =~ ^[A-Za-z0-9_-]{87}$ ]] || fail "no public key"
+  [[ $(senv alfred LOLLO_VAPID_PRIVATE_KEY) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "no private key"
+  [[ $(senv alfred NOTIFY_TOKEN_VAULT) =~ ^[0-9a-f]{64}$ ]] || fail "NOTIFY_TOKEN_VAULT: $(senv alfred NOTIFY_TOKEN_VAULT)"
+  [[ $(senv alfred NOTIFY_TOKEN_BROWSER) =~ ^[0-9a-f]{64}$ ]] || fail "NOTIFY_TOKEN_BROWSER: $(senv alfred NOTIFY_TOKEN_BROWSER)"
+  [[ $(senv alfred NOTIFY_TOKEN_VAULT) != "$(senv alfred NOTIFY_TOKEN_BROWSER)" ]] || fail "the senders share a token"
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+  ctl add hal hal@example.com
+  ok_rc
+  [[ $(senv alfred LOLLO_VAPID_PRIVATE_KEY) != "$(senv hal LOLLO_VAPID_PRIVATE_KEY)" ]] || fail "same lollo VAPID key"
+  [[ $(senv alfred NOTIFY_TOKEN_VAULT) != "$(senv hal NOTIFY_TOKEN_VAULT)" ]] || fail "same vault token"
+}
+
+test_up_keeps_the_notify_keys_and_tokens() {
+  added
+  local k v=()
+  for k in LOLLO_VAPID_PUBLIC_KEY LOLLO_VAPID_PRIVATE_KEY NOTIFY_TOKEN_VAULT NOTIFY_TOKEN_BROWSER; do
+    v+=("$(senv alfred "$k")")
+  done
+  with_vault
+  ctl up alfred
+  ok_rc
+  eq "$(senv alfred LOLLO_VAPID_PUBLIC_KEY) $(senv alfred LOLLO_VAPID_PRIVATE_KEY) $(senv alfred NOTIFY_TOKEN_VAULT) $(senv alfred NOTIFY_TOKEN_BROWSER)" "${v[*]}"
+}
+
+# A stack from before the notifications service: its vault's pair stays where
+# it is, unused, and up gives it the new names once, so check passes after it.
+test_up_gives_an_upgraded_stack_the_notify_secrets_and_check_passes() {
+  added
+  with_vault
+  sed -i '/^LOLLO_VAPID_\|^NOTIFY_TOKEN_/d' "$D/stacks/alfred/stack.env"
+  printf 'VAULT_VAPID_PUBLIC_KEY=old-public\nVAULT_VAPID_PRIVATE_KEY=old-private\nBROWSER_VAPID_PUBLIC_KEY=old-b-public\n' >>"$D/stacks/alfred/stack.env"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: LOLLO_VAPID_PUBLIC_KEY is empty (run: lolloctl up alfred, which makes it once)"
+  ctl up alfred
+  ok_rc
+  [[ $(senv alfred LOLLO_VAPID_PRIVATE_KEY) =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "no private key"
+  [[ $(senv alfred NOTIFY_TOKEN_VAULT) =~ ^[0-9a-f]{64}$ ]] || fail "no vault token"
+  eq "$(senv alfred VAULT_VAPID_PRIVATE_KEY)" old-private
+  eq "$(senv alfred BROWSER_VAPID_PUBLIC_KEY)" old-b-public
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+  ctl check alfred
+  ok_rc
+}
+
+# Whatever the profiles, so turning the browser on later finds its token.
+test_up_gives_a_stack_without_the_browser_its_token() {
+  added
+  with_vault
+  sed -i '/^NOTIFY_TOKEN_BROWSER=/d' "$D/stacks/alfred/stack.env"
+  ctl up alfred
+  ok_rc
+  [[ $(senv alfred NOTIFY_TOKEN_BROWSER) =~ ^[0-9a-f]{64}$ ]] || fail "no browser token"
+  [[ $(senv alfred NOTIFY_TOKEN_BROWSER) != "$(senv alfred NOTIFY_TOKEN_VAULT)" ]] || fail "the senders share a token"
+}
+
+# log_jq_argv -> lolloctl's jq, a wrapper in $T/bin, logs its arguments to
+# $T/jq-argv.log, then runs the real one: jq is no stub, so the stubs' logs
+# never see what it is given
+log_jq_argv() {
+  local real
+  real=$(command -v jq)
+  cat >"$T/bin/jq" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$T/jq-argv.log"
+exec "$real" "\$@"
+EOF
+  chmod +x "$T/bin/jq"
+}
+
+# check_stack looks for each secret's value in the rendered config (holders)
+# with jq, through its environment, never its argv, which any local user can
+# read in ps.
+test_up_never_puts_the_notify_secrets_in_argv() {
+  added
+  with_vault
+  sed -i '/^LOLLO_VAPID_\|^NOTIFY_TOKEN_/d' "$D/stacks/alfred/stack.env"
+  log_jq_argv
+  ctl up alfred
+  ok_rc
+  ctl check alfred
+  ok_rc
+  ctl profiles cloudflared,lollo-vault
+  ok_rc
+  [[ -s $T/jq-argv.log ]] || fail "jq's arguments were not logged"
+  local k
+  for k in LOLLO_VAPID_PRIVATE_KEY NOTIFY_TOKEN_VAULT NOTIFY_TOKEN_BROWSER; do
+    [[ -n $(senv alfred "$k") ]] || fail "no $k"
+    ! grep -qF -- "$(senv alfred "$k")" "$T/calls.log" "$T/argv.log" "$T/jq-argv.log" || fail "$k in a command line"
+  done
+}
+
+# up makes no Cloudflare call, so on a stack from before the notifications
+# service, whose tunnel has no /notifications/ route, the up that makes its
+# keypair says, once, to run profiles, which applies the routes.
+test_up_says_once_to_route_notifications_on_an_upgraded_stack() {
+  added
+  with_vault
+  sed -i '/^LOLLO_VAPID_\|^NOTIFY_TOKEN_/d' "$D/stacks/alfred/stack.env"
+  : >"$T/calls.log"
+  ctl up alfred
+  ok_rc
+  out_has "warning: alfred: the tunnel does not route https://alfred-lollo.example.org/notifications/ yet, and up makes no Cloudflare call; run once: lolloctl profiles cloudflared,lollo-vault (the current list: it routes every stack and restarts none)"
+  eq "$(calls)" ""
+  ctl up alfred
+  ok_rc
+  out_lacks "/notifications/"
+  # What it says to run routes it, and restarts nothing.
+  ctl profiles cloudflared,lollo-vault
+  ok_rc
+  [[ $(ingress) == *"$NOTIFS"* ]] || fail "no notifications route: $(ingress)"
+  out_has "profiles are already cloudflared,lollo-vault everywhere; nothing to change"
+}
+
+test_up_says_nothing_of_the_notifications_route_without_a_sender() {
+  added
+  sed -i '/^LOLLO_VAPID_\|^NOTIFY_TOKEN_/d' "$D/stacks/alfred/stack.env"
+  ctl up alfred
+  ok_rc
+  [[ $(senv alfred LOLLO_VAPID_PUBLIC_KEY) =~ ^[A-Za-z0-9_-]{87}$ ]] || fail "no public key"
+  out_lacks "/notifications/"
+  out_lacks "lolloctl profiles"
+}
+
+# add makes the keypair before it routes the tunnel, /notifications/ included,
+# so the up it ends with has nothing to say about it.
+test_up_within_add_says_nothing_of_the_notifications_route() {
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-vault/' "$D/config.env"
+  vault_config
+  ctl add alfred alfred@example.com
+  ok_rc
+  [[ $(ingress) == *"$NOTIFS"* ]] || fail "no notifications route: $(ingress)"
+  out_lacks "/notifications/"
+  out_lacks "lolloctl profiles"
+}
+
+test_profiles_gives_an_older_stack_the_notify_secrets_before_checking() {
+  added
+  sed -i '/^LOLLO_VAPID_\|^NOTIFY_TOKEN_/d' "$D/stacks/alfred/stack.env"
+  vault_config
+  ctl profiles cloudflared,lollo-vault
+  ok_rc
+  [[ $(senv alfred NOTIFY_TOKEN_VAULT) =~ ^[0-9a-f]{64}$ ]] || fail "no vault token"
+  [[ $(senv alfred LOLLO_VAPID_PUBLIC_KEY) =~ ^[A-Za-z0-9_-]{87}$ ]] || fail "no public key"
+}
+
+test_check_accepts_the_notifications_service_with_either_sender() {
+  added
+  with_vault
+  ctl check alfred
+  ok_rc
+  teardown; setup
+  added
+  with_browser
+  ctl check alfred
+  ok_rc
+}
+
+test_check_refuses_a_sender_without_the_notifications_service() {
+  notifications_refused "del($NS)" "the lollo-vault profile is on but lollo-notifications is not in the rendered config (compose/notifications.yml)"
+  teardown; setup
+  added
+  with_browser
+  config_edit "del($NS)"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: the lollo-browser profile is on but lollo-notifications is not in the rendered config (compose/notifications.yml)"
+}
+
+test_check_refuses_a_notifications_service_that_is_not_hardened() {
+  notifications_refused "del($NS.read_only)" "lollo-notifications must have read_only: true"
+  notifications_refused "$NS.cap_drop = [\"NET_RAW\"]" "lollo-notifications must drop all capabilities"
+  notifications_refused "$NS.privileged = true" "lollo-notifications must not set privileged"
+  notifications_refused "$NS.network_mode = \"service:app-server\"" "lollo-notifications must not set network_mode"
+  notifications_refused "$NS.volumes_from = [\"bff\"]" "lollo-notifications must not set volumes_from"
+  notifications_refused "$NS.security_opt = []" "lollo-notifications must have no-new-privileges (compose/notifications.yml)"
+  notifications_refused "del($NS.mem_limit)" "lollo-notifications must have a mem_limit and a pids_limit (compose/notifications.yml)"
+  notifications_refused "del($NS.pids_limit)" "lollo-notifications must have a mem_limit and a pids_limit (compose/notifications.yml)"
+}
+
+test_check_refuses_a_notifications_service_on_another_network_or_with_other_mounts() {
+  notifications_refused "$NS.networks.other = null" "lollo-notifications must be on the default network only (compose/notifications.yml)"
+  notifications_refused "$NS.networks = {\"browser\": null}" "lollo-notifications must be on the default network only"
+  notifications_refused "$NS.volumes += [{\"type\":\"bind\",\"source\":\"/srv\",\"target\":\"/srv\"}]" "lollo-notifications must not mount host paths"
+  notifications_refused "$NS.volumes += [{\"type\":\"volume\",\"source\":\"vault-data\",\"target\":\"/v\"}]" "lollo-notifications mount(s) the vault's volume"
+  notifications_refused "$NS.volumes += [{\"type\":\"volume\",\"source\":\"scratch\",\"target\":\"/scratch\"}]" "lollo-notifications may mount only its volume notifications-data, at /data (compose/notifications.yml)"
+  notifications_refused "$NS.volumes[0].target = \"/srv\"" "lollo-notifications may mount only its volume notifications-data, at /data"
+}
+
+test_check_refuses_the_profile_lists_in_the_notifications_service() {
+  local k
+  for k in COMPOSE_PROFILES LOLLO_PROFILES; do
+    notifications_refused "$NS.environment.$k = \"lollo-vault\"" "lollo-notifications must not get COMPOSE_PROFILES or LOLLO_PROFILES; a profile change would recreate it"
+  done
+}
+
+test_check_refuses_a_sender_named_after_the_notifications_service() {
+  # shellcheck disable=SC2016 # ${KEY} is for the stub, not for bash
+  notifications_refused "$NS.environment.NOTIFY_TOKEN_NOTIFICATIONS = \"\${NOTIFY_TOKEN_VAULT}\"" \
+    "lollo-notifications must not get NOTIFY_TOKEN_NOTIFICATIONS; no sender may be named after the service"
+}
+
+# The landing page links to /notifications/ with the same senders Compose runs it for.
+test_the_landing_page_knows_the_notifications_senders() {
+  local senders yml
+  senders=$(sed -n 's/^SENDERS = (\(.*\))$/\1/p' "$ROOT/landing/src/lollo_landing/app.py" | tr -d '" ' | tr , '\n' | sed '/^$/d' | sort | paste -sd,)
+  yml=$(sed -n 's/^ *profiles: *\[\(.*\)\]/\1/p' "$ROOT/compose/notifications.yml" | tr -d '" ' | tr , '\n' | sort | paste -sd,)
+  [[ -n $senders ]] || fail "no SENDERS in landing/src/lollo_landing/app.py"
+  eq "$senders" "$yml"
+}
+
+test_check_refuses_a_malformed_notify_token() {
+  local k v
+  for k in NOTIFY_TOKEN_VAULT NOTIFY_TOKEN_BROWSER; do
+    for v in "" short "$(printf 'A%.0s' {1..64})" "$(printf 'a%.0s' {1..63})" "$(printf 'a%.0s' {1..65})"; do
+      teardown; setup
+      added
+      sed -i "s/^$k=.*/$k=$v/" "$D/stacks/alfred/stack.env"
+      ctl check alfred
+      bad_rc
+      out_has "alfred: $k must be 64 lowercase hex characters (delete the line and run: lolloctl up alfred)"
+    done
+  done
+}
+
+test_check_refuses_equal_notify_tokens() {
+  added
+  sed -i "s/^NOTIFY_TOKEN_BROWSER=.*/NOTIFY_TOKEN_BROWSER=$(senv alfred NOTIFY_TOKEN_VAULT)/" "$D/stacks/alfred/stack.env"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: NOTIFY_TOKEN_BROWSER and NOTIFY_TOKEN_VAULT are equal; each sender needs its own"
+}
+
+test_check_refuses_a_notify_token_equal_to_the_executor_token() {
+  local k
+  for k in NOTIFY_TOKEN_VAULT NOTIFY_TOKEN_BROWSER; do
+    teardown; setup
+    added
+    sed -i "s/^$k=.*/$k=$(senv alfred LOLLO_EXECUTOR_TOKEN)/" "$D/stacks/alfred/stack.env"
+    ctl check alfred
+    bad_rc
+    out_has "alfred: $k must differ from LOLLO_EXECUTOR_TOKEN, which agents can read"
+  done
+}
+
+# Whatever the profiles: a token in the app-server would let agents send as
+# its sender; a sender with the other's token could pose as it.
+test_check_refuses_a_notify_token_outside_its_holders_whatever_the_profiles() {
+  local c svc tok edit
+  # shellcheck disable=SC2016 # ${KEY} is for the stub, not for bash
+  for c in \
+    'app-server|NOTIFY_TOKEN_VAULT|.services["app-server"].environment.NOTIFY_TOKEN = "${NOTIFY_TOKEN_VAULT}"' \
+    'bff|NOTIFY_TOKEN_BROWSER|.services.bff.environment = {"X": "Bearer ${NOTIFY_TOKEN_BROWSER}"}' \
+    'bff|NOTIFY_TOKEN_VAULT|.services.bff.command = ["--token", "${NOTIFY_TOKEN_VAULT}"]' \
+    'landing|NOTIFY_TOKEN_VAULT|.services.landing = {"environment": {"NOTIFY_TOKEN_VAULT": "${NOTIFY_TOKEN_VAULT}"}}' \
+    'lollo-vault|NOTIFY_TOKEN_BROWSER|.services["lollo-vault"] = {"environment": {"NOTIFY_TOKEN": "${NOTIFY_TOKEN_BROWSER}"}}' \
+    'lollo-browser|NOTIFY_TOKEN_VAULT|.services["lollo-browser"] = {"labels": {"t": "${NOTIFY_TOKEN_VAULT}"}}'; do
+    IFS='|' read -r svc tok edit <<<"$c"
+    teardown; setup
+    added
+    config_edit "$edit"
+    ctl check alfred
+    bad_rc
+    out_has "alfred: $svc hold(s) $tok; only lollo-notifications and lollo-$([[ $tok == *VAULT ]] && echo vault || echo browser) may"
+  done
+}
+
+test_check_refuses_the_lollo_vapid_private_key_outside_the_notifications_service() {
+  local s
+  for s in app-server lollo-vault landing; do
+    teardown; setup
+    added
+    with_vault
+    # shellcheck disable=SC2016 # ${KEY} is for the stub, not for bash
+    config_edit ".services[\"$s\"].environment.VAPID = \"\${LOLLO_VAPID_PRIVATE_KEY}\""
+    ctl check alfred
+    bad_rc
+    out_has "alfred: $s hold(s) LOLLO_VAPID_PRIVATE_KEY; only lollo-notifications may"
+  done
+}
+
+# Whatever the profiles: notifications-data outlives the profiles.
+test_check_refuses_another_service_on_the_notifications_volume_whatever_the_profiles() {
+  added
+  config_edit '.services.bff.volumes = [{"type":"volume","source":"notifications-data","target":"/x","read_only":true}]'
+  ctl check alfred
+  bad_rc
+  out_has "alfred: bff mount(s) the notifications service's volume (every device's subscription); only lollo-notifications may"
+  notifications_refused "$BS = {\"volumes\":[{\"type\":\"volume\",\"source\":\"notifications-data\",\"target\":\"/x\"}]}" \
+    "lollo-browser mount(s) the notifications service's volume"
+}
+
+test_check_refuses_volumes_from_the_notifications_service_whatever_the_profiles() {
+  added
+  config_edit '.services.searxng.volumes_from = ["lollo-notifications"]'
+  ctl check alfred
+  bad_rc
+  out_has "the notification subscriptions or the code editor (searxng from lollo-notifications)"
+  notifications_refused '.services.searxng.volumes_from = ["service:lollo-notifications:ro"]' "volumes_from reaches"
+  teardown; setup
+  added
+  config_edit '.services.searxng = {"volumes":[{"type":"volume","source":"notifications-data","target":"/x"}]} | .services.bff.volumes_from = ["searxng"]'
+  ctl check alfred
+  bad_rc
+  out_has "volumes_from reaches"
+}
+
+test_lollo_notifications_path_routes_only_its_page() {
+  local path p
+  path=$(. "$ROOT/lib/cloudflare.sh" && printf '%s' "$LOLLO_NOTIFICATIONS_PATH")
+  for p in /notifications /notifications/ /notifications/sw.js /notifications/assets/app.js; do
+    grep -qE -- "$path" <<<"$p" || fail "$p is not routed to the notifications service"
+  done
+  for p in /notify/v1/send /notify/ /notificationsx /healthz / /vault/notifications /assets/x; do
+    ! grep -qE -- "$path" <<<"$p" || fail "$p is routed to the notifications service"
+  done
+}
+
+# The send API is for senders on the stack network: no rule of the lollo host
+# routes it, so it gets the 404.
+test_tunnel_routes_no_rule_to_the_send_api() {
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-vault,lollo-pipelock,lollo-browser/' "$D/config.env"
+  vault_config
+  pipelock_config
+  browser_config
+  ctl add alfred alfred@example.com
+  ok_rc
+  local path
+  while read -r path; do
+    ! grep -qE -- "$path" <<<"/notify/v1/send" || fail "/notify/v1/send matches $path"
+  done < <(jq -r '.[] | .path // empty' <<<"$(ingress)")
+  eq "$(jq -c '[.[] | select(.path == null)][0]' <<<"$(ingress)")" "$LOLLO_404"
+}
+
+test_tunnel_routes_the_notifications_page_only_with_a_sender() {
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-news-radar/' "$D/config.env"
+  news_radar_config
+  ctl add alfred alfred@example.com
+  ok_rc
+  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/news-radar(/|$)","service":"http://lollo-news-radar:8000"},'"$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
+  vault_config
+  ctl profiles cloudflared,lollo-news-radar,lollo-vault
+  ok_rc
+  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},{"hostname":"alfred-lollo.example.org","path":"^/news-radar(/|$)","service":"http://lollo-news-radar:8000"},'"$NOTIFS,$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
+  # A route of its own, not a lollo page: the landing page's list leaves it out.
+  eq "$(senv alfred LOLLO_PROFILES)" lollo-vault,lollo-news-radar
+}
+
+test_lollo_services_lists_the_notifications_service_before_landing() {
+  eq "$(. "$ROOT/lib/common.sh" && . "$ROOT/lib/cloudflare.sh" && lollo_services | tail -2 | paste -sd' ')" "lollo-notifications landing"
+}
+
+test_remove_says_the_notification_subscriptions_go_too() {
+  added
+  ctl remove alfred <<<"alfred"
+  ok_rc
+  out_has "Its notification subscriptions (every device enrolled for the lollo's notifications) are deleted too"
+  log_has "volume inspect lollo-alfred_notifications-data"
+}
+
+test_remove_says_nothing_of_notification_subscriptions_that_do_not_exist() {
+  added
+  stub STUB_VOLUMES_MISSING=lollo-alfred_notifications-data
+  ctl remove alfred <<<"alfred"
+  ok_rc
+  out_lacks "Its notification subscriptions"
+}
+
 test_up_installs_the_executor_with_the_news_radar() {
   added
   with_news_radar
@@ -1634,7 +2677,7 @@ test_compose_ignores_the_callers_environment() {
   PUBLIC_ORIGIN=https://evil.example ctl up alfred
   ok_rc
   log_lacks "PUBLIC_ORIGIN=https://evil.example"
-  log_has "--project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/landing.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "--project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml --env-file $D/stacks/alfred/stack.env"
   log_lacks "pipelock-proxy.yml"
 }
 
@@ -1643,7 +2686,7 @@ test_compose_adds_the_proxy_overlay_only_with_pipelock() {
   with_pipelock
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/landing.yml -f $H/compose/pipelock-proxy.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/pipelock-proxy.yml --env-file $D/stacks/alfred/stack.env"
 }
 
 # PIPELOCK_DIRECT: hosts an install reaches without pipelock (a model server on
@@ -1924,6 +2967,14 @@ containers() {
     printf 'lollo-%s %s\n' "$n" "$s" >>"$T/containers.txt"
   done
 }
+# paused NAME SERVICE... -> like containers, but paused
+paused() {
+  local n=$1 s
+  shift
+  for s in "$@"; do
+    printf 'lollo-%s %s paused\n' "$n" "$s" >>"$T/containers.txt"
+  done
+}
 
 test_profiles_removes_services_of_dropped_profiles() {
   added
@@ -2112,7 +3163,7 @@ test_profiles_dropping_gmail_triggers_keeps_landing_for_the_vault_but_not_the_ex
   grep -q '^docker compose -p lollo-alfred .* rm -sf lollo-gmail-triggers$' "$T/calls.log" || fail "only gmail-triggers should go"
   log_lacks "sh install"
   eq "$(exec_args | paste -sd' ')" "sh uninstall $EXECUTOR_ARGS"
-  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},'"$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
+  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},'"$NOTIFS,$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
 }
 
 test_profiles_rerun_removes_a_leftover_executor() {
@@ -2560,6 +3611,55 @@ test_toolbox_refuses_missing_mounts() {
   log_lacks "docker run"
 }
 
+# With the data directory under the home, `mount ~` would give an agent every
+# stack's secrets.
+test_toolbox_refuses_mounts_holding_the_data_directory() {
+  toolbox_ready
+  local m
+  for m in "$D" "$D/stacks" "$(dirname "$D")" /; do
+    toolbox_file "mount $m /x"
+    tb lucius
+    bad_rc
+    out_has "a toolbox mount cannot hold the data directory $D"
+    log_lacks "docker run"
+  done
+}
+
+# The built-in mounts go through the same check: ~/.gitconfig may be a link
+# into the data directory.
+test_toolbox_refuses_a_builtin_mount_into_the_data_directory() {
+  toolbox_ready
+  ln -s "$D/config.env" "$T/u/.gitconfig"
+  tb lucius
+  bad_rc
+  out_has "a toolbox mount cannot hold the data directory $D: $T/u/.gitconfig"
+  log_lacks "docker run"
+}
+
+test_toolbox_refuses_a_personal_file_of_someone_else() {
+  toolbox_ready
+  mkdir -p "$T/u/.config/lolloctl"
+  ln -s /etc/passwd "$T/u/.config/lolloctl/toolbox"
+  tb lucius
+  bad_rc
+  out_has "is not owned by you"
+  log_lacks "docker run"
+}
+
+# In release mode the wrapper checked the owner on the host; in the container a
+# macOS share reports another (Colima: whoever looked first). The file is a link
+# to root's, so the next check, of its mode (a link reads 777), stops it.
+test_release_mode_toolbox_leaves_the_owner_to_the_wrapper() {
+  toolbox_ready
+  release_on
+  mkdir -p "$T/u/.config/lolloctl"
+  ln -s /etc/passwd "$T/u/.config/lolloctl/toolbox"
+  tb lucius
+  bad_rc
+  out_lacks "not owned by you"
+  out_has "writable by others"
+}
+
 test_toolbox_refuses_a_personal_file_others_can_write() {
   toolbox_ready
   toolbox_file "env A=b"
@@ -2752,7 +3852,8 @@ test_skills_ships_the_repo_skills() {
   # tar has written every name.
   local list
   list=$(tar -tf "$T/exec-stdin.log")
-  for f in using-vault-secrets/SKILL.md using-vault-secrets/vault-run using-vault-secrets/vault-fill; do
+  for f in using-vault-secrets/SKILL.md using-vault-secrets/vault-run using-vault-secrets/vault-fill using-vault-secrets/vault-wait \
+    using-the-browser/SKILL.md using-the-browser/browser-screenshot; do
     grep -qx "$f" <<<"$list" || fail "$f not shipped"
   done
   grep -qx "name: using-vault-secrets" "$ROOT/agent-skills/using-vault-secrets/SKILL.md" || fail "SKILL.md name mismatch"
@@ -3088,7 +4189,11 @@ test_backup_copies_a_stopped_stack_without_asking() {
   log_has "docker build -q -t lollo-backup:local $H/backup"
   # --init: sh as PID 1 would ignore the signal docker forwards on Ctrl-C.
   log_has "docker run --rm --init --network none --read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --label lolloctl.backup=alfred"
-  log_has "-v $D/stacks/alfred/state:/src/state:ro -v $D/stacks/alfred/stack.env:/src/stack.env:ro -v $B/alfred:/dst lollo-backup:local"
+  log_has "-v $D/stacks/alfred/state:/src/state:ro -v $D/stacks/alfred/stack.env:/src/stack.env:ro -v $D/config.env:/src/config.env:ro -v $B/alfred/.partial-"
+  # The host's platform, so that restore can tell a backup from another architecture.
+  log_has "docker version --format {{.Server.Os}}/{{.Server.Arch}}"
+  log_has ".platform:/src/platform:ro -v $B/alfred:/dst lollo-backup:local"
+  eq "$(find "$B/alfred" -name '.partial-*')" ""
   log_has "sh rsync /src /dst $(id -u):$(id -g)  .partial-"
   log_has "state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups"
   log_lacks "state/tools"
@@ -3151,30 +4256,48 @@ test_backup_skips_a_vault_that_does_not_exist() {
 
 test_backup_includes_the_receipts() {
   backed
-  stub "STUB_VOLUMES_MISSING='lollo-alfred_vault-data lollo-alfred_news-radar-data'"
+  stub "STUB_VOLUMES_MISSING='lollo-alfred_vault-data lollo-alfred_news-radar-data lollo-alfred_notifications-data'"
   ctl backup alfred "$B"
   ok_rc
   log_has "docker volume inspect lollo-alfred_pipelock-data"
-  log_has "-v lollo-alfred_pipelock-data:/src/pipelock:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_pipelock-data:/src/pipelock:ro -v $B/alfred/.partial-"
   log_lacks "/src/vault"
 }
 
 test_backup_skips_receipts_that_do_not_exist() {
   backed
-  stub "STUB_VOLUMES_MISSING='lollo-alfred_pipelock-data lollo-alfred_news-radar-data'"
+  stub "STUB_VOLUMES_MISSING='lollo-alfred_pipelock-data lollo-alfred_news-radar-data lollo-alfred_notifications-data'"
   ctl backup alfred "$B"
   ok_rc
-  log_has "-v lollo-alfred_vault-data:/src/vault:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_vault-data:/src/vault:ro -v $B/alfred/.partial-"
   log_lacks "/src/pipelock"
 }
 
 test_backup_includes_the_news_radar() {
   backed
-  stub "STUB_VOLUMES_MISSING='lollo-alfred_vault-data lollo-alfred_pipelock-data'"
+  stub "STUB_VOLUMES_MISSING='lollo-alfred_vault-data lollo-alfred_pipelock-data lollo-alfred_notifications-data'"
   ctl backup alfred "$B"
   ok_rc
   log_has "docker volume inspect lollo-alfred_news-radar-data"
-  log_has "-v lollo-alfred_news-radar-data:/src/news-radar:ro -v $B/alfred:/dst"
+  log_has "-v lollo-alfred_news-radar-data:/src/news-radar:ro -v $B/alfred/.partial-"
+}
+
+# The subscriptions are copied, read-only, so a restored stack still reaches its devices.
+test_backup_includes_the_notification_subscriptions() {
+  backed
+  stub "STUB_VOLUMES_MISSING='lollo-alfred_vault-data lollo-alfred_pipelock-data lollo-alfred_news-radar-data'"
+  ctl backup alfred "$B"
+  ok_rc
+  log_has "docker volume inspect lollo-alfred_notifications-data"
+  log_has "-v lollo-alfred_notifications-data:/src/notifications:ro -v $B/alfred/.partial-"
+}
+
+test_backup_skips_notification_subscriptions_that_do_not_exist() {
+  backed
+  stub STUB_VOLUMES_MISSING=lollo-alfred_notifications-data
+  ctl backup alfred "$B"
+  ok_rc
+  log_lacks "/src/notifications"
 }
 
 test_backup_skips_a_news_radar_that_does_not_exist() {
@@ -3350,6 +4473,411 @@ test_backup_script_copies_what_matters() {
   eq "$got" "./stack.env ./state/letta-home/claude/projects/t.jsonl ./state/letta-home/skills/from-settings/SKILL.md ./state/workspaces/agent-1/notes.md ./vault/vault.db"
 }
 
+test_backup_leaves_out_google_without_the_flag() {
+  backed
+  ctl backup alfred "$B"
+  ok_rc
+  log_lacks "google-"
+}
+
+test_backup_with_google_copies_lettuces_google_volumes() {
+  backed
+  ctl backup alfred "$B" --with-google
+  ok_rc
+  log_has "-v lollo-alfred_google-policy:/src/google-policy:ro -v lollo-alfred_google-creds:/src/google-creds:ro"
+}
+
+test_backup_with_google_skips_a_volume_that_does_not_exist() {
+  backed
+  stub STUB_VOLUMES_MISSING=lollo-alfred_google-creds
+  ctl backup alfred "$B" --with-google
+  ok_rc
+  log_has "-v lollo-alfred_google-policy:/src/google-policy:ro"
+  log_lacks "-v lollo-alfred_google-creds"
+}
+
+# ── restore ──────────────────────────────────────────────────────────────────
+# a_snapshot [ENTRY...] -> alfred's backup as a snapshot in $S, as backup writes
+# it, from a host whose data directory was elsewhere: stack.env, config.env,
+# state/ (with tools/) and each ENTRY (vault, google-creds...) as a directory
+a_snapshot() {
+  local e
+  backed
+  S=$B/alfred/20261018T033000Z
+  mkdir -p "$S/state/letta-home" "$S/state/tools/bin"
+  sed 's|^LETTA_STATE_DIR=.*|LETTA_STATE_DIR=/old/host/stacks/alfred/state|' "$D/stacks/alfred/stack.env" >"$S/stack.env"
+  sed 's|^DOMAIN=.*|DOMAIN=from-backup.example.org|' "$D/config.env" >"$S/config.env"
+  chmod 600 "$S/stack.env" "$S/config.env"
+  for e in "$@"; do mkdir -p "$S/$e"; done
+}
+# an_archive [ENTRY...] -> the same backup as an archive at $A
+an_archive() {
+  a_snapshot "$@"
+  A=$B/alfred/20261018T033000Z.tar.gz
+  tar -C "$S" -czf "$A" .
+  rm -rf "$S"
+}
+# a_new_host -> this data directory has no alfred, no stacks.conf and no config.env
+a_new_host() {
+  rm -rf "$D/stacks/alfred" "$D/stacks.conf" "$D/config.env"
+  : >"$T/calls.log"
+}
+RESTORE_RUN="docker run --rm --init --network none --read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --label lolloctl.restore=alfred"
+
+test_restore_rejects_bad_arguments() {
+  backed
+  ctl restore alfred
+  bad_rc
+  out_has "usage: lolloctl restore <name> <backup> [--yes]"
+  ctl restore alfred "$T/nope"
+  bad_rc
+  out_has "$T/nope does not exist"
+  mkdir -p "$T/empty"
+  ctl restore alfred "$T/empty"
+  bad_rc
+  out_has "is not a backup: no stack.env and state/ in it"
+  touch "$T/notes.txt"
+  ctl restore alfred "$T/notes.txt"
+  bad_rc
+  out_has "name a snapshot directory or a .tar.gz"
+  ctl restore Alfred "$T/empty"
+  bad_rc
+  out_has "invalid stack name"
+  ctl restore alfred "$T/empty" --force
+  bad_rc
+  out_has "usage:"
+  log_lacks "docker run"
+}
+
+test_restore_puts_a_snapshot_back_on_a_new_host() {
+  a_snapshot vault pipelock news-radar notifications
+  a_new_host
+  ctl restore alfred "$S"
+  ok_rc
+  # One container copies the state and every volume.
+  log_has "$RESTORE_RUN -v $S:/b:ro -v $D/stacks/alfred/state:/r/state -v lollo-alfred_vault-data:/r/vault -v lollo-alfred_pipelock-data:/r/pipelock -v lollo-alfred_news-radar-data:/r/news-radar -v lollo-alfred_notifications-data:/r/notifications lollo-backup:local sh -c"
+  log_has " sh rsync /b /r  state 0:0 $(id -u):$(id -g) 700 vault 10001:10001 10001:10001 700 pipelock 65532:65532 65532:65532 700 news-radar 10002:10002 10002:10002 700 notifications 10005:10005 10005:10005 700"
+  eq "$(grep -c 'lolloctl.restore=alfred' "$T/calls.log")" 1
+  log_lacks "google-"
+  # stack.env names this host's state directory, and stays private.
+  eq "$(senv alfred LETTA_STATE_DIR)" "$D/stacks/alfred/state"
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+  eq "$(stat -c %a "$D/stacks/alfred")" 700
+  eq "$(senv alfred SESSION_SECRET)" "$(sed -n 's/^SESSION_SECRET=//p' "$S/stack.env")"
+  # config.env, which this host lacked, for init; stacks.conf in step.
+  grep -qx 'DOMAIN=from-backup.example.org' "$D/config.env" || fail "config.env not restored"
+  eq "$(stat -c %a "$D/config.env")" 600
+  out_has "run lolloctl init next"
+  grep -qE '^alfred +alfred@example.com$' "$D/stacks.conf" || fail "stacks.conf not in step: $(cat "$D/stacks.conf")"
+  out_has "alfred: admits alfred@example.com, as in the backup; if its Access policy changed since, run: lolloctl users alfred <email>[,<email>]"
+  out_has "start it with: lolloctl up alfred && lolloctl skills alfred"
+  log_lacks "curl "
+}
+
+# Colima's virtiofs share refuses to open the empty, mode-0 file GNU tar first
+# puts in place of a link to an absolute path or through '..' (even as root);
+# with -P tar makes the link at once. The tar stub here refuses like the share.
+test_restore_unpacks_links_where_a_share_refuses_tars_placeholders() {
+  local real_tar restore_script me
+  real_tar=$(command -v tar)
+  me="$(id -u):$(id -g)"
+  a_snapshot
+  mkdir -p "$S/state/letta-home/skills"
+  ln -s /root/.letta/mcp-home/skill/mcp-servers "$S/state/letta-home/skills/mcp-servers"
+  ln -s ../letta-home "$S/state/workspaces-link"
+  A=$B/alfred/20261018T033000Z.tar.gz
+  tar -C "$S" -czf "$A" .
+  ctl restore alfred "$A" --yes
+  ok_rc
+  restore_script=$(cat "$T/run-script")
+  mkdir -p "$T/share-bin" "$T/dst/state"
+  cat >"$T/share-bin/tar" <<SHARE
+#!/usr/bin/env bash
+x="" p=""
+for a in "\$@"; do
+  case \$a in
+    --absolute-names) p=1 ;;
+    --*) ;;
+    -*x*P* | -*P*x*) x=1 p=1 ;;
+    -*x*) x=1 ;;
+  esac
+done
+if [[ -n \$x && -z \$p ]]; then
+  echo "tar: ./state/letta-home/skills/mcp-servers: Cannot open: Permission denied" >&2
+  exit 2
+fi
+exec $real_tar "\$@"
+SHARE
+  chmod 755 "$T/share-bin/tar"
+  RC=0
+  PATH="$T/share-bin:$PATH" sh -c "$restore_script" sh tar "$A" "$T/dst" "" state "$me" "$me" 700 >"$OUT" 2>&1 || RC=$?
+  ok_rc
+  eq "$(readlink "$T/dst/state/letta-home/skills/mcp-servers")" /root/.letta/mcp-home/skill/mcp-servers
+  eq "$(readlink "$T/dst/state/workspaces-link")" ../letta-home
+}
+
+# -P also keeps a name that leaves the target as written, so restore refuses
+# such an archive before it unpacks anything.
+# restore_refuses_entry NAME -> an archive whose state/letta-home is NAME is refused
+restore_refuses_entry() {
+  a_snapshot
+  A=$B/alfred/20261018T033000Z.tar.gz
+  tar -C "$S" -czPf "$A" --transform "s|^\./state/letta-home|$1|" .
+  tar -tzPf "$A" | grep -qxF "$1/" || fail "the archive does not hold $1: $(tar -tzPf "$A")"
+  rm -rf "$S"
+  a_new_host
+  ctl restore alfred "$A"
+  bad_rc
+  out_has "an entry that is absolute or goes up with '..': $1/"
+  log_lacks "lolloctl.restore"
+}
+test_restore_refuses_an_absolute_archive_entry() { restore_refuses_entry /escape; }
+test_restore_refuses_an_archive_entry_going_up() { restore_refuses_entry ./state/../../escape; }
+
+# One pass over the archive extracts the state and every volume.
+test_restore_puts_an_archive_back() {
+  an_archive vault google-policy google-creds
+  a_new_host
+  ctl restore alfred "$A"
+  ok_rc
+  log_has "$RESTORE_RUN -v $A:/a.tar.gz:ro -v $D/stacks/alfred/state:/r/state -v lollo-alfred_vault-data:/r/vault -v lollo-alfred_google-policy:/r/google-policy -v lollo-alfred_google-creds:/r/google-creds lollo-backup:local sh -c"
+  log_has " sh tar /a.tar.gz /r  state 0:0 $(id -u):$(id -g) 700 vault 10001:10001 10001:10001 700 google-policy 0:0 0:0 755 google-creds 0:0 0:0 755"
+  eq "$(grep -c 'lolloctl.restore=alfred' "$T/calls.log")" 1
+  out_has "the Google tokens are back; nobody needs to reconnect Google"
+  eq "$(find "$D" -maxdepth 1 -name '.restore.*')" ""
+  eq "$(senv alfred LETTA_STATE_DIR)" "$D/stacks/alfred/state"
+  grep -qx 'DOMAIN=from-backup.example.org' "$D/config.env" || fail "config.env not restored from the archive"
+}
+
+test_restore_creates_a_missing_volume_with_composes_labels() {
+  a_snapshot vault
+  a_new_host
+  stub STUB_VOLUMES_MISSING=lollo-alfred_vault-data
+  ctl restore alfred "$S"
+  ok_rc
+  log_has "docker volume create --label com.docker.compose.project=lollo-alfred --label com.docker.compose.volume=vault-data lollo-alfred_vault-data"
+}
+
+test_restore_keeps_the_tools_of_a_backup_without_them() {
+  a_snapshot
+  rm -rf "$S/state/tools"
+  a_new_host
+  ctl restore alfred "$S"
+  ok_rc
+  out_has "the backup has no agent tools (taken with --no-tools); keeping the ones here"
+  log_has " sh rsync /b /r 1 state 0:0 $(id -u):$(id -g) 700"
+}
+
+# Agent tools (state/tools) are native programs and modules of the host they
+# were installed on: from another architecture (a Linux amd64 host's backup on
+# an Apple silicon Mac) they would fail with "exec format error". The ones here stay.
+test_restore_leaves_out_the_tools_of_another_architecture() {
+  a_snapshot
+  printf 'linux/amd64\n' >"$S/platform"
+  a_new_host
+  stub STUB_PLATFORM=linux/arm64
+  ctl restore alfred "$S"
+  ok_rc
+  out_has "alfred: the backup comes from a linux/amd64 host and this one is linux/arm64: its agent tools (state/tools) would not run here, so they are left out; agents install what they need again"
+  log_has " sh rsync /b /r 1 state "
+  # The same architecture: the tools come back.
+  rm -rf "$D/stacks/alfred"
+  : >"$T/calls.log"
+  stub STUB_PLATFORM=linux/amd64
+  ctl restore alfred "$S"
+  ok_rc
+  out_lacks "would not run here"
+  log_has " sh rsync /b /r  state "
+}
+
+# A backup carries its stack's tunnel and Cloudflare ids: under another name,
+# two stacks would share a tunnel, and removing one would delete the other's.
+test_restore_refuses_a_backup_of_another_stack() {
+  a_snapshot
+  ctl restore bob "$S" --yes
+  bad_rc
+  out_has "$S is a backup of alfred, not bob; it holds alfred's tunnel and Cloudflare ids"
+  log_lacks "lolloctl.restore"
+  [[ ! -e $D/stacks/bob ]] || fail "bob's directory was made: $(find "$D/stacks/bob")"
+  tar -C "$S" -czf "$B/other.tar.gz" .
+  ctl restore bob "$B/other.tar.gz" --yes
+  bad_rc
+  out_has "is a backup of alfred, not bob"
+  sed -i '1d' "$S/stack.env"
+  ctl restore alfred "$S" --yes
+  bad_rc
+  out_has "$S/stack.env does not say which stack it belongs to"
+  log_lacks "lolloctl.restore"
+  eq "$(find "$D" -maxdepth 1 -name '.restore.*')" ""
+}
+
+# The backup's ALLOWED_USERS may be older than the Access policy. stacks.conf,
+# which users and apply keep in step with the policy, says who is admitted.
+test_restore_keeps_the_users_stacks_conf_admits() {
+  a_snapshot
+  printf 'alfred  alfred@example.com,carol@example.com\n' >"$D/stacks.conf"
+  ctl restore alfred "$S" --yes
+  ok_rc
+  eq "$(senv alfred ALLOWED_USERS)" "alfred@example.com,carol@example.com"
+  out_has "alfred: admits alfred@example.com,carol@example.com, as stacks.conf and the Access policy do, not the backup's alfred@example.com"
+  grep -qx 'alfred  alfred@example.com,carol@example.com' "$D/stacks.conf" || fail "stacks.conf changed: $(cat "$D/stacks.conf")"
+  log_lacks "curl "
+}
+
+test_restore_leaves_an_existing_config_env_alone() {
+  a_snapshot
+  rm -rf "$D/stacks/alfred"
+  local before
+  before=$(cat "$D/config.env")
+  ctl restore alfred "$S"
+  ok_rc
+  eq "$(cat "$D/config.env")" "$before"
+  out_lacks "config.env: restored"
+}
+
+test_restore_refuses_a_running_stack() {
+  a_snapshot
+  containers alfred app-server
+  ctl restore alfred "$S" --yes
+  bad_rc
+  out_has "alfred is running; stop it first: lolloctl down alfred"
+  log_lacks "lolloctl.restore"
+}
+
+# A paused stack (backup --pause, or an unpause that failed) still has its
+# processes, which would wake up on top of the restored files.
+test_restore_refuses_a_paused_stack() {
+  a_snapshot
+  paused alfred app-server
+  ctl restore alfred "$S" --yes
+  bad_rc
+  out_has "alfred is running; stop it first: lolloctl down alfred"
+  log_lacks "lolloctl.restore"
+}
+
+test_restore_needs_yes_to_replace_a_stack_without_a_terminal() {
+  a_snapshot
+  ctl restore alfred "$S" </dev/null
+  bad_rc
+  out_has "alfred already has data here; run with --yes to replace it with the backup"
+  log_lacks "lolloctl.restore"
+  ctl restore alfred "$S" --yes </dev/null
+  ok_rc
+  log_has "lolloctl.restore=alfred"
+}
+
+test_release_mode_restore_asks_for_the_stack_name() {
+  a_snapshot vault
+  release_on
+  mounts "$D" "$S"
+  LOLLOCTL_STDIN_TTY=1 ctl restore alfred "$S" <<<"nope"
+  bad_rc
+  out_has "This replaces alfred's data here with $S:"
+  out_has "the volume lollo-alfred_vault-data"
+  out_has "aborted"
+  log_lacks "lolloctl.restore"
+  LOLLOCTL_STDIN_TTY=1 ctl restore alfred "$S" <<<"alfred"
+  ok_rc
+  log_has "lolloctl.restore=alfred"
+}
+
+test_release_mode_restore_needs_the_backup_mounted() {
+  a_snapshot
+  release_on
+  ctl restore alfred "$S" --yes
+  bad_rc
+  out_has "is not mounted into lolloctl's container"
+}
+
+test_restore_warns_when_the_profiles_differ() {
+  a_snapshot
+  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,search,lollo-vault/' "$S/stack.env"
+  rm -rf "$D/stacks/alfred"
+  ctl restore alfred "$S"
+  ok_rc
+  out_has "its profiles (cloudflared,search,lollo-vault) differ from config.env's PROFILES (cloudflared,search)"
+}
+
+test_restore_refuses_a_second_run_of_the_same_stack() {
+  a_snapshot
+  rm -rf "$D/stacks/alfred"
+  mkdir -p "$D/stacks/alfred"
+  exec {fd}>"$D/stacks/alfred/.restore.lock"
+  flock -n "$fd"
+  ctl restore alfred "$S"
+  bad_rc
+  out_has "another restore of alfred is running"
+  exec {fd}>&-
+}
+
+test_wrapper_mounts_the_restore_backup_read_only() {
+  wrapper_in "$T/srv"
+  mkdir -p "$T/nas/alfred/20261018T033000Z"
+  touch "$T/nas/alfred/20261018T033000Z.tar.gz"
+  wctl "$T/srv" restore alfred "$T/nas/alfred/20261018T033000Z" --yes
+  ok_rc
+  log_has "-v $T/nas/alfred/20261018T033000Z:$T/nas/alfred/20261018T033000Z:ro"
+  : >"$T/calls.log"
+  wctl "$T/srv" restore alfred "$T/nas/alfred/20261018T033000Z.tar.gz"
+  ok_rc
+  log_has "-v $T/nas/alfred:$T/nas/alfred:ro"
+}
+
+# Backup then restore with the scripts lolloctl runs in the container, here with
+# the host's rsync and tar: what comes back is what was there, and a backup
+# without tools keeps the tools already in place.
+test_restore_script_brings_back_what_backup_copied() {
+  command -v rsync >/dev/null || return 0
+  a_snapshot
+  ctl backup alfred "$B"
+  ok_rc
+  local backup_script restore_script src=$T/src bk=$T/bk-out dst want got me mode
+  backup_script=$(cat "$T/run-script")
+  me="$(id -u):$(id -g)"
+  mkdir -p "$src/state/letta-home/claude" "$src/state/workspaces/agent-1" "$src/state/tools/bin" "$src/vault" "$bk"
+  touch "$src/stack.env" "$src/config.env" "$src/state/letta-home/claude/t.jsonl" "$src/state/workspaces/agent-1/notes.md" \
+    "$src/state/tools/bin/uv" "$src/vault/vault.db"
+  sh -c "$backup_script" sh rsync "$src" "$bk" "$me" "" s1
+  sh -c "$backup_script" sh tar "$src" "" "" "" "" >"$T/a.tar.gz"
+  ctl restore alfred "$S" --yes
+  ok_rc
+  restore_script=$(cat "$T/run-script")
+  want=$(cd "$src/state" && find . | LC_ALL=C sort | paste -sd' ')
+  for mode in rsync tar; do
+    dst=$T/restored-$mode
+    mkdir -p "$dst/state/stale" "$dst/vault/stale"
+    touch "$dst/state/stale/old" "$dst/vault/stale/old"
+    if [[ $mode == rsync ]]; then
+      sh -c "$restore_script" sh rsync "$bk/s1" "$dst" "" state "$me" "$me" 700 vault "$me" "$me" 750
+    else
+      sh -c "$restore_script" sh tar "$T/a.tar.gz" "$dst" "" state "$me" "$me" 700 vault "$me" "$me" 750
+    fi
+    got=$(cd "$dst/state" && find . | LC_ALL=C sort | paste -sd' ')
+    eq "$got" "$want"
+    eq "$(stat -c %a "$dst/state")" 700
+    # The vault, alone in its volume.
+    eq "$(cd "$dst/vault" && find . | LC_ALL=C sort | paste -sd' ')" ". ./vault.db"
+    eq "$(stat -c %a "$dst/vault")" 750
+  done
+  # A backup without tools: the tools here stay, everything else matches.
+  rm -rf "$bk/s1/state/tools"
+  dst=$T/restored-keep
+  mkdir -p "$dst/state/tools/bin" "$dst/state/stale"
+  touch "$dst/state/tools/bin/node" "$dst/state/stale/old"
+  sh -c "$restore_script" sh rsync "$bk/s1" "$dst" 1 state "$me" "$me" 700
+  [[ -f $dst/state/tools/bin/node && ! -e $dst/state/stale ]] || fail "rsync: tools not kept, or stale files left: $(cd "$dst" && find .)"
+  rm -rf "$dst" && mkdir -p "$dst/state/tools/bin" "$dst/state/stale" && touch "$dst/state/tools/bin/node" "$dst/state/stale/old"
+  tar -C "$src" --exclude=./state/tools -czf "$T/no-tools.tar.gz" .
+  sh -c "$restore_script" sh tar "$T/no-tools.tar.gz" "$dst" 1 state "$me" "$me" 700
+  [[ -f $dst/state/tools/bin/node && ! -e $dst/state/stale && -f $dst/state/workspaces/agent-1/notes.md ]] ||
+    fail "tar: tools not kept, or stale files left: $(cd "$dst" && find .)"
+  # An archive with tools, from another architecture: its tools stay out.
+  rm -rf "$dst" && mkdir -p "$dst/state/tools/bin" && touch "$dst/state/tools/bin/node"
+  sh -c "$restore_script" sh tar "$T/a.tar.gz" "$dst" 1 state "$me" "$me" 700
+  [[ -f $dst/state/tools/bin/node && ! -e $dst/state/tools/bin/uv && -f $dst/state/workspaces/agent-1/notes.md ]] ||
+    fail "tar: the archive's tools came in: $(cd "$dst" && find .)"
+}
+
 # ── document tools ───────────────────────────────────────────────────────────
 # docs_tree -> the test copy has a doc-tools/ to hash (setup copies only the CLI)
 docs_tree() {
@@ -3422,7 +4950,7 @@ test_compose_adds_the_doc_tools_overlay_and_its_values_only_with_the_profile() {
   with_docs
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env"
   log_has "docker-env DOC_TOOLS_NETWORK=lollo-doc-tools-alfred DOC_TOOLS_VOLUME=lollo-doc-tools-$(docs_tag)"
   grep -q '^DOC_TOOLS' "$D/stacks/alfred/stack.env" && fail "doc-tools values written to stack.env"
   true
@@ -3438,7 +4966,7 @@ test_up_with_doc_tools_builds_creates_and_connects_before_reporting() {
   log_has "docker network create --internal --label lollo.doc-tools.stack=alfred lollo-doc-tools-alfred"
   log_has "docker network connect --alias gotenberg lollo-doc-tools-alfred gotenberg-id"
   # The network exists before the app-server joins it, and Gotenberg joins after.
-  (($(line_of "network create") < $(line_of "-p lollo-alfred --project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env up -d"))) ||
+  (($(line_of "network create") < $(line_of "-p lollo-alfred --project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env up -d"))) ||
     fail "the network was created after compose up"
   (($(line_of "-p lollo_shared") > $(line_of "up -d --no-build --pull missing --remove-orphans"))) || fail "gotenberg started before the stack"
 }
@@ -4028,7 +5556,7 @@ test_mcp_needs_the_doc_tools_or_the_vault_profile() {
   added
   ctl mcp alfred
   bad_rc
-  out_has "the lollo-doc-tools, lollo-vault, lollo-news-radar and lollo-outlook profiles are all off"
+  out_has "the lollo-doc-tools, lollo-vault, lollo-news-radar, lollo-outlook and lollo-browser profiles are all off"
   log_lacks "node --input-type=module"
 }
 
@@ -4179,6 +5707,91 @@ test_up_retries_a_vault_removal_that_failed() {
   ctl up alfred
   ok_rc
   eq "$(senv alfred VAULT_MCP_REGISTERED)" ""
+}
+
+BROWSER_ADD="exec -T app-server node --input-type=module - add /root/.letta/mcp-home/.letta/settings.json browser"
+BROWSER_REMOVE="exec -T app-server node --input-type=module - remove /root/.letta/mcp-home/.letta/settings.json browser"
+
+test_mcp_registers_the_browser_with_its_profile() {
+  added
+  with_browser
+  mcp_answer '{"added":["browser"],"present":[],"conflicts":[],"removed":[],"attempts":1}'
+  ctl mcp alfred
+  ok_rc
+  log_has "$BROWSER_ADD"
+  log_lacks "$VAULT_ADD"
+  log_lacks "$MCP_ADD"
+  out_has "alfred: added browser to Settings -> MCP"
+  eq "$(senv alfred BROWSER_MCP_REGISTERED)" 1
+  eq "$(bff_restarts)" 1
+  (($(line_of "restart --no-deps bff") > $(line_of "$BROWSER_ADD"))) || fail "the BFF restarted before the change"
+}
+
+test_mcp_runs_the_browser_once_unless_forced() {
+  added
+  with_browser
+  echo "BROWSER_MCP_REGISTERED=1" >>"$D/stacks/alfred/stack.env"
+  ctl mcp alfred
+  ok_rc
+  log_lacks "$BROWSER_ADD"
+  out_has "alfred: registered the browser before; a server the person removed stays removed (--force adds it again)"
+  mcp_answer '{"added":["browser"],"present":[],"conflicts":[],"removed":[],"attempts":1}' browser
+  ctl mcp alfred --force
+  ok_rc
+  log_has "$BROWSER_ADD"
+  out_has "alfred: added browser to Settings -> MCP"
+}
+
+test_mcp_leaves_a_persons_browser_server() {
+  added
+  with_browser
+  mcp_answer '{"added":[],"present":[],"conflicts":["browser"],"removed":[],"attempts":1}'
+  ctl mcp alfred
+  ok_rc
+  out_has "alfred: Settings -> MCP already has a browser server with another URL; it was left as it is"
+  eq "$(senv alfred BROWSER_MCP_REGISTERED)" 1
+  log_lacks "restart --no-deps bff"
+}
+
+test_profiles_with_the_browser_says_how_to_register_it() {
+  added
+  pipelock_config
+  browser_config
+  ctl profiles cloudflared,lollo-pipelock,lollo-browser
+  ok_rc
+  out_has "Browser: in https://alfred.example.org Settings -> MCP, add an HTTP server:"
+  out_has "browser -> http://lollo-browser:8000/mcp (docs/browser.md)"
+  log_lacks "$BROWSER_ADD"
+  echo "BROWSER_MCP_REGISTERED=1" >>"$D/stacks/alfred/stack.env"
+  ctl profiles cloudflared,search,lollo-pipelock,lollo-browser
+  ok_rc
+  out_has "Browser: browser is in https://alfred.example.org Settings -> MCP (docs/browser.md)"
+}
+
+test_profiles_dropping_the_browser_removes_its_server() {
+  added
+  with_browser
+  ctl up alfred
+  ok_rc
+  echo "BROWSER_MCP_REGISTERED=1" >>"$D/stacks/alfred/stack.env"
+  : >"$T/calls.log"
+  mcp_answer '{"added":[],"present":[],"conflicts":[],"removed":["browser"],"attempts":1}'
+  ctl profiles cloudflared,lollo-pipelock
+  ok_rc
+  log_has "$BROWSER_REMOVE"
+  out_has "alfred: removed browser from Settings -> MCP (the lollo-browser profile is off)"
+  eq "$(senv alfred BROWSER_MCP_REGISTERED)" ""
+  (($(line_of "restart --no-deps bff") > $(line_of "$BROWSER_REMOVE"))) || fail "the BFF was not restarted after the removal"
+}
+
+test_up_removes_the_browsers_server_when_its_profile_is_off() {
+  added
+  echo "BROWSER_MCP_REGISTERED=1" >>"$D/stacks/alfred/stack.env"
+  mcp_answer '{"added":[],"present":[],"conflicts":[],"removed":["browser"],"attempts":1}'
+  ctl up alfred
+  ok_rc
+  log_has "$BROWSER_REMOVE"
+  eq "$(senv alfred BROWSER_MCP_REGISTERED)" ""
 }
 
 test_mcp_failures_fail_at_the_end_without_a_mark() {
@@ -4466,7 +6079,7 @@ test_compose_always_merges_the_code_editor_overlay() {
   added
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/landing.yml --env-file"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml --env-file"
 }
 
 test_profiles_routes_the_code_editor_and_lists_it_on_the_landing_page() {
@@ -4542,7 +6155,7 @@ test_tunnel_routes_every_lollo_page_on_the_lollo_host_only() {
   code_config
   ctl add alfred alfred@example.com
   ok_rc
-  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},{"hostname":"alfred-lollo.example.org","path":"^/gmail-triggers(/|$)","service":"http://lollo-gmail-triggers:8000"},{"hostname":"alfred-lollo.example.org","path":"^/code-server(/|$)","service":"http://lollo-code-server:8000"},'"$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
+  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/vault(/|$)","service":"http://lollo-vault:8000"},{"hostname":"alfred-lollo.example.org","path":"^/gmail-triggers(/|$)","service":"http://lollo-gmail-triggers:8000"},{"hostname":"alfred-lollo.example.org","path":"^/code-server(/|$)","service":"http://lollo-code-server:8000"},'"$NOTIFS,$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
   eq "$(senv alfred LOLLO_PROFILES)" lollo-vault,lollo-gmail-triggers,lollo-code-server
 }
 
@@ -4621,7 +6234,7 @@ test_check_refuses_a_lollo_profile_without_its_host_or_audience() {
 
 test_check_refuses_a_lollo_service_that_accepts_lettuces_token() {
   local s
-  for s in lollo-vault lollo-gmail-triggers lollo-code-server landing; do
+  for s in lollo-vault lollo-gmail-triggers lollo-code-server lollo-notifications landing; do
     lollo_refused ".services[\"$s\"].environment.CF_ACCESS_AUD = \"\${CF_ACCESS_AUD}\"" \
       "$s must accept only the lollo's Access application (CF_ACCESS_AUD = CF_LOLLO_AUD), never Lettuce's"
     lollo_refused "del(.services[\"$s\"].environment.CF_ACCESS_AUD)" "$s must accept only the lollo's Access application"
@@ -4750,14 +6363,15 @@ test_check_refuses_a_shell_built_on_another_app_server_image() {
   out_has "upstream's image naming changed"
 }
 
-test_check_refuses_doc_tools_on_an_arm64_host() {
+# OfficeAgent is pinned for both platforms (doc-tools/Dockerfile), so an arm64
+# host, such as an Apple silicon Mac, builds the document tools for itself.
+test_check_accepts_doc_tools_on_an_arm64_host() {
   added
+  with_docs
   stub STUB_PLATFORM=linux/arm64
-  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-doc-tools/' "$D/config.env"
-  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-doc-tools/' "$D/stacks/alfred/stack.env"
   ctl check alfred
-  bad_rc
-  out_has "lollo-doc-tools needs a linux/amd64 host"
+  ok_rc
+  out_lacks "needs a linux/amd64"
 }
 
 # ── release mode ────────────────────────────────────────────────────────────
@@ -4776,6 +6390,10 @@ release_on() {
   } >"$H/RELEASE"
   CTL_DATA=$D
   mounts "$D"
+  # The wrapper lives in the data directory's bin/, which is how lolloctl knows
+  # the real one is mounted.
+  mkdir -p "$D/bin"
+  : >"$D/bin/lolloctl"
 }
 
 # mounts PATH... -> lolloctl's container has PATHs bound at the same path
@@ -4851,6 +6469,32 @@ test_release_mode_needs_the_same_path_inside_and_outside() {
 test_release_mode_needs_the_data_directory_mounted() {
   release_on
   mounts /somewhere/else
+  ctl list
+  bad_rc
+  out_has "is not mounted"
+}
+
+# Colima's virtiofs share reports the owner of whoever looked first, root when
+# Docker started the container: the data directory is known by its wrapper.
+test_release_mode_trusts_the_mount_not_the_owner_the_share_reports() {
+  release_on
+  cat >"$T/bin/stat" <<'STAT'
+#!/usr/bin/env bash
+if [[ $1 == -c && $2 == %u ]]; then
+  echo 0
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+STAT
+  chmod 755 "$T/bin/stat"
+  ctl list
+  ok_rc
+}
+
+# An empty directory Docker made in place of a path it cannot see has no wrapper.
+test_release_mode_needs_the_wrapper_in_the_data_directory() {
+  release_on
+  rm "$D/bin/lolloctl"
   ctl list
   bad_rc
   out_has "is not mounted"
@@ -4942,7 +6586,7 @@ test_version_names_the_release() {
   ok_rc
   out_has "lollo-rozzo 1.2.3"
   CTL_DATA=""
-  rm "$H/RELEASE"
+  rm "$H/RELEASE" "$D/bin/lolloctl"
   ctl version
   ok_rc
   out_has "from a clone: $H"
@@ -4995,6 +6639,30 @@ test_after_upgrade_moves_lettuce_forward_only() {
   eq "$(grep ^LETTUCE_REF= "$D/config.env")" LETTUCE_REF=v9.9.9
   log_lacks "curl-get"
   log_has "up -d --no-build"
+}
+
+test_after_upgrade_installs_the_skills() {
+  added
+  release_on
+  skill alpha
+  ctl _after-upgrade
+  ok_rc
+  log_has "up -d --no-build"
+  out_has "alfred: 1 skill(s) installed"
+  log_has "exec -T app-server sh -c"
+}
+
+test_after_upgrade_says_how_to_install_skills_that_failed() {
+  added
+  release_on
+  skill alpha
+  # A name upstream also ships fails only the skills step.
+  mkdir -p "$U/docker/agent-skills/alpha"
+  ctl _after-upgrade
+  bad_rc
+  log_has "up -d --no-build"
+  out_has "is in place, but its agent skills are not installed in every stack"
+  out_has "then run: lolloctl skills all"
 }
 
 test_after_upgrade_moves_lettuce_to_the_tested_tag() {
@@ -5180,6 +6848,137 @@ test_publish_fetches_each_images_own_digests_by_exact_name() {
   done
 }
 
+test_publish_puts_the_release_notes_highlights_first() {
+  local p="$ROOT/.github/workflows/publish.yml" highlights tested
+  highlights=$(grep -n 'cat release/NOTES.md' "$p" | cut -d: -f1)
+  tested=$(grep -n 'tested with Lettuce' "$p" | cut -d: -f1)
+  [[ -n $highlights && -n $tested ]] || fail "publish.yml does not write release/NOTES.md into the notes"
+  ((highlights < tested)) || fail "publish.yml writes release/NOTES.md after the generated notes"
+}
+
+test_publish_ci_ignores_a_push_of_only_the_release_notes() {
+  # The notes commit is the tagged one: it must not need [ci skip] to save a CI run.
+  grep -qF "paths-ignore: ['release/NOTES.md']" "$ROOT/.github/workflows/ci.yml" ||
+    fail "ci.yml runs on a push that changes only release/NOTES.md"
+}
+
+test_publish_dev_tag_names_a_branchs_builds() {
+  mkdir -p "$T/repo/release"
+  cp "$ROOT/release/dev-tag" "$T/repo/release/"
+  echo 1.2.3 >"$T/repo/VERSION"
+  local dt=$T/repo/release/dev-tag long
+  eq "$("$dt" feature/Foo_Bar)" v1.2.3-dev.feature-foo-bar
+  eq "$("$dt" -hotfix--x-)" v1.2.3-dev.hotfix-x
+  # SemVer: no numeric identifier with a leading zero.
+  eq "$("$dt" 0123)" v1.2.3-dev.b0123
+  # At most 40 characters, never ending on a dash.
+  long=$(printf 'a%.0s' {1..39})
+  eq "$("$dt" "$long/more")" "v1.2.3-dev.$long"
+  "$dt" /// >"$OUT" 2>&1 && fail "a branch without a letter or digit got a tag"
+  echo 1.2 >"$T/repo/VERSION"
+  "$dt" x >"$OUT" 2>&1 && fail "a VERSION that is not X.Y.Z gave a tag"
+  return 0
+}
+
+test_publish_dev_builds_never_write_to_the_repository() {
+  local p="$ROOT/.github/workflows/publish.yml" dev
+  dev=$(awk '/^  dev:$/ { on = 1 } on && /^  [a-z-]+:$/ && !/^  dev:$/ { on = 0 } on' "$p")
+  [[ -n $dev ]] || fail "publish.yml has no dev job"
+  grep -q 'contents: write' <<<"$dev" && fail "the dev job can write to the repository"
+  grep -q 'gh release' <<<"$dev" && fail "the dev job makes a GitHub release"
+  # Only the release job writes, and only on a tag.
+  eq "$(grep -c 'contents: write' "$p")" 1
+  grep -qF "if: needs.plan.outputs.kind == 'release'" "$p" || fail "the release job runs for dev builds too"
+}
+
+test_publish_builds_only_this_repositorys_pull_requests_but_renovates() {
+  local p="$ROOT/.github/workflows/publish.yml"
+  grep -qF 'github.event.pull_request.head.repo.full_name == github.repository' "$p" || fail "publish.yml builds forks' pull requests"
+  grep -qF "!startsWith(github.head_ref, 'renovate/')" "$p" || fail "publish.yml builds Renovate's pull requests"
+}
+
+test_publish_never_cancels_a_started_run() {
+  # A run stopped between tagging an image and attesting it would leave the
+  # image unattested for good: later runs reuse it.
+  grep -qx '  cancel-in-progress: false' "$ROOT/.github/workflows/publish.yml" || fail "publish.yml cancels running builds"
+}
+
+test_publish_releases_only_from_main_or_a_hotfix_branch() {
+  grep -qF "grep -qxE 'origin/(main|hotfix/.+)'" "$ROOT/.github/workflows/publish.yml" ||
+    fail "publish.yml releases a tag on any branch"
+}
+
+# shellcheck disable=SC2016 # GitHub's expressions, not bash's
+test_publish_checks_and_builds_the_commit_it_publishes() {
+  # A pull request's default checkout is GitHub's merge commit, not its head.
+  local p="$ROOT/.github/workflows/publish.yml" c="$ROOT/.github/workflows/ci.yml"
+  eq "$(grep -c 'ref: ${{ env.SHA }}' "$p")" "$(grep -c 'uses: actions/checkout@' "$p")"
+  eq "$(grep -c 'ref: ${{ inputs.ref }}' "$c")" "$(grep -c 'uses: actions/checkout@' "$c")"
+  grep -qF 'ref: ${{ github.event.pull_request.head.sha || github.sha }}' "$p" || fail "publish.yml checks the merge commit"
+}
+
+test_publish_the_lolloctl_image_carries_the_wrapper_template() {
+  grep -qx 'COPY release/lolloctl-wrapper.sh /opt/lollo-rozzo/release/lolloctl-wrapper.sh' "$ROOT/release/lolloctl.Dockerfile" ||
+    fail "the lolloctl image lacks the wrapper template"
+  grep -qx '!release/lolloctl-wrapper.sh' "$ROOT/release/lolloctl.Dockerfile.dockerignore" ||
+    fail "the lolloctl image's .dockerignore leaves out the wrapper template"
+}
+
+# ── self-upgrade to a dev build (fetch_dev_wrapper) ───────────────────────────
+DEV=v1.2.4-dev.feature-x.3
+test_release_fetch_wrapper_fills_a_dev_builds_wrapper_from_its_image() {
+  release_on
+  stub STUB_DEV_VERSION=${DEV#v}
+  ctl _fetch-wrapper "$DEV"
+  ok_rc
+  log_has "docker pull -q ghcr.io/example/lolloctl:$DEV"
+  local w=$D/bin/.lolloctl.new
+  [[ -x $w ]] || fail "no new wrapper"
+  grep -qxF "IMAGE=ghcr.io/example/lolloctl:$DEV@sha256:$(printf '%064d' 7)" "$w" || fail "the wrapper is not pinned to the image's digest"
+  grep -qxF "VERSION=$DEV" "$w" || fail "the wrapper does not name the dev build"
+  grep -qxF "REPOSITORY=example/lollo-rozzo" "$w" || fail "the wrapper does not name the repository"
+  grep -q '@[A-Z]*@' "$w" && fail "the wrapper still has a placeholder"
+  log_lacks "curl-get"
+}
+
+test_release_fetch_wrapper_refuses_an_image_of_another_build() {
+  release_on
+  stub STUB_DEV_VERSION=1.2.4-dev.feature-y.1
+  ctl _fetch-wrapper "$DEV"
+  bad_rc
+  out_has "is not dev build $DEV"
+  [[ ! -e $D/bin/.lolloctl.new ]] || fail "a wrapper was left behind"
+}
+
+test_release_fetch_wrapper_says_when_there_is_no_such_dev_build() {
+  release_on
+  stub STUB_PULL_RC=1
+  ctl _fetch-wrapper "$DEV"
+  bad_rc
+  out_has "no dev build $DEV at ghcr.io/example/lolloctl"
+}
+
+test_release_fetch_wrapper_needs_the_template_in_the_image() {
+  release_on
+  stub STUB_DEV_VERSION=${DEV#v}
+  stub STUB_DEV_NO_WRAPPER=1
+  ctl _fetch-wrapper "$DEV"
+  bad_rc
+  out_has "carries no wrapper"
+  [[ ! -s $D/bin/.lolloctl.new ]] || fail "a wrapper was left behind"
+}
+
+test_release_fetch_wrapper_refuses_a_malformed_dev_tag() {
+  release_on
+  local t
+  for t in v1.2.4-dev.Feature.1 v1.2.4-dev.x v1.2.4-dev..1 v1.2.4-beta.1; do
+    ctl _fetch-wrapper "$t"
+    bad_rc
+    out_has "usage: lolloctl self-upgrade"
+  done
+  log_lacks "docker pull"
+}
+
 # ── the wrapper (release/lolloctl-wrapper.sh) ─────────────────────────────
 # wrapper_in DIR -> the wrapper, filled in as publish.yml fills it, in DIR/bin,
 # and a socket for it to find
@@ -5210,7 +7009,8 @@ test_wrapper_runs_the_pinned_image_with_the_data_directory_at_the_same_path() {
   [[ $run == *" -e HOME=/tmp "* ]] || fail "no writable HOME: $run"
   [[ $run == *" -v $T/srv:$T/srv "* ]] || fail "data not at the same path: $run"
   [[ $run == *" -e LOLLO_DATA=$T/srv "* ]] || fail "LOLLO_DATA not passed: $run"
-  [[ $run == *" -v $T/docker.sock:$T/docker.sock "* ]] || fail "socket not at the same path: $run"
+  [[ $run == *" -v $T/docker.sock:$T/docker.sock -e DOCKER_HOST=unix://$T/docker.sock "* ]] || fail "socket not at the same path: $run"
+  [[ $run == *" --group-add $(stat -c %g "$T/docker.sock") "* ]] || fail "not in the socket's group: $run"
   [[ $run == *" $WIMAGE list" ]] || fail "not the pinned image: $run"
 }
 
@@ -5239,7 +7039,8 @@ test_wrapper_refuses_to_run_outside_a_data_directory() {
   RC=0
   DOCKER_HOST=unix://$T/docker.sock PATH="$T/bin:$PATH" "$T/elsewhere/lolloctl" list >"$OUT" 2>&1 || RC=$?
   bad_rc
-  out_has "sudo install -d"
+  out_has "install -d -m 700 ~/lollo-rozzo ~/lollo-rozzo/bin"
+  out_lacks "sudo"
   log_lacks "docker run"
 }
 
@@ -5358,6 +7159,18 @@ test_apply_carries_on_past_a_stack_that_fails() {
   log_has "/root/.letta/skills"
 }
 
+test_apply_reports_skills_that_failed() {
+  added
+  skill alpha
+  # A name upstream also ships fails the skills step, after every stack is up.
+  mkdir -p "$U/docker/agent-skills/alpha"
+  ctl apply --yes
+  bad_rc
+  log_has "up -d --no-build"
+  out_has "apply did not finish: skills all"
+  out_lacks "skill(s) installed"
+}
+
 test_apply_starts_the_other_stacks_when_one_fails_to_start() {
   added
   ctl add hal hal@example.com
@@ -5437,6 +7250,274 @@ test_wrapper_mounts_toolbox_config_outside_the_home() {
   log_has "-v $T/cfg/lolloctl/toolbox:$T/cfg/lolloctl/toolbox:ro"
   log_has "-v $T/claude-cfg:$T/claude-cfg:ro"
   log_lacks "-v $T/cfg:"
+}
+
+# ── the wrapper on macOS ────────────────────────────────────────────────────
+# on_mac NAME -> the wrapper sees macOS, with Docker's VM named NAME (colima,
+# colima-<profile>, docker-desktop, orbstack) and its socket's group 990
+on_mac() {
+  stub STUB_UNAME_S=Darwin
+  stub STUB_SOCKET_GID=990
+  stub "STUB_DOCKER_NAME=$1"
+}
+# agent_sock -> an ssh agent socket on the host, in $W_SOCK
+agent_sock() {
+  W_SOCK=$T/agent.sock
+  python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$W_SOCK"
+}
+# wtb DIR ARGS... -> the wrapper's toolbox, as the operator $T/home-op with the
+# ssh agent at $W_SOCK; like ctl
+wtb() {
+  local dir=$1
+  shift
+  mkdir -p "$T/home-op"
+  RC=0
+  HOME=$T/home-op XDG_CONFIG_HOME="" CLAUDE_CONFIG_DIR="" CLAUDE_CODE_OAUTH_TOKEN="" SSH_AUTH_SOCK=${W_SOCK:-} \
+    DOCKER_HOST=unix://$T/docker.sock PATH="$T/bin:$PATH" "$dir/bin/lolloctl" toolbox "$@" >"$OUT" 2>&1 </dev/null || RC=$?
+}
+# tunnel_closed -> the ssh tunnel the wrapper opened is gone (it may take a moment to be reaped)
+tunnel_closed() {
+  local pid i
+  pid=$(cat "$T/tunnel.pid")
+  for ((i = 0; i < 40; i++)); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.05
+  done
+  fail "the ssh tunnel ($pid) is still open"
+}
+
+# Docker's VM bind-mounts its own /var/run/docker.sock, whatever the client's
+# context points at, and that socket's group is the VM's.
+test_wrapper_on_macos_mounts_the_vms_socket_with_its_group() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  wctl "$T/srv" list
+  ok_rc
+  log_has "docker run --rm --entrypoint stat -v /var/run/docker.sock:/var/run/docker.sock $WIMAGE -c %g %a /var/run/docker.sock"
+  local run
+  run=$(grep '^docker run --rm -i ' "$T/calls.log")
+  [[ $run == *" --group-add 990 "* ]] || fail "not in the VM socket's group: $run"
+  [[ $run == *" -v /var/run/docker.sock:/var/run/docker.sock -e DOCKER_HOST=unix:///var/run/docker.sock "* ]] || fail "not the VM's socket: $run"
+  [[ $run != *"$T/docker.sock"* ]] || fail "the client's socket was mounted: $run"
+}
+
+# Reading the group costs a container: it is kept for as long as the daemon is
+# the same one (a new VM is a new daemon, whose socket may have another group).
+test_wrapper_on_macos_reads_the_sockets_group_once_per_daemon() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  wctl "$T/srv" list
+  ok_rc
+  eq "$(cat "$T/srv/.docker-gid")" "daemon-1 990"
+  : >"$T/calls.log"
+  wctl "$T/srv" list
+  ok_rc
+  log_lacks "--entrypoint stat"
+  log_has "--group-add 990 "
+  stub STUB_DOCKER_ID=daemon-2
+  stub STUB_SOCKET_GID=991
+  wctl "$T/srv" list
+  ok_rc
+  log_has "--entrypoint stat"
+  log_has "--group-add 991 "
+  eq "$(cat "$T/srv/.docker-gid")" "daemon-2 991"
+}
+
+test_wrapper_version_needs_no_docker() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub STUB_DOCKER_INFO_RC=1
+  stub STUB_SOCKET_GID_RC=1
+  wctl "$T/srv" wrapper-version
+  ok_rc
+  out_has "lollo-rozzo "
+  log_lacks "docker "
+}
+
+# lolloctl runs as you: the socket's group gets you in only when it may write.
+test_wrapper_on_macos_refuses_a_socket_its_group_cannot_write() {
+  wrapper_in "$T/srv"
+  on_mac docker-desktop
+  stub STUB_SOCKET_GID=0
+  stub STUB_SOCKET_MODE=755
+  wctl "$T/srv" list
+  bad_rc
+  out_has "Docker's socket in its VM (/var/run/docker.sock) is mode 755, group 0: that group cannot write it, so lolloctl, which runs as you, cannot use Docker"
+  log_lacks "docker run --rm -i "
+  [[ ! -e $T/srv/.docker-gid ]] || fail "a group was kept: $(cat "$T/srv/.docker-gid")"
+}
+
+test_wrapper_on_macos_needs_docker_running() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub STUB_SOCKET_GID_RC=1
+  wctl "$T/srv" list
+  bad_rc
+  out_has "is Docker (Colima, Docker Desktop, OrbStack) running?"
+  log_lacks "docker run --rm -i "
+  [[ ! -e $T/srv/.docker-gid ]] || fail "a group was kept: $(cat "$T/srv/.docker-gid")"
+  stub STUB_DOCKER_INFO_RC=1
+  wctl "$T/srv" list
+  bad_rc
+  out_has "is Docker (Colima, Docker Desktop, OrbStack) running?"
+  log_lacks "docker run --rm -i "
+}
+
+# macOS has BSD stat: no -c, -f with its own formats.
+test_wrapper_works_with_bsd_stat() {
+  wrapper_in "$T/srv"
+  cat >"$T/bin/stat" <<'STAT'
+#!/usr/bin/env bash
+[[ $1 == -f ]] || { echo "stat: illegal option -- ${1#-}" >&2; exit 1; }
+fmt=$2
+shift 2
+[[ $1 == -- ]] && shift
+case $fmt in
+  %g) exec /usr/bin/stat -c %g -- "$1" ;;
+  %Lp) exec /usr/bin/stat -c %a -- "$1" ;;
+esac
+exit 1
+STAT
+  chmod 755 "$T/bin/stat"
+  wctl "$T/srv" list
+  ok_rc
+  log_has "--group-add $(/usr/bin/stat -c %g "$T/docker.sock") "
+  mkdir -p "$T/home-op/.config/lolloctl"
+  printf 'env A=b\n' >"$T/home-op/.config/lolloctl/toolbox"
+  chmod 664 "$T/home-op/.config/lolloctl/toolbox"
+  wtb "$T/srv" alfred agent
+  bad_rc
+  out_has "writable by others"
+}
+
+# Colima has no fixed agent socket in its VM: an ssh tunnel serves one there for
+# the run, mounted at the same path, and closes when the toolbox ends.
+test_wrapper_on_colima_tunnels_the_ssh_agent_into_the_vm() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  agent_sock
+  wtb "$T/srv" alfred agent
+  ok_rc
+  log_has "colima ssh-config --profile default"
+  local tunnel vm run
+  tunnel=$(grep '^ssh .* -N ' "$T/calls.log")
+  [[ $tunnel == *" -o ExitOnForwardFailure=yes -o ControlMaster=no -o ControlPath=none -R /tmp/lolloctl-agent-"*".sock:$W_SOCK colima" ]] ||
+    fail "not a tunnel into Colima's VM: $tunnel"
+  vm=${tunnel#* -R }
+  vm=${vm%%:*}
+  grep -q "^ssh -F .* colima test -S $vm\$" "$T/calls.log" || fail "the socket in the VM was not waited for"
+  # sshd in the VM does not replace a socket left at that path, and a stale one
+  # would pass the wait: it is removed before the tunnel opens, and after it closes.
+  [[ $vm =~ ^/tmp/lolloctl-agent-[0-9]+-[0-9]+\.sock$ ]] || fail "not a name of its own: $vm"
+  eq "$(grep -E "^ssh -F .* colima rm -f $vm\$|^ssh .* -N " "$T/calls.log" | awk '{ print ($0 ~ / -N /) ? "tunnel" : "rm" }' | paste -sd' ')" "rm tunnel rm"
+  run=$(grep '^docker run --rm -i ' "$T/calls.log")
+  [[ $run == *" -v $vm:$vm -e SSH_AUTH_SOCK=$vm "* ]] || fail "the VM's agent socket not passed: $run"
+  [[ $run != *"$W_SOCK"* ]] || fail "the host's agent socket was mounted: $run"
+  tunnel_closed
+}
+
+test_wrapper_on_colima_uses_the_vms_profile() {
+  wrapper_in "$T/srv"
+  on_mac colima-work
+  agent_sock
+  wtb "$T/srv" alfred agent
+  ok_rc
+  log_has "colima ssh-config --profile work"
+  grep -q '^ssh .* -N .* colima-work$' "$T/calls.log" || fail "not the work profile's VM: $(grep '^ssh ' "$T/calls.log")"
+  tunnel_closed
+}
+
+test_wrapper_on_colima_closes_the_tunnel_when_the_toolbox_fails() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  agent_sock
+  stub STUB_RUN_RC=7
+  wtb "$T/srv" alfred agent
+  eq "$RC" 7
+  tunnel_closed
+}
+
+test_wrapper_on_colima_goes_on_without_an_agent_when_the_tunnel_fails() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  agent_sock
+  stub STUB_SSH_TUNNEL_RC=255
+  stub STUB_SSH_TEST_RC=1
+  wtb "$T/srv" alfred agent
+  ok_rc
+  out_has "could not open an ssh tunnel into Colima's VM (default); no ssh agent"
+  log_lacks "SSH_AUTH_SOCK"
+  # Closed once: before the tunnel, and once after it failed, not again at exit.
+  eq "$(grep -c '^ssh -F .* colima rm -f ' "$T/calls.log")" 2
+}
+
+# Colima shares only the home (and colima.yaml's mounts) with its VM. For any
+# other path Docker would bind an empty directory it makes in the VM: a backup
+# would land there, and a restore would read nothing.
+test_wrapper_on_colima_refuses_a_path_its_vm_does_not_share() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub "STUB_COLIMA_UNSHARED=$T/usb"
+  mkdir -p "$T/usb/backup/alfred/20261018T033000Z" "$T/nas"
+  wctl "$T/srv" backup all "$T/usb/backup"
+  bad_rc
+  out_has "$T/usb/backup is not shared with Colima's VM (default)"
+  log_lacks "docker run --rm -i "
+  wctl "$T/srv" restore alfred "$T/usb/backup/alfred/20261018T033000Z"
+  bad_rc
+  out_has "is not shared with Colima's VM"
+  log_has "colima ssh --profile default -- test -d $T/usb/backup"
+  : >"$T/calls.log"
+  wctl "$T/srv" backup all "$T/nas"
+  ok_rc
+  log_has "-v $T/nas:$T/nas "
+}
+
+test_wrapper_on_docker_desktop_and_orbstack_uses_their_agent_socket() {
+  local name
+  for name in docker-desktop orbstack; do
+    : >"$T/calls.log"
+    wrapper_in "$T/srv-$name"
+    on_mac "$name"
+    agent_sock 2>/dev/null || true
+    wtb "$T/srv-$name" alfred agent
+    ok_rc
+    log_has "-v /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock -e SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock"
+    log_lacks "colima "
+    log_lacks "ssh -F"
+    rm -f "$T/docker.sock"
+  done
+}
+
+test_wrapper_on_another_mac_runtime_goes_on_without_an_agent() {
+  wrapper_in "$T/srv"
+  on_mac rancher-desktop
+  agent_sock
+  wtb "$T/srv" alfred agent
+  ok_rc
+  out_has "no ssh agent, which needs Colima, Docker Desktop or OrbStack on macOS (Docker's VM is 'rancher-desktop')"
+  log_lacks "SSH_AUTH_SOCK"
+}
+
+# On macOS the Claude token comes from the login keychain.
+test_wrapper_takes_the_claude_token_from_the_macos_keychain() {
+  wrapper_in "$T/srv"
+  on_mac colima
+  stub STUB_SECRET_TOOL=libsecret-tok-1
+  stub STUB_SECURITY=keychain-tok-1
+  wtb "$T/srv" alfred agent
+  ok_rc
+  log_lacks "keychain-tok-1"
+  log_has "-e LOLLOCTL_CLAUDE_TOKEN"
+  grep -q 'libsecret-tok-1' "$T/run-env.log" && fail "secret-tool was asked on macOS"
+  grep -qx 'LOLLOCTL_CLAUDE_TOKEN=keychain-tok-1' "$T/run-env.log" || fail "the keychain token did not reach the container"
+}
+
+# The new wrapper runs with this one's bash: on macOS, /bin/bash is 3.2.
+test_wrapper_self_upgrade_runs_the_new_wrapper_with_the_same_bash() {
+  wrapper_in "$T/srv"
+  # shellcheck disable=SC2016 # the literal line in the wrapper
+  grep -q '"$BASH" "$bin/.lolloctl.new" _pull' "$T/srv/bin/lolloctl" || fail "self-upgrade does not reuse its bash"
 }
 
 # ── scripts/renovate-post-upgrade.sh ────────────────────────────────────────
@@ -5545,13 +7626,17 @@ test_post_upgrade_refuses_a_digest_that_is_not_sha256() {
   kept_as_they_were .github/workflows/ci.yml
 }
 
-# officeagent_release SUMS_HASH -> release 1.3.0's tarball, and its SHA256SUMS
-# listing SUMS_HASH for it (default: the tarball's own hash)
+# officeagent_release [X64_SUM [ARM64_SUM]] -> release 1.3.0's two Linux
+# tarballs, and its SHA256SUMS listing those sums for them (default: each
+# tarball's own); their hashes in OA_X64 and OA_ARM64
 officeagent_release() {
   mkdir -p "$T/github"
-  printf 'officeagent build\n' >"$T/github/officeagent-mcp-linux-x64.tar.gz"
-  OA_SUM=$(sha256sum "$T/github/officeagent-mcp-linux-x64.tar.gz" | cut -d' ' -f1)
-  printf '%s  officeagent-mcp-linux-arm64.tar.gz\n%s  officeagent-mcp-linux-x64.tar.gz\n' "$HEX_B" "${1:-$OA_SUM}" >"$T/github/SHA256SUMS"
+  printf 'officeagent x64 build\n' >"$T/github/officeagent-mcp-linux-x64.tar.gz"
+  printf 'officeagent arm64 build\n' >"$T/github/officeagent-mcp-linux-arm64.tar.gz"
+  OA_X64=$(sha256sum "$T/github/officeagent-mcp-linux-x64.tar.gz" | cut -d' ' -f1)
+  OA_ARM64=$(sha256sum "$T/github/officeagent-mcp-linux-arm64.tar.gz" | cut -d' ' -f1)
+  printf '%s  officeagent-mcp-linux-arm64.tar.gz\n%s  officeagent-mcp-linux-x64.tar.gz\n' \
+    "${2:-$OA_ARM64}" "${1:-$OA_X64}" >"$T/github/SHA256SUMS"
   bump doc-tools/Dockerfile OFFICEAGENT_VERSION 1.3.0
 }
 
@@ -5560,9 +7645,13 @@ test_post_upgrade_officeagent_checks_the_sums_and_the_attestation() {
   officeagent_release
   post_upgrade officeagent
   ok_rc
-  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256)" "$OA_SUM"
-  log_has "curl-get https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v1.3.0/officeagent-mcp-linux-x64.tar.gz"
-  log_has "gh attestation verify officeagent-mcp-linux-x64.tar.gz --repo ilia-sokolov/OfficeAgent.NET"
+  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256_AMD64)" "$OA_X64"
+  eq "$(pin doc-tools/Dockerfile OFFICEAGENT_SHA256_ARM64)" "$OA_ARM64"
+  local a
+  for a in x64 arm64; do
+    log_has "curl-get https://github.com/ilia-sokolov/OfficeAgent.NET/releases/download/v1.3.0/officeagent-mcp-linux-$a.tar.gz"
+    log_has "gh attestation verify officeagent-mcp-linux-$a.tar.gz --repo ilia-sokolov/OfficeAgent.NET"
+  done
 }
 
 test_post_upgrade_officeagent_refuses_a_tarball_its_sums_do_not_list() {
@@ -5571,8 +7660,19 @@ test_post_upgrade_officeagent_refuses_a_tarball_its_sums_do_not_list() {
   keep doc-tools/Dockerfile
   post_upgrade officeagent
   bad_rc
-  out_has "does not match its SHA256SUMS"
+  out_has "officeagent-mcp-linux-x64.tar.gz 1.3.0 does not match its SHA256SUMS"
   log_lacks "gh attestation"
+  kept_as_they_were doc-tools/Dockerfile
+}
+
+# Both builds are checked before either pin moves.
+test_post_upgrade_officeagent_refuses_when_only_the_arm64_tarball_is_wrong() {
+  post_upgrade_fixture
+  officeagent_release "" "$HEX_A"
+  keep doc-tools/Dockerfile
+  post_upgrade officeagent
+  bad_rc
+  out_has "officeagent-mcp-linux-arm64.tar.gz 1.3.0 does not match its SHA256SUMS"
   kept_as_they_were doc-tools/Dockerfile
 }
 
@@ -5660,6 +7760,41 @@ test_doc_tools_lock_check_sees_a_pin_the_lock_lacks() {
   sed -i 's/"mcp==[^"]*"/"mcp==9.9.9"/; s/"pypdf\[crypto\]==[^"]*"/"pypdf[crypto]==9.9.9"/' "$H/doc-tools/pyproject.toml"
   [[ $(lock_lacks "$H/doc-tools/pyproject.toml" "$H/doc-tools/requirements.lock") == $'mcp==9.9.9\npypdf[crypto]==9.9.9' ]] ||
     fail "expected mcp and pypdf reported, got: $(lock_lacks "$H/doc-tools/pyproject.toml" "$H/doc-tools/requirements.lock")"
+}
+
+# ── the CI gate ──────────────────────────────────────────────────────────────
+# The Main branch ruleset requires ci-passed alone: a job missing from its
+# needs is not required (scripts/check-ci-gate.sh).
+ci_gate() {
+  RC=0
+  "$ROOT/scripts/check-ci-gate.sh" "$@" >"$OUT" 2>&1 || RC=$?
+}
+
+test_ci_gate_needs_every_job() {
+  ci_gate "$ROOT/.github/workflows/ci.yml"
+  ok_rc
+  out_has "ci-passed needs every job"
+}
+
+test_ci_gate_names_a_job_missing_from_needs() {
+  sed 's/^\(    needs: \[.*\), docs\]$/\1]/' "$ROOT/.github/workflows/ci.yml" >"$T/ci.yml"
+  ci_gate "$T/ci.yml"
+  bad_rc
+  out_has "job docs is not in ci-passed's needs"
+}
+
+test_ci_gate_names_a_need_that_is_no_job() {
+  sed 's/^\(    needs: \[.*\)\]$/\1, gone]/' "$ROOT/.github/workflows/ci.yml" >"$T/ci.yml"
+  ci_gate "$T/ci.yml"
+  bad_rc
+  out_has "ci-passed needs gone, which is not a job"
+}
+
+test_ci_gate_runs_whatever_the_jobs_did() {
+  sed '/^  ci-passed:$/,$ { /^    if: always()$/d }' "$ROOT/.github/workflows/ci.yml" >"$T/ci.yml"
+  ci_gate "$T/ci.yml"
+  bad_rc
+  out_has "ci-passed does not run if: always()"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────

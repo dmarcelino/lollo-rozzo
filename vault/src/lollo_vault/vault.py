@@ -1,7 +1,7 @@
 """The encrypted vault: one SQLite file on the vault-only volume.
 
-On disk in plaintext: secret ids, kinds, sharing modes, timestamps, audit
-actions and push subscriptions. Secret names, usage notes, fields and audit
+On disk in plaintext: secret ids, kinds, sharing modes, timestamps and audit
+actions. Secret names, usage notes, fields and audit
 details are encrypted (crypto.py). The data key lives only in this process,
 from unlock until lock, auto-lock or restart.
 """
@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from secrets import token_hex
-from typing import Any
 
 from . import crypto
 from .config import AUTO_LOCK_SECONDS, ERASE_DELAY_SECONDS, MAX_FIELD_VALUE, MIN_PASSPHRASE_LENGTH
@@ -42,14 +41,11 @@ CREATE TABLE IF NOT EXISTS audit (
   blob BLOB
 );
 CREATE INDEX IF NOT EXISTS audit_at ON audit(at);
-CREATE TABLE IF NOT EXISTS push_subscriptions (
-  endpoint TEXT PRIMARY KEY,
-  p256dh TEXT NOT NULL,
-  auth TEXT NOT NULL,
-  email TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
 """
+# Devices enable notifications on the lollo's Notifications page now
+# (lollo-notifications): the vault's own subscriptions, from before, are
+# dropped at every open. Idempotent, and a vault.db without the table opens too.
+DROP_OLD = "DROP TABLE IF EXISTS push_subscriptions"
 
 ASK, AUTO = "ask", "auto"
 KEY_AAD = b"vault-data-key"
@@ -204,6 +200,7 @@ class Vault:
             self._db.executescript(SCHEMA)
             # Deleted rows are overwritten, not just unlinked from the b-tree.
             self._db.execute("PRAGMA secure_delete = ON")
+            self._db.execute(DROP_OLD)
 
     def now(self) -> int:
         return int(self._clock())
@@ -326,14 +323,18 @@ class Vault:
         at, by = self._meta("erase_at"), self._meta("erase_by")
         return None if at is None else (int(at), (by or b"").decode())
 
+    def check_erasable(self) -> None:
+        """VaultError unless an erase may be scheduled: a vault that is set up and locked."""
+        if not self.is_setup():
+            raise VaultError("there is no vault to erase")
+        if self.is_unlocked():
+            raise VaultError("the vault is unlocked: erase it from Settings")
+
     def schedule_erase(self, actor: str) -> tuple[int, bool]:
         """(when, whether this call scheduled it). An erase already scheduled
         keeps its time, so asking again never brings it closer."""
         with self._lock:
-            if not self.is_setup():
-                raise VaultError("there is no vault to erase")
-            if self.is_unlocked():
-                raise VaultError("the vault is unlocked: erase it from Settings")
+            self.check_erasable()
             pending = self.pending_erase()
             if pending is not None:
                 return pending[0], False
@@ -446,17 +447,3 @@ class Vault:
                 detail = crypto.open_sealed(key, bytes(r["blob"]), f"audit:{r['id']}".encode()).decode()
             out.append(AuditEntry(r["at"], r["actor"], r["action"], r["item_id"], detail))
         return out
-
-    # ── push subscriptions (not secret: device endpoints) ───────────────────
-    def add_subscription(self, endpoint: str, p256dh: str, auth: str, email: str) -> None:
-        self._x(
-            "INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, email, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (endpoint, p256dh, auth, email, self.now()),
-        )
-
-    def remove_subscription(self, endpoint: str) -> None:
-        self._x("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
-
-    def subscriptions(self) -> list[Any]:
-        return self._q("SELECT * FROM push_subscriptions ORDER BY created_at")

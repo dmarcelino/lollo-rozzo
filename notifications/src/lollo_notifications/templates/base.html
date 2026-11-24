@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  {% if csrf %}<meta name="csrf" content="{{ csrf }}">
+  <meta name="vapid" content="{{ vapid_public_key }}">{% endif %}
+  <meta name="theme-color" content="#e7eaf0">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}Notifications{% endblock %} - Lollo Rozzo</title>
+  <!-- The lollo host's one app (served by landing). use-credentials: the manifest
+       fetch must carry the Access cookie, or Access answers with its login page. -->
+  <link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="icon" href="{{ base }}/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="{{ base }}/lollo.css">
+  <link rel="stylesheet" href="{{ base }}/app.css">
+  {% if csrf %}<script src="{{ base }}/app.js" defer></script>{% endif %}
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <img class="app-icon" src="{{ base }}/icon-192.png" width="28" height="28" alt="">
+      <a class="title" href="{{ base }}/">Notifications</a>
+      <a class="topbar-note" href="/">Lollo Rozzo</a>
+    </div>
+  </header>
+  <main class="shell">
+    {% block content %}{% endblock %}
+  </main>
+  {% if email %}<footer class="footer">Signed in as {{ email }}</footer>{% endif %}
+</body>
+</html>

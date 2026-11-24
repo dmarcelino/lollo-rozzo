@@ -9,6 +9,9 @@ Access check applies. Instead every call needs the stack's executor token
 (LOLLO_EXECUTOR_TOKEN). Agents are root in the app-server and can read that
 token, so nothing here is trusted beyond "this is what the executor (or an
 agent) said": the token keeps out the other containers on the stack network.
+
+The same guard, with a prefix and a token per caller (guard_sources), serves the
+notifications service's send API (lollo_common.notify).
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from __future__ import annotations
 import hmac
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -34,11 +37,18 @@ MAX_AGENTS_BODY = 1024 * 1024
 MAX_AGENTS = 1000
 MAX_AGENT_NAME = 200
 AGENT_ID = re.compile(r"agent-[A-Za-z0-9-]{1,80}")
+# Where a request's turn runs: new, default, or the id of one of the agent's
+# conversations, as letta-code gives it in $LETTA_CONVERSATION_ID. The executor
+# checks the same shape (never a leading "-", so it can't read as a flag).
+CONVERSATION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}")
 # A sidecar wants a new agent list when it has none, when its list is older
 # than this, or when a page asked for one since (AgentAsks).
 AGENTS_FRESH_SECONDS = 900
 # Requests that came through the tunnel carry these; the executor's never do.
 TUNNEL_HEADERS = ("cf-access-jwt-assertion", "cf-connecting-ip", "cf-ray")
+# Who may call an internal API (guard_sources): the executor, or a sender of
+# notifications, whose name is also its page prefix (/vault/) and tag prefix.
+SOURCE = re.compile(r"[a-z][a-z0-9-]{0,31}")
 NO_STORE = {"cache-control": "no-store"}
 # What the executor reports back about one request.
 REQUEST_ID = re.compile(r"[0-9a-f]{32}")
@@ -85,22 +95,41 @@ async def read_json(request: Request, cap: int) -> dict[str, Any]:
     return obj
 
 
-def guard(token: str) -> Callable[[Handler], Handler]:
-    """Wraps an executor route: only under EXECUTOR_PREFIX as sent (whatever the
-    router made of the path), never from a browser or through the tunnel, and only
-    with the token. A handler's BadRequest becomes its JSON error."""
-    expected = f"Bearer {token}".encode()
+def guard_sources(prefix: str, tokens: Mapping[str, str]) -> Callable[[Handler], Handler]:
+    """Wraps an internal route: only under `prefix` as sent (whatever the router
+    made of the path), never from a browser or through the tunnel, and only with
+    one of the tokens, a map from source name to that source's token. The handler
+    finds the caller's name in `request.state.source`. A handler's BadRequest
+    becomes its JSON error."""
+    if not prefix.startswith("/") or prefix.endswith("/"):
+        raise ValueError("the prefix must start with / and not end with it")
+    if not tokens:
+        raise ValueError("a guard needs at least one token")
+    for source, token in tokens.items():
+        if not SOURCE.fullmatch(source):
+            raise ValueError(f"not a source name: {source!r}")
+        if not token:
+            raise ValueError(f"empty token for {source}")
+    if len(set(tokens.values())) != len(tokens):
+        # Then a token could not say who called.
+        raise ValueError("two sources share a token")
+    under = prefix.encode() + b"/"
+    expected = [(source, f"Bearer {token}".encode()) for source, token in tokens.items()]
 
     def guarded(handler: Handler) -> Handler:
         async def endpoint(request: Request) -> Response:
             raw = request.scope.get("raw_path") or request.url.path.encode()
-            if not raw.startswith(EXECUTOR_PREFIX.encode() + b"/"):
+            if not raw.startswith(under):
                 return error(404, "not found")
             if "origin" in request.headers or any(h in request.headers for h in TUNNEL_HEADERS):
                 return error(403, "forbidden")
             given = request.headers.get("authorization", "").encode()
-            if not hmac.compare_digest(given, expected):
+            # Compared with every token, so the time taken does not say which one matched.
+            matches = [(source, hmac.compare_digest(given, value)) for source, value in expected]
+            caller = next((source for source, ok in matches if ok), None)
+            if caller is None:
                 return error(401, "unauthorized")
+            request.state.source = caller
             try:
                 return await handler(request)
             except BadRequest as e:
@@ -109,6 +138,12 @@ def guard(token: str) -> Callable[[Handler], Handler]:
         return endpoint
 
     return guarded
+
+
+def guard(token: str) -> Callable[[Handler], Handler]:
+    """Wraps an executor route: `guard_sources` at EXECUTOR_PREFIX with the
+    executor's token alone."""
+    return guard_sources(EXECUTOR_PREFIX, {"executor": token})
 
 
 async def read_agents(request: Request) -> list[tuple[str, str]]:

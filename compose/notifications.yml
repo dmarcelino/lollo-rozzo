@@ -1,0 +1,67 @@
+# Merged by lolloctl on top of upstream/docker/compose.yml for every stack.
+# The notifications service (notifications/, docs/notifications.md): the one
+# sender of the lollo's Web Push notifications. It holds the stack's push keys
+# (LOLLO_VAPID_*) and every device's subscription, and serves the page where a
+# person turns notifications on, https://<name>-lollo.<domain>/notifications/,
+# and the service worker that shows them. On whenever a sender is: the vault or
+# the browser (Compose starts a service when any of its profiles is on); it has
+# no profile of its own, and without either this file adds nothing.
+#
+# The tunnel forwards /notifications/ on the lollo host to it
+# (cf_tunnel_configure); every page there needs a Cloudflare Access JWT of the
+# lollo's own Access application (CF_LOLLO_AUD), never Lettuce's. The senders
+# post to /notify/v1/send over the stack network, each with its own token
+# (NOTIFY_TOKEN_<SOURCE>), which only it and this service get; the tunnel never
+# routes that prefix. The hub may send only what is the sender's own: a link
+# under /<source>/ and a tag starting with <source>-.
+#
+# It gets neither profile list (only landing does): a profile change must not
+# recreate it, or the vault would refuse erases meanwhile.
+#
+# Its subscriptions live on a named volume no other service mounts; it runs as
+# a non-root user, read-only, with no capabilities, on the default network
+# only. `lolloctl check` refuses a stack where it loses any of that, or where
+# a sender's token reaches another service (check_notifications, check_stack).
+# Relative paths resolve against --project-directory (upstream/docker).
+services:
+  lollo-notifications:
+    profiles: ["lollo-vault", "lollo-browser"]
+    build:
+      context: ${LOLLO_HOME:?LOLLO_HOME is not set}/notifications
+      additional_contexts:
+        lollo-common: ${LOLLO_HOME:?LOLLO_HOME is not set}/lollo-common
+    image: ${LOLLO_IMAGE_NOTIFICATIONS:-lollo-notifications:local}
+    environment:
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      # The lollo's own Access application and host, never Lettuce's.
+      CF_ACCESS_AUD: ${CF_LOLLO_AUD:-}
+      CF_ACCESS_ISSUER: ${CF_ACCESS_ISSUER:-}
+      ALLOWED_USERS: ${ALLOWED_USERS:-}
+      PUBLIC_ORIGIN: ${LOLLO_ORIGIN:-}
+      # Generated once per stack by `up` (ensure_notify_secrets), never rotated:
+      # a new keypair would break every device's subscription.
+      LOLLO_VAPID_PUBLIC_KEY: ${LOLLO_VAPID_PUBLIC_KEY:-}
+      LOLLO_VAPID_PRIVATE_KEY: ${LOLLO_VAPID_PRIVATE_KEY:-}
+      PUSH_VAPID_CONTACT_EMAIL: ${PUSH_VAPID_CONTACT_EMAIL:-}
+      # One token per sender; each sender gets only its own, as NOTIFY_TOKEN.
+      NOTIFY_TOKEN_VAULT: ${NOTIFY_TOKEN_VAULT:-}
+      NOTIFY_TOKEN_BROWSER: ${NOTIFY_TOKEN_BROWSER:-}
+      TZ: ${TZ:-UTC}
+    networks:
+      - default
+    volumes:
+      - notifications-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 64
+    restart: unless-stopped
+
+volumes:
+  # Deleted by `lolloctl remove` (compose down -v). `lolloctl backup` copies
+  # it from a one-off container that mounts it read-only, so a restored stack
+  # still reaches its devices.
+  notifications-data:

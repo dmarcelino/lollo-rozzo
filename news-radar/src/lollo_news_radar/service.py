@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
 import anyio
-from lollo_common.executor import AGENT_ID
+from lollo_common.executor import AGENT_ID, CONVERSATION_ID
 from lollo_common.text import encodable, one_line
 
+from . import places as place_map
 from .config import (
     CARRY_SECONDS,
     FETCH_AHEAD_SECONDS,
@@ -34,20 +34,28 @@ from .config import (
     Settings,
 )
 from .cron import Schedule, ScheduleError, max_fires_per_day
-from .digest import MonitorDigest, considered_since, group_value, monitor_digest, more, render, term_counts
+from .digest import (
+    MonitorDigest,
+    considered,
+    considered_since,
+    filter_warnings,
+    group_value,
+    monitor_digest,
+    more,
+    render,
+    term_counts,
+)
 from .extract import fill_rates, run_problem, window_warning
 from .fetch import Fetcher
 from .inspect import inspect
 from .runner import RunResult, run_source
 from .spec import Spec, SpecError, parse_spec
-from .store import QUEUED, Monitor, Report, Store, new_report_id
+from .store import QUEUED, Monitor, Report, Store, StoredItem, new_report_id
 
 log = logging.getLogger("lollo_news_radar.service")
 
 # Where a monitor's reports go: new (a new conversation each report), default (the
-# agent's main one), or the id of one of its conversations, as letta-code gives it
-# in $LETTA_CONVERSATION_ID. The executor checks the same shape.
-CONVERSATION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}")
+# agent's main one), or the id of one of its conversations (CONVERSATION_ID).
 # Said for the conversation an agent saves a monitor from (set_up_in).
 HERE = "here"
 TEST_ITEMS = 10
@@ -248,6 +256,15 @@ class Service:
         warnings = [w for w in (window, _block_warning(spec, result)) if w]
         if warnings:
             out["warnings"] = warnings
+        if result.robots_exempt:
+            why = (
+                "robots.txt could not be read"
+                if result.robots_exempt == "unreadable"
+                else "robots.txt refuses automated readers here"
+            )
+            out["robots"] = (
+                f"{why}; this feed is read anyway, as feed readers do. Pages it links to still follow robots.txt"
+            )
         if problems:
             out["problems"] = problems
             out["sample"] = result.sample
@@ -293,6 +310,7 @@ class Service:
                     "url": raw.get("url", ""),
                     "kind": raw.get("kind", ""),
                     "every": raw.get("every", ""),
+                    **({"place": raw["place"]} if raw.get("place") else {}),
                     "healthy": st.healthy if st else True,
                     "used_by": users.get(name, []),
                     # Fetched once after source_put, then only while a monitor uses it.
@@ -330,6 +348,49 @@ class Service:
         self.store.delete_source(name)
         return {"deleted": name}
 
+    # -- the place map -------------------------------------------------------------------
+    def place_put(self, agent_id: Any, entries: Any, added_by: str = "") -> dict[str, Any]:
+        """Adds or replaces entries of the stack's place map: [{phrase, locality}].
+        added_by is the agent's name (or "page" for the person on the page)."""
+        if not added_by:
+            agent = _agent(agent_id)
+            added_by = next((a.name for a in self.store.agents() or [] if a.id == agent), agent)
+        most = place_map.MAX_PER_CALL
+        if not isinstance(entries, list) or not 1 <= len(entries) <= most:
+            raise ToolError(f"entries must be a list of 1 to {most} objects with phrase and locality")
+        checked: dict[str, tuple[str, str, str]] = {}
+        try:
+            for e in entries:
+                if not isinstance(e, dict):
+                    raise place_map.PlaceError("each entry is an object with phrase and locality")
+                entry = place_map.check_entry(e.get("phrase"), e.get("locality"))
+                checked[entry[0]] = entry
+        except place_map.PlaceError as err:
+            raise ToolError(str(err)) from err
+        if not self.store.put_places(list(checked.values()), added_by, place_map.MAX_PLACES):
+            raise ToolError(f"the place map holds at most {place_map.MAX_PLACES} entries; delete some first")
+        return {
+            "saved": [phrase for _, phrase, _ in checked.values()],
+            "next": "monitor_preview shows, under terms.placed_by, how many items each entry places",
+        }
+
+    def place_list(self) -> dict[str, Any]:
+        return {
+            "places": [
+                {"phrase": p.phrase, "locality": p.locality, "added_by": p.added_by, "at": self._iso(p.at)}
+                for p in self.store.places()
+            ]
+        }
+
+    def place_delete(self, phrases: Any) -> dict[str, Any]:
+        if not isinstance(phrases, list) or not 1 <= len(phrases) <= place_map.MAX_PER_CALL:
+            raise ToolError(f"phrases must be a list of 1 to {place_map.MAX_PER_CALL} phrases")
+        deleted, missing = [], []
+        for phrase in phrases:
+            found = self.store.delete_place(place_map.compact(phrase)) if isinstance(phrase, str) else None
+            (deleted if found else missing).append(found or str(phrase)[:80])
+        return {"deleted": deleted, "not_found": missing}
+
     # -- monitors ---------------------------------------------------------------------
     def _draft(
         self,
@@ -344,6 +405,7 @@ class Service:
         news: Any = False,
         set_up_in: Any = None,
         where: Any = None,
+        where_unknown: Any = None,
     ) -> tuple[Monitor, Schedule]:
         """A checked monitor, not saved: what monitor_put saves and a draft preview shows."""
         agent = _agent(agent_id)
@@ -374,6 +436,10 @@ class Service:
             raise ToolError(f"days_ahead must be a whole number from 0 to {MAX_DAYS_AHEAD}")
         if not isinstance(news, bool):
             raise ToolError("news must be true or false")
+        if where_unknown is None:
+            where_unknown = "keep"
+        if where_unknown not in ("keep", "drop"):
+            raise ToolError("where_unknown is keep or drop: what happens to items nothing places")
         monitor = Monitor(
             agent_id=agent,
             name=name,
@@ -383,6 +449,7 @@ class Service:
             include=_terms(include, "include"),
             exclude=_terms(exclude, "exclude"),
             where=_terms(where, "where"),
+            where_unknown=where_unknown,
             days_ahead=days_ahead,
             news=news,
             set_up_in=here,
@@ -403,6 +470,7 @@ class Service:
         set_up_in: Any = None,
         where: Any = None,
         from_now: Any = False,
+        where_unknown: Any = None,
     ) -> dict[str, Any]:
         """conversation left out: a monitor saved again keeps where it reports (the
         person may have chosen on the page); a new one reports here. "here" is
@@ -414,7 +482,18 @@ class Service:
         if conversation is None:
             conversation = current.conversation if current else HERE
         monitor, parsed = self._draft(
-            agent, name, sources, schedule, conversation, include, exclude, days_ahead, news, set_up_in, where
+            agent,
+            name,
+            sources,
+            schedule,
+            conversation,
+            include,
+            exclude,
+            days_ahead,
+            news,
+            set_up_in,
+            where,
+            where_unknown,
         )
         if current is None and self.store.count_monitors() >= self.settings.max_monitors:
             raise ToolError(f"this stack has {self.settings.max_monitors} monitors, the most allowed; delete one")
@@ -453,6 +532,12 @@ class Service:
             "next": "show the person monitor_preview, and tell them the schedule and where reports go, in words; "
             "they can change where reports go on the News Radar page",
         }
+        warnings = filter_warnings(
+            *self._draft_view(stored, now), stored, self.store.source_specs(), place_map.PlaceMap.load(self.store)
+        )
+        if warnings:
+            out["warnings"] = warnings
+            out["next"] += ". Fix what warnings says, or tell the person why not"
         if from_now:
             at = self._local(now)
             out["from_now"] = (
@@ -504,6 +589,7 @@ class Service:
         news: Any = False,
         where: Any = None,
         from_now: Any = False,
+        where_unknown: Any = None,
     ) -> dict[str, Any]:
         """The saved monitor's next report; with sources, a draft's (checked as
         monitor_put would, never saved): what its first report would hold, and what
@@ -511,7 +597,19 @@ class Service:
         how many rows that leaves out)."""
         draft = sources is not None
         if draft:
-            m, _ = self._draft(agent_id, name, sources, None, "new", include, exclude, days_ahead, news, where=where)
+            m, _ = self._draft(
+                agent_id,
+                name,
+                sources,
+                None,
+                "new",
+                include,
+                exclude,
+                days_ahead,
+                news,
+                where=where,
+                where_unknown=where_unknown,
+            )
         else:
             m = self._monitor(agent_id, name)
         if not isinstance(from_now, bool):
@@ -524,13 +622,20 @@ class Service:
         states = self.store.source_states()
         skipped = 0
         # What each term does is told on the items the sources hold now, even when
-        # from_now leaves them out: otherwise every term finds nothing.
-        terms = term_counts(self.store, m, now, self.settings.tz)
+        # from_now leaves them out: otherwise every term finds nothing. A draft, or a
+        # monitor that delivered nothing lately, considers what warnings are judged on.
+        wide = self._draft_view(m, now)
+        places = place_map.PlaceMap.load(self.store)
+        if considered_since(m, now) == now - CARRY_SECONDS:
+            terms = term_counts(*wide, m, places)
+        else:
+            terms = term_counts(*considered(self.store, m, now, self.settings.tz), m, places)
+        warnings = filter_warnings(*wide, m, self.store.source_specs(), places)
         if from_now:
-            before = monitor_digest(self.store, m, now, self.settings.tz, states)
+            before = monitor_digest(self.store, m, now, self.settings.tz, states, places)
             skipped = len(before.rows) + before.left_out
             m = dataclasses.replace(m, delivered_upto=now)
-        d = monitor_digest(self.store, m, now, self.settings.tz, states)
+        d = monitor_digest(self.store, m, now, self.settings.tz, states, places)
         notes = ["a preview: nothing is marked as reported"]
         out: dict[str, Any] = {
             "monitor": m.name,
@@ -541,6 +646,8 @@ class Service:
             "needs_repair": [{"source": a.source, "reason": a.reason} for a in d.alerts],
             "terms": terms,
         }
+        if warnings:
+            out["warnings"] = warnings
         if from_now:
             out["existing_skipped"] = skipped
         if since is not None:
@@ -572,6 +679,11 @@ class Service:
             notes.append("sources are fetched within a minute of source_put: preview again then")
         out["note"] = "; ".join(notes)
         return out
+
+    def _draft_view(self, m: Monitor, now: int) -> tuple[list[StoredItem], date]:
+        """What a draft of the monitor considers, whatever it delivered: the items
+        filter warnings are judged on."""
+        return considered(self.store, dataclasses.replace(m, delivered_upto=0), now, self.settings.tz)
 
     def _local(self, ts: int) -> datetime:
         """A timestamp in the stack's timezone, the one people and schedules use."""
@@ -678,11 +790,12 @@ class Service:
         queued = []
         now = self.store.now()
         states = self.store.source_states()
+        places = place_map.PlaceMap.load(self.store)
         for (agent, schedule, conversation), monitors in groups.items():
             if self.store.pending_report(agent, schedule, conversation):
                 log.info("report for %s skipped: the last one is still on its way", agent)
                 continue
-            digests = [monitor_digest(self.store, m, now, self.settings.tz, states) for m in monitors]
+            digests = [monitor_digest(self.store, m, now, self.settings.tz, states, places) for m in monitors]
             if not any(d.worth_reporting for d in digests):
                 self.store.mark_empty([m.id for m in monitors], now)
                 continue
@@ -701,7 +814,7 @@ class Service:
     def _queue(self, agent: str, schedule: str, conversation: str, digests: list[MonitorDigest], now: int) -> str:
         report_id = new_report_id()
         words = Schedule.parse(schedule).describe()
-        prompt, rows = render(digests, words, report_id)
+        prompt, rows, alerted = render(digests, words, report_id)
         names = ", ".join(d.monitor.name for d in digests)
         request = {
             "id": report_id,
@@ -718,7 +831,7 @@ class Service:
                 schedule=schedule,
                 conversation=conversation,
                 monitors=[d.monitor.id for d in digests],
-                alerted=sorted({a.source for d in digests for a in d.alerts}),
+                alerted=alerted,
                 at=now,
                 # A second early: an item a fetch records later in this same second
                 # comes again rather than never (a repeat beats a gap).

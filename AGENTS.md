@@ -22,13 +22,15 @@ The "Build and test" sections are the one list of checks; this table only links 
 | `code-server/` | [code-server/README.md](code-server/README.md#rules) | [code-server](code-server/README.md#build-and-test) |
 | `outlook/` | [outlook/README.md](outlook/README.md#rules) | [outlook](outlook/README.md#build-and-test) |
 | `landing/` | [landing/README.md](landing/README.md#rules) | [landing](landing/README.md#build-and-test) |
+| `browser/`, `compose/browser.yml` | [browser/README.md](browser/README.md#rules), [compose/README.md](compose/README.md#the-browsers-engine-has-one-way-out) | [browser](browser/README.md#build-and-test) |
+| `notifications/`, `compose/notifications.yml` | [notifications/README.md](notifications/README.md#rules) | [notifications](notifications/README.md#build-and-test) |
 | `landing/executor/` | [install](landing/executor/README.md#install), [trust](landing/executor/README.md#trust) | [executor](landing/executor/README.md#build-and-test) |
-| `lollo-common/` | [lollo-common/README.md](lollo-common/README.md#rules) | [lollo-common](lollo-common/README.md#build-and-test) (the six suites that use it) |
+| `lollo-common/` | [lollo-common/README.md](lollo-common/README.md#rules) | [lollo-common](lollo-common/README.md#build-and-test) (the eight suites that use it) |
 | `pipelock/` | [pipelock/README.md](pipelock/README.md#rules) | [pipelock](pipelock/README.md#build-and-test) |
 | `doc-tools/` | [doc-tools/README.md](doc-tools/README.md#rules) | [doc-tools](doc-tools/README.md#build-and-test) |
 | `agent-skills/` | [agent-skills/README.md](agent-skills/README.md#rules) | [agent-skills](agent-skills/README.md#build-and-test) |
 | `backup/` | [backup/README.md](backup/README.md#rules) | [backup](backup/README.md#build-and-test) |
-| `release/`, `VERSION`, `REBUILD`, `.github/workflows/publish.yml` | [release/README.md](release/README.md#rules) | [release](release/README.md#build-and-test) |
+| `release/`, `VERSION`, `REBUILD`, `.github/workflows/publish.yml`, `.agents/skills/release/` | [release/README.md](release/README.md#rules) | [release](release/README.md#build-and-test) |
 | `tests/` | [tests/README.md](tests/README.md) (the stubs and helpers) | [tests](tests/README.md#build-and-test) |
 | `.github/renovate.json5`, `.github/workflows/renovate.yml`, `scripts/renovate-post-upgrade.sh` | [CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates) | `tests/run.sh test_post_upgrade_`, and `renovate-config-validator --strict` (Commands) |
 | `docs/`, any `*.md` | [CONTRIBUTING.md](CONTRIBUTING.md#writing-docs) | `node scripts/check-doc-links.mjs` |
@@ -40,7 +42,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 - Plug in only through the supported seams. A new dependency on a Lettuce internal is redesigned away, or adds a row to the upstream seams named today in [CONTRIBUTING.md](CONTRIBUTING.md#upstream-seams).
 - Overlays restrict, never redefine: never replace an upstream service's image, entrypoint, command or internal env. The written exceptions are `pipelock-proxy.yml` (proxy variables on three upstream services) and `doc-tools.yml` (a mount and a network on the app-server); leave them be. A new one needs a written reason in [compose/README.md](compose/README.md#rules) first, then a mention here.
 - No second way into an agent: no command or sidecar opens a connection to the app-server or starts a turn; `compose exec` for files and read-only CLI calls is the limit. Gmail triggers and News Radar, through the lollo executor and letta-code's scheduler, are the only exceptions. Another sidecar starting turns, or a new way around the BFF, needs a written reason in CONTRIBUTING first, and goes under `/<sidecar>/` on the lollo host, never on Lettuce's.
-- Don't write into what Lettuce manages (settings, MCP list, memory, workspaces). Where we must write, we own a namespace: `skills` its manifest, the executor install its own files; the one write into the MCP list is `mcp`, with its four kinds of entries. Never turn an upstream feature on by editing its files.
+- Don't write into what Lettuce manages (settings, MCP list, memory, workspaces). Where we must write, we own a namespace: `skills` its manifest, the executor install its own files; the one write into the MCP list is `mcp`, with its five kinds of entries. Never turn an upstream feature on by editing its files.
 - Keep upstream's defences on: strictest auth settings, no disabled boot check, nothing secret under `stacks/<name>/state/`, never shorten the BFF's `stop_grace_period`.
 - Name new profiles `lollo-<name>`. Move `LETTUCE_REF` only with `lolloctl upgrade <tag>`, and walk [the upgrade checklist](CONTRIBUTING.md#upgrading-lettuce_ref); Renovate merges only patch tags that keep letta-code's version into `config.env.example` without it ([Dependency updates](CONTRIBUTING.md#dependency-updates)).
 
@@ -56,28 +58,30 @@ The "Build and test" sections are the one list of checks; this table only links 
 - `users` changes the Access policy and `ALLOWED_USERS` together. `cf_app_body` is the one definition of both Access applications' settings.
 - Profiles change only through `lolloctl profiles`, for every stack at once; never tell operators to edit the lists by hand.
 - Never pass `COMPOSE_PROFILES` or `LOLLO_PROFILES` to a sidecar other than `landing`: a profile change would recreate it, and recreating the vault locks it.
-- Never rotate the VAPID keys: every push subscription would break.
+- Never rotate the VAPID keys, the BFF's (`PUSH_VAPID_*`) or the lollo's (`LOLLO_VAPID_*`, the notifications service's): every push subscription would break. The vault's and the browser's own pairs (`VAULT_VAPID_*`, `BROWSER_VAPID_*`) were retired once, when the notifications service took over; that was not a rotation, nothing makes or reads them again, and they stay in `stack.env` until a later release removes them.
 - Use `lolloctl restart`, never a single-service restart; the BFF alone (`refresh_mcp_skill`) is the one exception.
 - `toolbox` is a `docker run`, never a `compose exec`, and keeps the operator's credentials out of the stack.
 - A new safety rule goes into `check_stack`, with a `test_check_*` test, and into [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-rule) or its folder's "Rules". Remember that a container Docker restarts on its own is not re-checked.
 
 ### Features
-- **Vault** ([rules](vault/README.md#rules)): never add an MCP tool that edits secrets or bypasses approval; never write vault data, keys or the passphrase unencrypted or to logs; never mount `vault-data` elsewhere (only `backup`, read-only); agent activity must not extend the auto-lock; an erase without the passphrase always waits its delay and tells every device.
+- **Vault** ([rules](vault/README.md#rules)): never add an MCP tool that edits secrets or bypasses approval; never write vault data, keys or the passphrase unencrypted or to logs; never mount `vault-data` elsewhere (only `backup`, read-only, and `restore`); agent activity must not extend the auto-lock; an erase without the passphrase always waits its delay and tells every device, and is scheduled only once `lollo-notifications` has accepted its notice.
 - **Code editor** ([rules](code-server/README.md#rules)): nothing an agent wrote may run in the editor's container. Never add an extension, setting or flag that runs code, trusts a workspace or opens a port.
 - **Lollo pages** ([lollo-common rules](lollo-common/README.md#rules), [landing rules](landing/README.md#rules)): every page checks Fetch Metadata (`check_fetch`) and sets COOP; the landing page has no script; every lollo service accepts only `CF_LOLLO_AUD` and `LOLLO_ORIGIN`.
 - **Executor** ([install](landing/executor/README.md#install), [trust](landing/executor/README.md#trust)): only `sync_executor` installs or removes it (from `up`, `add` and `profiles`), through `compose exec`, replacing only its own files; its token is never rotated automatically. The executor runs `letta` from an argument array, never a shell. It and the sidecars share no directory and treat each other's data as untrusted.
-- **News Radar** ([rules](news-radar/README.md#rules)): a monitor starts a turn only at its schedule, when something is new, within the daily cap; the service never creates `letta cron` tasks; specs are data, never code, and no page script runs; the fetcher reaches public addresses only and honours robots.txt; no model in the service.
+- **News Radar** ([rules](news-radar/README.md#rules)): a monitor starts a turn only at its schedule, when something is new, within the daily cap; the service never creates `letta cron` tasks; specs are data, never code, and no page script runs; the fetcher reaches public addresses only and honours robots.txt (a feed's own URL excepted); no model in the service.
 - **Outlook** ([rules](outlook/README.md#rules)): the policy is checked in the sidecar when each tool runs; never add a tool that changes the policy or returns the token; never mount `outlook-data` elsewhere, log the tokens, pass the service a proxy, or have `backup` copy its volume.
-- **Pipelock** ([rules](pipelock/README.md#rules)): it is advisory; never describe it as a boundary. A service agents or the executor call inside the stack goes in `NO_PROXY`.
+- **Browser** ([rules](browser/README.md#rules)): Chromium's sandbox is always on (never `--no-sandbox`, a capability or another seccomp profile, and `up` never falls back without it); the engine's only way out is pipelock (no other network for it, no other member on `browser`); no tool that evaluates script, opens developer tools or touches files; secret values are never in a tool result, screenshot or log; per-site settings and kept sign-ins change only on the person's page, never through MCP; `browser-data` is never backed up.
+- **Notifications** ([rules](notifications/README.md#rules)): a sender (the vault, the browser) notifies only through `lollo-notifications`, with a token of its own held only by it and that service, never by the app-server; a sender says only what is its own (a link under `/<source>/`, a tag starting `<source>-`); no title or body in logs; no notification actions, a tap only opens a page; the vault's erase is scheduled only once the service accepted its notice.
+- **Pipelock** ([rules](pipelock/README.md#rules)): it is advisory; never describe it as a boundary, but for the browser's engine, whose only way out it is. Never give it `trusted_domains`. A service agents or the executor call inside the stack goes in `NO_PROXY`.
 - **Doc-tools** ([rules](doc-tools/README.md#rules)): lolloctl owns the image, volume and networks; Compose only uses them. Only the app-server mounts the tools.
 - **Skills** ([rules](agent-skills/README.md#rules)): only `skills` installs them, replacing only its own; names never match upstream's; text stays generic.
-- **Backup** ([rules](backup/README.md#rules)): it reads the state only through its own container, never into this repo.
-- **Releases** ([rules](release/README.md#rules)): images are named by content, never by release; `doc-tools` and `code-server/exec` are never published; no `latest`; a file lolloctl reads at run time goes into the `lolloctl` image.
+- **Backup and restore** ([rules](backup/README.md#rules)): they touch the state only through their own container, never into this repo; Lettuce's Google volumes only with `--with-google`, the Cloudflare API token never; `restore` refuses a running stack.
+- **Releases** ([rules](release/README.md#rules)): images are named by content, never by release; `doc-tools` and `code-server/exec` are never published; no `latest`; a file lolloctl reads at run time goes into the `lolloctl` image. Release tags go only on `main` or a `hotfix/*` branch; a pull request's dev build is only a `lolloctl:vX.Y.Z-dev.<slug>.<N>` tag (no git tag, no GitHub release), and its job never writes to the repository. Cut a release with the `release` skill (`.agents/skills/release/`): its highlights go in `release/NOTES.md`, never `[ci skip]` on a commit that gets tagged.
 
 ### Docs ([CONTRIBUTING.md](CONTRIBUTING.md#writing-docs))
 - README introduces and indexes, `docs/` is for users and admins, and CONTRIBUTING, ARCHITECTURE and the folder READMEs are for developers. This file holds directives only.
 - A rule change edits its developer doc, then the directive here if its one-line form changed.
-- Never claim more than is true: pipelock advisory, the vault's placeholders not a boundary, never trust a folder in the code editor, Outlook's token redemption unsupported and refusable by a tenant.
+- Never claim more than is true: pipelock advisory (a boundary for the browser's engine only), the vault's placeholders not a boundary, never trust a folder in the code editor, Outlook's token redemption unsupported and refusable by a tenant.
 - Keep the guides' file names and `docs/cloudflare-setup.md`'s step numbers: `lolloctl` messages cite them and tests assert some.
 - Never add a file other than `README.md`, `AGENTS.md` and `CLAUDE.md` to `doc-tools/` or `lollo-common/` for docs: it would rebuild images.
 - A new folder README gets an `AGENTS.md` pointer and a `CLAUDE.md` symlink to it; `node scripts/check-doc-links.mjs` fails without them.
@@ -92,7 +96,7 @@ The "Build and test" sections are the one list of checks; this table only links 
 ```bash
 tests/run.sh                 # all offline tests (docker, curl, dig, gh, secret-tool are stubbed)
 tests/run.sh <pattern>       # only tests whose function name contains <pattern>, e.g. tests/run.sh test_add_
-shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/lolloctl-wrapper.sh
+shellcheck -x lolloctl lib/*.sh scripts/*.sh pipelock/entrypoint.sh tests/run.sh tests/run-sidecar.sh tests/run-pipelock.sh tests/run-browser-acceptance.sh tests/stubs/* doc-tools/bin/* doc-tools/lib/launch.sh code-server/editor/bin/* code-server/editor/entrypoint.sh code-server/editor/tests/test.sh release/content-tag release/dev-tag release/lolloctl-wrapper.sh
 tests/run-sidecar.sh vault            # vault tests (pytest in its image's `test` stage; needs Docker)
 tests/run-sidecar.sh vault -k vault   # extra args go to pytest
 tests/run-sidecar.sh gmail-triggers    # Gmail triggers' tests (pytest; the executor's run with landing)
@@ -100,6 +104,7 @@ tests/run-sidecar.sh news-radar         # News Radar's tests (pytest: schedules,
 tests/run-sidecar.sh code-server       # the code editor's gate (pytest), plus the editor image's tests when no args are given
 node --test 'landing/executor/tests/*.test.mjs'         # lollo executor tests on the host
 tests/run-pipelock.sh                  # the pipelock image and config against a real pipelock (needs Docker, not the internet)
+tests/run-browser-acceptance.sh        # both browser images, pipelock and hostile pages on internal networks: stack, loopback and rebinding unreachable, no UDP, secrets masked, site check, task isolation, engine refused, receipts (needs Docker)
 node --test tests/mcp-servers.test.mjs # lib/mcp-servers.mjs against temp settings files
 node --test tests/check-doc-links.test.mjs # the link checker against temp Markdown trees
 node scripts/check-doc-links.mjs       # every relative link and anchor resolves; every folder README has its agents' pointer
@@ -107,5 +112,7 @@ npx --yes --package "renovate@$(sed -n 's/^ *RENOVATE_VERSION: //p' .github/work
 tests/run-sidecar.sh landing            # the landing page and its executor API (pytest), plus the lollo executor's tests (node --test in `tests/run-sidecar.sh`'s `NODE_IMAGE`) when no args are given
 tests/run-sidecar.sh doc-tools         # the PDF MCP's tests (pytest in the doc-tools image's `test` stage, Debian 12 like the app-server), plus the OfficeAgent download's hash check when no args are given
 tests/run-sidecar.sh outlook           # the Outlook sidecar's tests (pytest: levels, recipients, tokens, client, enforcement)
+tests/run-sidecar.sh browser           # the browser's service (pytest in its image's `test` stage), plus the engine's own cases (browser/engine/tests/run.sh: sandbox, policies, refusals; needs Docker on Linux with unprivileged user namespaces) when no args are given
+tests/run-sidecar.sh notifications   # the notifications service (pytest in its image's `test` stage), plus its service worker's tests (node --test in `tests/run-sidecar.sh`'s `NODE_IMAGE`) when no args are given
 ```
-The same block is in [CONTRIBUTING.md](CONTRIBUTING.md#building-and-testing); keep both and `.github/workflows/ci.yml` in step. The CLI has no build step; from a clone `lolloctl up` builds the sidecar images, and a release pulls them. A clone's instance data is in its untracked `data/` (`config.env`, `stacks.conf`, `.secrets/`, `upstream/`, `stacks/`), never committed.
+The same block is in [CONTRIBUTING.md](CONTRIBUTING.md#building-and-testing); keep both and `.github/workflows/ci.yml` in step, and every CI job in `ci-passed`'s `needs` (the one check the `main` ruleset requires; `tests/run.sh test_ci_gate_` checks it). The CLI has no build step; from a clone `lolloctl up` builds the sidecar images, and a release pulls them. A clone's instance data is in its untracked `data/` (`config.env`, `stacks.conf`, `.secrets/`, `upstream/`, `stacks/`), never committed.

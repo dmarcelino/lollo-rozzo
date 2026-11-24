@@ -23,7 +23,7 @@ from .conftest import (
     SCRIPT_FETCH,
     SECRET,
     STREET,
-    FakeSender,
+    FakeTransport,
     make_service,
     make_jwt,
 )
@@ -35,21 +35,21 @@ B = PREFIX
 @pytest.fixture
 def env(settings, authenticator, signing_key, vault_path, clock):
     vault = Vault(vault_path, clock=clock, kdf=FAST_KDF)
-    sender = FakeSender()
-    service = make_service(settings, vault, sender)
-    app = create_app(service, authenticator, settings.vapid_public_key)
+    transport = FakeTransport()
+    service = make_service(settings, vault, transport)
+    app = create_app(service, authenticator)
     with TestClient(app, base_url=ORIGIN, headers=NAVIGATE, follow_redirects=False) as client:
         client.headers["cf-access-jwt-assertion"] = make_jwt(signing_key)
-        yield client, vault, sender
+        yield client, vault, transport
 
 
 def csrf_of(html: str) -> str:
-    return re.search(r'name="csrf" content="([0-9a-f]+)"', html).group(1)
+    return re.search(r'name="csrf" value="([0-9a-f]+)"', html).group(1)
 
 
 def post(client, path, data, csrf=None, origin=ORIGIN):
     form = dict(data)
-    form["csrf"] = csrf if csrf is not None else csrf_of(client.get(f"{B}/notifications").text)
+    form["csrf"] = csrf if csrf is not None else csrf_of(client.get(f"{B}/").text)
     return client.post(path, data=form, headers={"origin": origin} if origin else {})
 
 
@@ -78,6 +78,8 @@ CARD_FORM = {
     "f_notes": SECRET,
 }
 AS_TEXT = {"delivery": "text", "reason": "compare it with the receipt"}
+# A Hidden custom field's value. Not hex, so a page's random tokens never contain it.
+PIN = "pin-zq-4321"
 
 
 def add(client, form) -> str:
@@ -130,7 +132,7 @@ def test_ui_requires_valid_access_jwt(env, signing_key, other_key, token):
         value = make_jwt(signing_key, **token)
     else:
         value = token
-    for path in [f"{B}/", f"{B}/secrets", f"{B}/audit", f"{B}/sw.js", f"{B}/notifications"]:
+    for path in [f"{B}/", f"{B}/secrets", f"{B}/audit", f"{B}/sw.js", f"{B}/app.js"]:
         assert client.get(path, headers={"cf-access-jwt-assertion": value}).status_code == 403, path
 
 
@@ -144,7 +146,7 @@ def test_jwks_unavailable_fails_closed(settings, signing_key, vault_path, clock)
         raise jwt.PyJWKClientError("unreachable")
 
     vault = Vault(vault_path, clock=clock, kdf=FAST_KDF)
-    app = create_app(make_service(settings, vault), Authenticator(settings, key_resolver=broken), "k")
+    app = create_app(make_service(settings, vault), Authenticator(settings, key_resolver=broken))
     with TestClient(app, base_url=ORIGIN, headers=NAVIGATE) as client:
         r = client.get(f"{B}/", headers={"cf-access-jwt-assertion": make_jwt(signing_key)})
     assert r.status_code == 503
@@ -158,8 +160,6 @@ def test_security_headers_and_static(env):
     # Regression: with "no-referrer" browsers send `Origin: null` on form posts,
     # and check_origin refused every form ("cross-site request refused").
     assert r.headers["referrer-policy"] == "same-origin"
-    assert client.get(f"{B}/sw.js").headers["content-type"].startswith("text/javascript")
-    assert client.get(f"{B}/manifest.webmanifest").json()["name"] == "Lettuce Vault"
     assert client.get(f"{B}/icon-192.png").content.startswith(b"\x89PNG")
 
 
@@ -175,8 +175,8 @@ def test_security_headers_and_static(env):
 def test_pages_load_only_as_top_level_documents(env, fetch):
     client = env[0]
     setup_vault(client)
-    token = csrf_of(client.get(f"{B}/notifications").text)
-    for path in [f"{B}/", f"{B}/secrets", f"{B}/settings", f"{B}/notifications"]:
+    token = csrf_of(client.get(f"{B}/").text)
+    for path in [f"{B}/", f"{B}/secrets", f"{B}/settings", f"{B}/audit"]:
         r = client.get(path, headers=fetch)
         assert r.status_code == 403, path
         assert token not in r.text, path
@@ -191,7 +191,7 @@ def test_pages_open_from_another_site_after_an_access_login(env):
 
 def test_forms_post_only_from_this_origin(env):
     client = env[0]
-    csrf = csrf_of(client.get(f"{B}/notifications").text)
+    csrf = csrf_of(client.get(f"{B}/").text)
     form = {"passphrase": PASSPHRASE, "confirm": PASSPHRASE, "csrf": csrf}
     for fetch in ({"sec-fetch-site": "cross-site"}, {"sec-fetch-site": "same-site"}, SCRIPT_FETCH):
         r = client.post(f"{B}/setup", data=form, headers={**fetch, "origin": ORIGIN})
@@ -200,14 +200,15 @@ def test_forms_post_only_from_this_origin(env):
     assert post(client, f"{B}/setup", {"passphrase": PASSPHRASE, "confirm": PASSPHRASE}).status_code == 303
 
 
-def test_json_calls_only_from_this_origins_script(env):
+def test_no_post_is_taken_from_a_script(env):
+    """No page script posts here: a fetch() with the CSRF token in a header is refused."""
     client = env[0]
-    csrf = csrf_of(client.get(f"{B}/notifications").text)
-    sub = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "key", "auth": "auth"}}
-    for fetch in (NAVIGATE, {**SCRIPT_FETCH, "sec-fetch-site": "cross-site"}, {**SCRIPT_FETCH, "sec-fetch-mode": ""}):
-        r = client.post(f"{B}/push/subscribe", json=sub, headers={**fetch, "x-csrf-token": csrf, "origin": ORIGIN})
+    csrf = csrf_of(client.get(f"{B}/").text)
+    body = {"passphrase": PASSPHRASE, "confirm": PASSPHRASE}
+    for fetch in (SCRIPT_FETCH, NAVIGATE):
+        r = client.post(f"{B}/setup", json=body, headers={**fetch, "x-csrf-token": csrf, "origin": ORIGIN})
         assert r.status_code == 403, fetch
-    assert env[1].subscriptions() == []
+    assert not env[1].is_setup()
 
 
 def test_assets_load_as_subresources(env):
@@ -215,7 +216,7 @@ def test_assets_load_as_subresources(env):
     worker = {"sec-fetch-mode": "same-origin", "sec-fetch-dest": "serviceworker", "sec-fetch-site": "same-origin"}
     style = {"sec-fetch-mode": "no-cors", "sec-fetch-dest": "style", "sec-fetch-site": "same-origin"}
     assert client.get(f"{B}/sw.js", headers=worker).status_code == 200
-    for path in ("/lollo.css", "/app.css", "/app.js", "/icon-192.png", "/manifest.webmanifest"):
+    for path in ("/lollo.css", "/app.css", "/app.js", "/icon-192.png"):
         assert client.get(f"{B}{path}", headers=style).status_code == 200, path
 
 
@@ -238,9 +239,10 @@ def test_pages_use_the_lollo_look_and_link_to_the_lollo(env):
     assert B == "/vault"
     assert f'href="{B}/lollo.css"' in page and 'href="/">Lollo Rozzo</a>' in page
     assert "/lollo/" not in page
-    # app.js and the manifest take the prefix from the page and their own URL.
-    assert f'<meta name="base" content="{B}">' in page
-    assert client.get(f"{B}/manifest.webmanifest").json()["scope"] == "./"
+    # The lollo's one Home Screen app and its one Notifications page, not the vault's own.
+    assert '<link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">' in page
+    assert '<link rel="apple-touch-icon" href="/assets/icon-192.png">' in page
+    assert f"{B}/manifest.webmanifest" not in page
     css = client.get(f"{B}/lollo.css")
     assert css.status_code == 200 and "--accent: #0b1020" in css.text
 
@@ -319,20 +321,19 @@ def test_reset_needs_typed_confirmation(env):
     assert not vault.is_setup()
 
 
-def wait_for_pushes(sender, count):
-    for _ in range(100):  # pushes are sent in the background
-        if len(sender.calls) >= count:
+def wait_for_notices(transport, count):
+    for _ in range(100):  # notices are sent in the background
+        if len(transport.taken) >= count:
             break
         time.sleep(0.02)
-    # Sorted: each push is sent from its own worker thread, so they finish in any order.
-    return sorted(json.loads(c["data"])["title"] for c in sender.calls)
+    # Sorted: each notice is sent from its own task, so they finish in any order.
+    return sorted(p["title"] for p in transport.taken)
 
 
 def test_a_locked_vault_can_be_erased_after_24_hours(env, clock):
-    client, vault, sender = env
+    client, vault, transport = env
     setup_vault(client)
     add(client, CARD_FORM)
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
     # Unlocked, the erase is in Settings and immediate; this route refuses.
     assert post(client, f"{B}/erase", {"confirm": "DELETE"}).status_code == 400
     post(client, f"{B}/lock", {})
@@ -347,24 +348,40 @@ def test_a_locked_vault_can_be_erased_after_24_hours(env, clock):
     assert by == EMAIL
     page = client.get(f"{B}/").text
     assert "will be erased" in page and f'action="{B}/erase/cancel"' in page and f'action="{B}/erase"' not in page
-    assert wait_for_pushes(sender, 1) == ["Vault erase scheduled"]
-    assert CARD not in json.dumps([c["data"] for c in sender.calls])
+    assert wait_for_notices(transport, 1) == ["Erase scheduled"]
+    assert CARD not in transport.sent()
     # Cancelling needs no passphrase.
     assert post(client, f"{B}/erase/cancel", {}).status_code == 303
     assert vault.pending_erase() is None and vault.is_setup() and not vault.is_unlocked()
-    assert wait_for_pushes(sender, 2) == sorted(["Vault erase scheduled", "Vault erase cancelled"])
+    assert wait_for_notices(transport, 2) == sorted(["Erase scheduled", "Erase cancelled"])
 
 
 def test_unlocking_cancels_a_scheduled_erase(env):
-    client, vault, sender = env
+    client, vault, transport = env
     setup_vault(client)
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
     post(client, f"{B}/lock", {})
     post(client, f"{B}/erase", {"confirm": "DELETE"})
     assert post(client, f"{B}/unlock", {"passphrase": PASSPHRASE}).status_code == 303
     assert vault.pending_erase() is None and vault.is_unlocked()
-    assert wait_for_pushes(sender, 2) == sorted(["Vault erase scheduled", "Vault erase cancelled"])
+    assert wait_for_notices(transport, 2) == sorted(["Erase scheduled", "Erase cancelled"])
     assert [e.action for e in vault.audit_log()][:2] == ["cancelled the scheduled erase by unlocking", "unlocked"]
+
+
+def test_an_erase_is_not_scheduled_while_notifications_are_down(env):
+    client, vault, transport = env
+    setup_vault(client)
+    post(client, f"{B}/lock", {})
+    before = [e for e in vault._q("SELECT action FROM audit")]
+    transport.up = False  # lollo-notifications is not running
+    r = post(client, f"{B}/erase", {"confirm": "DELETE"})
+    assert r.status_code == 503
+    assert "Notifications are unavailable right now, so the erase was not scheduled. Try again later." in r.text
+    assert vault.pending_erase() is None and "will be erased" not in r.text
+    assert [e for e in vault._q("SELECT action FROM audit")] == before
+    # Back up: the erase is scheduled, with no device enrolled anywhere.
+    transport.up = True
+    assert post(client, f"{B}/erase", {"confirm": "DELETE"}).status_code == 303
+    assert vault.pending_erase() is not None
 
 
 def test_erase_needs_a_vault(env):
@@ -388,9 +405,8 @@ def test_the_erase_time_names_its_time_zone_and_the_hours_left(env, clock):
 
 
 def test_erase_requests_are_rate_limited(env):
-    client, vault, sender = env
+    client, vault, transport = env
     setup_vault(client)
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
     post(client, f"{B}/lock", {})
     for _ in range(ERASE_REQUESTS_PER_HOUR):
         assert post(client, f"{B}/erase", {"confirm": "DELETE"}).status_code == 303
@@ -398,7 +414,24 @@ def test_erase_requests_are_rate_limited(env):
     r = post(client, f"{B}/erase", {"confirm": "DELETE"})
     assert r.status_code == 429 and "Too many" in r.text
     assert vault.pending_erase() is None
-    assert len(wait_for_pushes(sender, 2 * ERASE_REQUESTS_PER_HOUR)) == 2 * ERASE_REQUESTS_PER_HOUR
+    assert len(wait_for_notices(transport, 2 * ERASE_REQUESTS_PER_HOUR)) == 2 * ERASE_REQUESTS_PER_HOUR
+
+
+def test_erase_attempts_refused_while_notifications_are_down_do_not_count(env):
+    client, vault, transport = env
+    setup_vault(client)
+    post(client, f"{B}/lock", {})
+    transport.up = False
+    for _ in range(ERASE_REQUESTS_PER_HOUR + 2):
+        assert post(client, f"{B}/erase", {"confirm": "DELETE"}).status_code == 503
+    transport.up = True
+    assert post(client, f"{B}/erase", {"confirm": "DELETE"}).status_code == 303
+    assert vault.pending_erase() is not None
+    # Asking again finds it scheduled: no notice, and nothing counted.
+    for _ in range(ERASE_REQUESTS_PER_HOUR + 1):
+        assert post(client, f"{B}/erase", {"confirm": "DELETE"}).status_code == 303
+    assert wait_for_notices(transport, 1) == ["Erase scheduled"]
+    assert len(transport.tried) == ERASE_REQUESTS_PER_HOUR + 3
 
 
 # ── CSRF and origin ──────────────────────────────────────────────────────────
@@ -491,25 +524,25 @@ def test_editing_keeps_masked_values_left_blank(env):
 def test_custom_fields_are_kept_renamed_and_removed(env):
     client, vault = env[0], env[1]
     setup_vault(client)
-    form = {**CARD_FORM, "c_name_0": "PIN", "c_value_0": "4321", "c_hidden_0": "on", "c_name_1": "Bank"}
+    form = {**CARD_FORM, "c_name_0": "PIN", "c_value_0": PIN, "c_hidden_0": "on", "c_name_1": "Bank"}
     form.update({"c_value_1": "Banco Falso", "c_name_2": "", "c_value_2": ""})  # Bank: a Text field
     secret = add(client, form)
     custom = [(f.key, f.value, f.masked) for f in vault.secret(secret).custom_fields]
-    assert custom == [("pin", "4321", True), ("bank", "Banco Falso", False)]
+    assert custom == [("pin", PIN, True), ("bank", "Banco Falso", False)]
     new = client.get(f"{B}/secrets/new?kind=card").text
     assert re.search(r'<input type="checkbox" name="c_hidden_0" checked>', new)  # new rows start Hidden
     edit = client.get(f"{B}/secrets/{secret}/edit").text
-    assert 'value="PIN"' in edit and "4321" not in edit and 'value="Banco Falso"' in edit
+    assert 'value="PIN"' in edit and PIN not in edit and 'value="Banco Falso"' in edit
     assert re.search(r'<input name="c_value_0" type="password"', edit)
     assert re.search(r'<input name="c_value_1"(?! type="password")', edit)
     page = client.get(f"{B}/secrets/{secret}").text
-    assert "Banco Falso" in page and "4321" not in page
+    assert "Banco Falso" in page and PIN not in page
     update = {**CARD_FORM, "f_number": "", "c_name_0": "Card PIN", "c_value_0": "", "c_old_0": "pin", "c_hidden_0": "on"}
     update.update({"c_name_1": "Bank", "c_value_1": "", "c_old_1": "bank"})  # a Text field emptied: removed
     update.update({"c_name_2": "Branch", "c_value_2": "Lisboa"})
     assert post(client, f"{B}/secrets/{secret}", update).status_code == 303
     custom = [(f.key, f.label, f.value, f.masked) for f in vault.secret(secret).custom_fields]
-    assert custom == [("card_pin", "Card PIN", "4321", True), ("branch", "Branch", "Lisboa", False)]
+    assert custom == [("card_pin", "Card PIN", PIN, True), ("branch", "Branch", "Lisboa", False)]
     # Emptying an existing field's name removes it.
     emptied = {**CARD_FORM, "f_number": "", "c_name_0": " ", "c_value_0": "", "c_old_0": "card_pin", "c_hidden_0": "on"}
     emptied.update({"c_name_1": "Branch", "c_value_1": "Lisboa", "c_old_1": "branch"})
@@ -546,23 +579,23 @@ def test_the_form_groups_fields_like_bitwarden(env):
     assert 'data-group="form:identity:Address"' in form
     personal = group_body(form, "Personal details")
     assert 'name="f_first_name"' in personal and 'name="f_passport_number"' not in personal
-    secret = add(client, {**CARD_FORM, "c_name_0": "PIN", "c_value_0": "4321", "c_hidden_0": "on"})
+    secret = add(client, {**CARD_FORM, "c_name_0": "PIN", "c_value_0": PIN, "c_hidden_0": "on"})
     edit = client.get(f"{B}/secrets/{secret}/edit").text
     assert groups(edit)[1:3] == ["Card details", "Additional options"]
     custom = group_body(edit, "Custom fields")
-    assert 'value="PIN"' in custom and "4321" not in edit
+    assert 'value="PIN"' in custom and PIN not in edit
 
 
 def test_the_secret_page_groups_fields_like_the_form(env):
     client = env[0]
     setup_vault(client)
-    secret = add(client, {**CARD_FORM, "c_name_0": "PIN", "c_value_0": "4321", "c_hidden_0": "on"})
+    secret = add(client, {**CARD_FORM, "c_name_0": "PIN", "c_value_0": PIN, "c_hidden_0": "on"})
     page = client.get(f"{B}/secrets/{secret}").text
     assert groups(page) == ["Card details", "Additional options", "Custom fields", "Agent access"]
     assert 'data-group="page:card:Custom fields"' in page
-    assert CARD not in page and "4321" not in page and SECRET in group_body(page, "Additional options")
+    assert CARD not in page and PIN not in page and SECRET in group_body(page, "Additional options")
     shown = post(client, f"{B}/secrets/{secret}/show", {}).text
-    assert CARD in shown and "4321" in shown and 'data-copy="v-pin"' in shown
+    assert CARD in shown and PIN in shown and 'data-copy="v-pin"' in shown
 
 
 def test_the_secret_page_names_what_agents_may_use_without_asking(env):
@@ -590,7 +623,7 @@ def test_bitwarden_import(env, caplog):
             {"type": 2, "name": "Empty", "notes": None},
         ],
     }
-    csrf = csrf_of(client.get(f"{B}/notifications").text)
+    csrf = csrf_of(client.get(f"{B}/").text)
     r = client.post(
         f"{B}/secrets/import",
         data={"csrf": csrf},
@@ -609,7 +642,7 @@ def test_bitwarden_import(env, caplog):
 def test_bitwarden_import_refuses_a_large_upload_before_reading_it(env):
     client, vault = env[0], env[1]
     setup_vault(client)
-    csrf = csrf_of(client.get(f"{B}/notifications").text)
+    csrf = csrf_of(client.get(f"{B}/").text)
     big = b"{" + b" " * (5 * 1024 * 1024 + 64 * 1024) + b"}"
     r = client.post(
         f"{B}/secrets/import",
@@ -626,7 +659,7 @@ def test_bitwarden_import_refuses_an_encrypted_export_and_needs_csrf(env):
     upload = {"file": ("b.json", b'{"encrypted": true, "items": []}', "application/json")}
     no_csrf = client.post(f"{B}/secrets/import", data={"csrf": "x"}, files=upload, headers={"origin": ORIGIN})
     assert no_csrf.status_code == 403
-    csrf = csrf_of(client.get(f"{B}/notifications").text)
+    csrf = csrf_of(client.get(f"{B}/").text)
     r = client.post(f"{B}/secrets/import", data={"csrf": csrf}, files=upload, headers={"origin": ORIGIN})
     assert r.status_code == 400 and "encrypted" in r.text and vault.secrets() == []
 
@@ -670,6 +703,8 @@ def test_mcp_tools(env):
     props = tools["request_secret"]["inputSchema"]["properties"]
     assert props["delivery"]["enum"] == ["placeholders", "text"] and props["delivery"]["default"] == "placeholders"
     assert {"reason", "alias"} <= set(props)
+    result_props = tools["get_result"]["inputSchema"]["properties"]
+    assert result_props["collect"]["type"] == "boolean" and result_props["collect"]["default"] is True
     assert "AI provider" in tools["request_secret"]["description"]
     for name in ("request_secret", "get_result"):
         assert "never repeat" in tools[name]["description"].lower(), name
@@ -681,10 +716,9 @@ def test_mcp_refuses_public_host(env):
 
 def test_end_to_end_through_mcp_and_ui(env, caplog):
     caplog.set_level(logging.DEBUG)
-    client, vault, sender = env
+    client, vault, transport = env
     setup_vault(client)
     card = add(client, CARD_FORM)
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
 
     listed, raw = call_tool(client, "list_secrets", {})
     assert listed["secrets"][0]["name"] == "Visa"
@@ -702,13 +736,15 @@ def test_end_to_end_through_mcp_and_ui(env, caplog):
     assert 'class="badge">1<' in client.get(f"{B}/secrets").text
     assert post(client, f"{B}/r/{rid}/decide", {"action": "share", "fields": ["number"]}).status_code == 303
 
+    peek, raw = call_tool(client, "get_result", {"request_id": rid, "wait_seconds": 5, "collect": False})
+    assert peek == {"id": rid, "status": "done"} and CARD not in raw
     res, _ = call_tool(client, "get_result", {"request_id": rid, "wait_seconds": 5})
     assert res["status"] == "done" and res["values"] == {"number": CARD} and res["withheld"] == ["Security code"]
     assert "Reason to read them: compare it with the receipt" in vault.audit_log()[0].detail
     again, _ = call_tool(client, "get_result", {"request_id": rid})
     assert "values" not in again
     assert CARD not in client.get(f"{B}/r/{rid}").text
-    assert CARD not in json.dumps([c["data"] for c in sender.calls])
+    assert CARD not in transport.sent()
     assert CARD not in caplog.text and SECRET not in caplog.text
 
 
@@ -738,35 +774,50 @@ def test_request_page_escapes_agent_input(env):
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page
 
 
-def test_push_subscription_endpoints_work_while_locked(env):
+def test_the_notifications_moved_to_the_lollo(env):
+    """Devices enable notifications on /notifications/ now (lollo-notifications)."""
     client, vault, _ = env
-    csrf = csrf_of(client.get(f"{B}/notifications").text)
-    headers = {**SCRIPT_FETCH, "x-csrf-token": csrf, "origin": ORIGIN}
-    sub = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "key", "auth": "auth"}}
-    assert client.post(f"{B}/push/subscribe", json=sub, headers=headers).status_code == 200
-    assert [s["email"] for s in vault.subscriptions()] == [EMAIL]
-    assert client.post(f"{B}/push/subscribe", json=sub, headers={**SCRIPT_FETCH, "origin": ORIGIN}).status_code == 403
-    bad = {"endpoint": "http://internal/x", "keys": {"p256dh": "k", "auth": "a"}}
-    assert client.post(f"{B}/push/subscribe", json=bad, headers=headers).status_code == 400
-    assert client.post(f"{B}/push/test", json={}, headers=headers).json() == {"delivered": 1}
-    unsub = {"endpoint": sub["endpoint"]}
-    assert client.post(f"{B}/push/unsubscribe", json=unsub, headers=headers).status_code == 200
-    assert vault.subscriptions() == []
+    for path in ("/notifications", "/push/subscribe", "/push/unsubscribe", "/push/test"):
+        assert client.get(f"{B}{path}").status_code == 404, path
+        r = client.post(f"{B}{path}", json={}, headers={**SCRIPT_FETCH, "origin": ORIGIN})
+        assert r.status_code in (404, 405), path
+    for path in ("/manifest.webmanifest", "/icon-512.png"):
+        assert client.get(f"{B}{path}").status_code == 404, path
+    setup_vault(client)
+    page = client.get(f"{B}/").text
+    assert '<a href="/notifications/">Notifications</a>' in page
+    assert f"{B}/notifications" not in page and 'name="vapid"' not in page
+    post(client, f"{B}/lock", {})
+    assert 'href="/notifications/"' in client.get(f"{B}/").text  # the unlock page, for the erase
+
+
+def test_the_old_service_worker_unregisters_itself(env):
+    """A device that installed the vault's own service worker drops it at its next update check."""
+    client = env[0]
+    worker = {"sec-fetch-mode": "same-origin", "sec-fetch-dest": "serviceworker", "sec-fetch-site": "same-origin"}
+    r = client.get(f"{B}/sw.js", headers=worker)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
+    assert "self.registration.unregister()" in r.text and "skipWaiting" in r.text
+    for gone in ("push", "showNotification", "notificationclick", "fetch"):
+        assert f'addEventListener("{gone}"' not in r.text
+    # No vault page registers a service worker any more.
+    app_js = client.get(f"{B}/app.js").text
+    assert "serviceWorker" not in app_js and "pushManager" not in app_js
+    assert "worker-src" not in client.get(f"{B}/").headers["content-security-policy"]
 
 
 def test_locked_vault_answers_agents_and_notifies(env):
-    """Regression: the list tool ran in a worker thread and could not schedule the unlock push."""
-    client, vault, sender = env
+    """Regression: the list tool ran in a worker thread and could not schedule the unlock notice."""
+    client, vault, transport = env
     setup_vault(client)
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
     post(client, f"{B}/lock", {})
     listed, _ = call_tool(client, "list_secrets", {})
     assert listed["locked"] is True
-    for _ in range(100):  # the push is sent in the background
-        if sender.calls:
+    for _ in range(100):  # the notice is sent in the background
+        if transport.taken:
             break
         time.sleep(0.02)
-    assert len(sender.calls) == 1
+    assert [p["tag"] for p in transport.taken] == ["vault-locked"]
 
 
 # ── placeholders and /redeem ─────────────────────────────────────────────────
@@ -780,10 +831,9 @@ def redeem(client, handle, url=REDEEM, **headers):
 
 def test_placeholders_end_to_end(env, caplog):
     caplog.set_level(logging.DEBUG)
-    client, vault, sender = env
+    client, vault, transport = env
     setup_vault(client)
     card = add(client, CARD_FORM)
-    vault.add_subscription("https://push.example/1", "k", "a", EMAIL)
 
     args = {"secret_id": card, "fields": ["number"], "purpose": "Pay for the train"}
     sub, _ = call_tool(client, "request_secret", args)
@@ -798,9 +848,9 @@ def test_placeholders_end_to_end(env, caplog):
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
     assert r.json() == {"secrets": ["Visa"], "env": {"VAULT_NUMBER": CARD}}
     again = redeem(client, res["handle"])
-    assert again.status_code == 404 and CARD not in again.text
+    assert again.status_code == 410 and "already used" in again.text and CARD not in again.text
     assert CARD not in client.get(f"{B}/r/{sub['id']}").text
-    assert CARD not in json.dumps([c["data"] for c in sender.calls])
+    assert CARD not in transport.sent()
     assert CARD not in caplog.text and res["handle"] not in caplog.text
 
 

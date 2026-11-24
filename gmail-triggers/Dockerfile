@@ -2,7 +2,7 @@
 # lolloctl via compose/gmail-triggers.yml; tests/run-sidecar.sh builds the
 # `test` stage and runs it. Both pass the shared package as the build context
 # named `lollo-common`.
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /app
 COPY --from=lollo-common . /tmp/lollo-common

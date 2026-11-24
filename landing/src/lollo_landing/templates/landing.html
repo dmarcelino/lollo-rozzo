@@ -15,6 +15,16 @@
     </a>
   </li>
   {% endfor %}
+  {% if notifications %}
+  <li>
+    <a class="menu-row" href="{{ notifications }}">
+      <span class="menu-row-text">
+        <span class="menu-row-title">Notifications</span>
+        <span class="menu-row-desc">Turn notifications on for this device, once for every lollo page</span>
+      </span>
+    </a>
+  </li>
+  {% endif %}
 </ul>
 {% endif %}
 {% if lists_agents %}

@@ -2,16 +2,16 @@
 name = "gmail-triggers"
 version = "0.1.0"
 description = "Lollo Rozzo sidecar: ask an agent to act when matching mail arrives in Gmail"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 # Pinned: this is an application image, rebuilt on every `lolloctl up`. Shared
 # libraries use the vault's pins. lollo-common is installed by the Dockerfile
 # from its build context and deliberately not listed here, so pip never looks
 # for a package of that name on PyPI.
 dependencies = [
   "anyio==4.16.0",
-  "starlette==1.7.0",
+  "starlette==1.10.0",
   "uvicorn==0.54.0",
-  "python-multipart==0.0.33",
+  "python-multipart==0.0.34",
   "jinja2==3.1.6",
   "pyjwt[crypto]==2.15.1",
   "cryptography==50.0.2",

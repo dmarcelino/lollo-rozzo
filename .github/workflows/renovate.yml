@@ -10,19 +10,14 @@
 name: Renovate
 
 on:
-  # Tuesdays and Fridays at 16:00, Saturdays and Sundays at 07:00, Lisbon time.
-  # Cron is UTC, so each runs at both UTC hours that can be that hour in Lisbon
-  # (summer time or not); renovate.json5's schedule lets only the one inside it
-  # create or update branches.
+  # Tuesdays and Fridays at 16:17 UTC, Saturdays and Sundays at 07:17 UTC: the
+  # only schedule, since renovate.json5 has none. GitHub may start a run late or
+  # skip it (hence a minute off the hour, which it delays less); Renovate does
+  # its work whenever it runs.
   schedule:
-    - cron: '5 15,16 * * 2,5'
-    - cron: '5 6,7 * * 0,6'
+    - cron: '17 16 * * 2,5'
+    - cron: '17 7 * * 0,6'
   workflow_dispatch:
-    inputs:
-      ignore-schedule:
-        description: Create and update branches now, whatever the schedule says
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -38,9 +33,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      RENOVATE_VERSION: 44.224.2
+      RENOVATE_VERSION: 44.257.6
     steps:
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         id: app
         with:
           client-id: ${{ vars.RENOVATE_CLIENT_ID }}
@@ -66,10 +61,5 @@ jobs:
           RENOVATE_ALLOWED_COMMANDS: '["^scripts/renovate-post-upgrade\\.sh (shellcheck|code-server|officeagent|pipelock|doc-tools-lock)$"]'
           # gh in the post-upgrade script reads public releases and attestations.
           RENOVATE_CUSTOM_ENV_VARIABLES: '{"GH_TOKEN": "${{ github.token }}"}'
-          IGNORE_SCHEDULE: ${{ inputs.ignore-schedule }}
           LOG_LEVEL: info
-        run: |
-          if [[ $IGNORE_SCHEDULE == true ]]; then
-            export RENOVATE_FORCE='{"schedule":["at any time"]}'
-          fi
-          npx --yes "renovate@$RENOVATE_VERSION"
+        run: npx --yes "renovate@$RENOVATE_VERSION"

@@ -57,6 +57,8 @@ class RunResult:
     follow_errors: int = 0
     # The first page's most likely listing blocks (blocks.repeated_blocks), when asked for.
     largest_block: dict[str, Any] = field(default_factory=dict)
+    # An rss source's feed read past robots.txt: Page.robots_exempt's "disallowed" or "unreadable".
+    robots_exempt: str = ""
 
     @property
     def ok(self) -> bool:
@@ -137,14 +139,19 @@ async def run_source(
                 etag=etag if conditional else "",
                 last_modified=last_modified if conditional else "",
                 max_wait=max_wait,
+                # Only the feed itself, as a feed reader reads it: never what it links to.
+                feed=spec.kind == "rss",
             )
         except FetchError as e:
             if i == 0:
                 result.error = str(e)
                 result.retry_after = e.retry_after
+                if e.page is not None:
+                    result.sample = sample_of(e.page)
                 return result
             break  # a later page failing ends the paging, not the run
         result.pages += 1
+        result.robots_exempt = result.robots_exempt or page.robots_exempt
         if page.not_modified:
             result.not_modified = True
             result.etag, result.last_modified = etag, last_modified

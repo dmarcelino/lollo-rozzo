@@ -26,7 +26,7 @@
   <h2>Forgot your passphrase?</h2>
   <form method="post" action="{{ base }}/erase" class="stack" autocomplete="off">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <p>Nobody can recover it. You can erase the vault and start again: every secret and the history are deleted for good {{ erase_delay }} from now. Every device with notifications on is told, and unlocking the vault before then cancels the erase.</p>
+    <p>Nobody can recover it. You can erase the vault and start again: every secret and the history are deleted for good {{ erase_delay }} from now. Every device with <a href="/notifications/">notifications</a> on is told, and unlocking the vault before then cancels the erase.</p>
     <label class="field">Type DELETE to confirm <input name="confirm" required></label>
     <button class="button danger outline">Erase in {{ erase_delay }}</button>
   </form>

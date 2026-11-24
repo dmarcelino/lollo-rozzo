@@ -73,6 +73,26 @@ async def test_the_page_lists_and_deletes(client, service, web, store):
     assert r.status_code == 303 and store.source_spec("city-agenda") is None
 
 
+CSP = (
+    "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; "
+    "frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'"
+)
+MANIFEST = '<link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">'
+TOUCH_ICON = '<link rel="apple-touch-icon" href="/assets/icon-192.png">'
+
+
+def test_the_page_and_refusals_link_the_lollo_home_screen_app(client):
+    """One Home Screen app for the lollo host: its manifest and icon are the landing page's."""
+    page = client.get(f"{B}/")
+    script = {"sec-fetch-mode": "cors", "sec-fetch-dest": "empty", "sec-fetch-site": "same-origin"}
+    refusal = client.get(f"{B}/", headers=script)
+    assert page.status_code == 200 and refusal.status_code == 403
+    for r in (page, refusal):
+        assert MANIFEST in r.text and TOUCH_ICON in r.text
+        assert f'<link rel="icon" href="{B}/icon-192.png">' in r.text
+        assert r.headers["content-security-policy"] == CSP
+
+
 @pytest.mark.anyio
 async def test_the_page_warns_when_lettuce_is_not_picking_up(client, service, web):
     await setup_monitor(service, web)
@@ -200,6 +220,28 @@ async def test_the_page_shows_where_a_monitor_looks(client, service, web):
     await setup_monitor(service, web)
     service.monitor_put(AGENT, "films", ["city-agenda"], schedule="0 9 * * 1-5", where=["northtown", "easttown"])
     assert "only at: northtown, easttown" in client.get(f"{B}/").text
+
+
+def test_the_page_lists_adds_and_deletes_places(client, service, store):
+    store.set_agents([Agent(AGENT, "lucius")])
+    service.place_put(AGENT, [{"phrase": "Centre Culturel de Belvué", "locality": "Southtown"}])
+    page = client.get(f"{B}/").text
+    assert "Centre Culturel de Belvué" in page and "Southtown" in page and "lucius" in page
+    token = csrf_of(page)
+    form = {"csrf": token, "phrase": "Coliseum Northtown", "locality": "Northtown"}
+    r = client.post(f"{B}/p", data=form, headers={"origin": "https://evil.example.org"})
+    assert r.status_code == 403 and len(store.places()) == 1
+    r = client.post(f"{B}/p", data=form, headers={"origin": ORIGIN})
+    assert r.status_code == 303
+    assert {p.phrase: (p.locality, p.added_by) for p in store.places()}["Coliseum Northtown"] == ("Northtown", "page")
+    r = client.post(f"{B}/p", data={**form, "phrase": "CCB"}, headers={"origin": ORIGIN})
+    assert r.status_code == 400 and "4 to 80 letters or digits" in r.text
+    r = client.post(f"{B}/p/centrecultureldebelvue/delete", data={"csrf": "wrong"}, headers={"origin": ORIGIN})
+    assert r.status_code == 403 and len(store.places()) == 2
+    r = client.post(f"{B}/p/centrecultureldebelvue/delete", data={"csrf": token}, headers={"origin": ORIGIN})
+    assert r.status_code == 303 and [p.phrase for p in store.places()] == ["Coliseum Northtown"]
+    r = client.post(f"{B}/p/nowhere/delete", data={"csrf": token}, headers={"origin": ORIGIN})
+    assert r.status_code == 400
 
 
 @pytest.mark.anyio

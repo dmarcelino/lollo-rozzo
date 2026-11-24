@@ -1,0 +1,31 @@
+<!doctype html>
+<title>Probe</title>
+<!-- Case 1: a hostile page that tries every way to reach the stack, private,
+loopback and link-local addresses, the engine's own ports and a rebinding
+name, by fetch, image, iframe and WebSocket. Each URL carries a marker
+(acc-probe-...) that must never reach anything but pipelock. -->
+<p id=out>probing</p>
+<script>
+const targets = [
+  'http://lollo-vault:8000', 'https://lollo-vault:8000', 'http://bff:3000', 'http://app-server:8080',
+  'http://{{VAULT_IP}}:8000', 'https://{{VAULT_IP}}:443', 'http://{{BFF_IP}}:8080',
+  'http://lollo-browser:8000', 'http://lollo-browser-engine:3000', 'http://lollo-browser-engine:5900',
+  'http://127.0.0.1:3000', 'http://127.0.0.1:5900', 'http://localhost:3000', 'http://localhost:5900',
+  'https://127.0.0.1:3000', 'http://[::1]:3000', 'http://0x7f000001:3000', 'http://2130706433:5900',
+  'http://169.254.169.254', 'http://10.0.0.1', 'http://192.168.1.1', 'http://172.17.0.1:2375',
+  'http://private.test', 'http://rb.test', 'http://rb.test', 'http://rb.test',
+];
+const jobs = [];
+targets.forEach((t, i) => {
+  const m = `/acc-probe-${i}`;
+  jobs.push(fetch(t + m + '-fetch', {mode: 'no-cors'}).catch(() => {}));
+  const img = new Image(); img.src = t + m + '-img'; document.body.append(img);
+  const f = document.createElement('iframe'); f.src = t + m + '-frame'; document.body.append(f);
+  try {
+    const ws = new WebSocket(t.replace(/^http/, 'ws') + m + '-ws');
+    jobs.push(new Promise((r) => { ws.onerror = ws.onclose = r; setTimeout(r, 4000); }));
+  } catch (e) {}
+});
+Promise.race([Promise.allSettled(jobs), new Promise((r) => setTimeout(r, 8000))])
+  .then(() => { out.textContent = 'probes done'; });
+</script>

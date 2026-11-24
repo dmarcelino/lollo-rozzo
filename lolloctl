@@ -25,7 +25,8 @@ Setup
   remove <name> [--purge]       stop a stack and delete its Cloudflare resources (--purge: its data too)
   profiles [<p>,<p>...]         show, or set for every stack, the compose profiles (optional features)
   upgrade <tag>                 move Lettuce to another tag and update every stack
-  self-upgrade vX.Y.Z           (released lolloctl only) move lollo-rozzo to another release
+  self-upgrade vX.Y.Z           (released lolloctl only) move lollo-rozzo to another release,
+                                or to a pull request's dev build, vX.Y.Z-dev.<slug>.<N>
   version                       lollo-rozzo's release, or the clone it runs from
   dns-preflight <domain> <ns> <ns> [names...]
                                 compare two nameservers before moving a domain (docs/cloudflare-setup.md, step 2.6)
@@ -37,11 +38,16 @@ Operation (<target> is a stack name or "all")
   check <target>                refuse unsafe or inconsistent configuration
   skills <target>               install agent-skills/ into running stacks (every agent of the stack)
   mcp <target> [--force]        add the document tools (office, pdf; lollo-doc-tools profile), the vault
-                                (lollo-vault), News Radar (lollo-news-radar) and Outlook (lollo-outlook)
+                                (lollo-vault), News Radar (lollo-news-radar), Outlook (lollo-outlook) and the
+                                browser (lollo-browser)
                                 to Settings -> MCP, once per stack
                                 (--force: again, also where the person removed them)
-  backup <target> <dir> [opts]  copy agents, memory, workspaces, tools, vault, News Radar and receipts to <dir>/<name>/
-                                (--compress: a tar.gz instead; --no-tools; --pause|--live; --keep N)
+  backup <target> <dir> [opts]  copy agents, memory, workspaces, tools, vault, News Radar, notification
+                                subscriptions and receipts to <dir>/<name>/
+                                (--compress: a tar.gz instead; --no-tools; --with-google: Lettuce's Google
+                                tokens too; --pause|--live; --keep N)
+  restore <name> <backup>       put a stack back from one backup (a snapshot directory or a .tar.gz), here or
+          [--yes]               on a new host; the stack must be stopped (--yes: replace its data without asking)
   status                        containers and health of every stack
   list                          stacks, hostnames (Lettuce's and the lollo's) and allowed users
   logs <name> [service]         follow logs
@@ -405,9 +411,17 @@ executor_out_of_step() {
 
 # up_stack NAME -> checks one stack, then builds and starts it
 up_stack() {
+  local routed=1
   sync_push_contact "$1"
   ensure_executor_token "$1"
   ensure_outlook_secret "$1"
+  # No keypair yet: a stack from before the notifications service, whose tunnel
+  # has no /notifications/ route. `up` makes no Cloudflare call; `profiles`
+  # applies the routes (`add` and `profiles` make the keypair first themselves).
+  notify_keypair_missing "$1" && routed=0
+  ensure_notify_secrets "$1"
+  ((routed)) || notify_route_reminder "$1"
+  ensure_browser_secrets "$1"
   sync_lollo_profiles "$1"
   sync_news_radar_settings "$1"
   check_stack "$1"
@@ -418,10 +432,44 @@ up_stack() {
   fi
   info "starting $1"
   build_local_images "$1"
+  if has_profile "$(env_get "$(stack_env "$1")" COMPOSE_PROFILES)" lollo-browser; then
+    start_browser_engine "$1"
+  fi
   # Never a build here: an image that should be published but is missing fails
   # instead of building from a context the released image does not carry. An
   # image already on the host is not pulled again.
   compose "$1" up -d --no-build --pull missing --remove-orphans
+}
+
+# notify_route_reminder NAME -> with a sender on, says to run `profiles` once
+# (with the current list, which changes and restarts nothing), so the tunnel
+# routes the stack's /notifications/
+notify_route_reminder() {
+  local f
+  f=$(stack_env "$1")
+  [[ -n $(notify_profiles "$(env_get "$f" COMPOSE_PROFILES)") ]] || return 0
+  warn "$1: the tunnel does not route https://$(env_get "$f" LOLLO_HOSTNAME)/notifications/ yet, and up makes no Cloudflare call; run once: lolloctl profiles $(cfg PROFILES) (the current list: it routes every stack and restarts none)"
+}
+
+# The line the browser's engine logs, before it exits 3, when Chromium's
+# sandbox cannot start (browser/engine/).
+BROWSER_SANDBOX_FAILED="lollo-browser-engine: Chromium's sandbox failed"
+
+# start_browser_engine NAME -> starts the browser's engine alone, before the
+# rest of the stack, and waits until it is healthy. When Chromium's sandbox
+# cannot start on this host, it stops the engine and dies, naming the host
+# settings: the browser never runs without the sandbox, and nothing here
+# retries it any other way.
+start_browser_engine() {
+  local logs
+  compose "$1" up -d --no-build --pull missing --wait --wait-timeout 180 lollo-browser-engine && return 0
+  logs=$(compose "$1" logs --no-color --tail 200 lollo-browser-engine 2>&1) || logs=""
+  # Its restart policy would start it again and again.
+  compose "$1" stop lollo-browser-engine >/dev/null 2>&1 || warn "$1: could not stop lollo-browser-engine"
+  if grep -qF -- "$BROWSER_SANDBOX_FAILED" <<<"$logs"; then
+    die "$1: Chromium's sandbox cannot start on this host, so the browser does not run (it never runs without its sandbox). Allow unprivileged user namespaces (sysctl user.max_user_namespaces above 0, and on Debian kernels kernel.unprivileged_userns_clone=1) and keep Docker's default AppArmor profile, then run: lolloctl up $1 (docs/browser.md, \"Running it\"); or turn the lollo-browser profile off"
+  fi
+  die "$1: the browser's engine did not become healthy; see: lolloctl compose $1 logs lollo-browser-engine (docs/browser.md, \"Running it\")"
 }
 
 # build_local_images NAME -> builds the stack's images that are built on this
@@ -630,19 +678,22 @@ sync_doc_tools() {
 # ── lolloctl's servers in Settings -> MCP ──────────────────────────────────
 # Lettuce's shared MCP list belongs to its BFF. lib/mcp-servers.mjs adds or
 # removes only one group's own entries (the document tools: those that run one;
-# the vault: its exact HTTP entry), and refuses a file of any other shape; see
+# the vault, News Radar and the browser: their exact HTTP entry), and refuses a file of any other shape; see
 # it for why that is safe next to the BFF's own writes. Registering is once per
 # stack and group (the group's marker in stack.env), so a server the person
 # removed stays removed; with the group's profile off, its servers are taken
 # out again, since a server that cannot start or answer makes every
 # `letta mcp tools` call fail, the other servers' included.
 MCP_SETTINGS=/root/.letta/mcp-home/.letta/settings.json
-MCP_GROUPS=(doc-tools vault news-radar outlook)
-declare -A MCP_PROFILE=([doc-tools]=lollo-doc-tools [vault]=lollo-vault [news-radar]=lollo-news-radar [outlook]=lollo-outlook)
-declare -A MCP_MARKER=([doc-tools]=DOC_TOOLS_MCP_REGISTERED [vault]=VAULT_MCP_REGISTERED [news-radar]=NEWS_RADAR_MCP_REGISTERED [outlook]=OUTLOOK_MCP_REGISTERED)
-declare -A MCP_LABEL=([doc-tools]="the document tools" [vault]="the vault" [news-radar]="News Radar" [outlook]="Outlook")
+MCP_GROUPS=(doc-tools vault news-radar outlook browser)
+declare -A MCP_PROFILE=([doc-tools]=lollo-doc-tools [vault]=lollo-vault [news-radar]=lollo-news-radar [outlook]=lollo-outlook
+  [browser]=lollo-browser)
+declare -A MCP_MARKER=([doc-tools]=DOC_TOOLS_MCP_REGISTERED [vault]=VAULT_MCP_REGISTERED [news-radar]=NEWS_RADAR_MCP_REGISTERED
+  [outlook]=OUTLOOK_MCP_REGISTERED [browser]=BROWSER_MCP_REGISTERED)
+declare -A MCP_LABEL=([doc-tools]="the document tools" [vault]="the vault" [news-radar]="News Radar" [outlook]="Outlook"
+  [browser]="the browser")
 # What a same-named server of the person's differs in.
-declare -A MCP_KIND=([doc-tools]=command [vault]=URL [news-radar]=URL [outlook]=URL)
+declare -A MCP_KIND=([doc-tools]=command [vault]=URL [news-radar]=URL [outlook]=URL [browser]=URL)
 # Set by register_mcp_group and drop_mcp_group when they changed the list.
 MCP_CHANGED=0
 
@@ -668,6 +719,7 @@ mcp_reminder() {
         vault) info "Vault: vault is in $url Settings -> MCP (docs/vault.md)" ;;
         news-radar) info "News Radar: news-radar is in $url Settings -> MCP (docs/news-radar.md)" ;;
         outlook) info "Outlook: outlook is in $url Settings -> MCP (docs/outlook.md)" ;;
+        browser) info "Browser: browser is in $url Settings -> MCP (docs/browser.md)" ;;
       esac
       continue
     fi
@@ -688,6 +740,10 @@ mcp_reminder() {
       outlook)
         info "Outlook: in $url Settings -> MCP, add an HTTP server:"
         info "  outlook -> http://lollo-outlook:8000/mcp (docs/outlook.md)"
+        ;;
+      browser)
+        info "Browser: in $url Settings -> MCP, add an HTTP server:"
+        info "  browser -> http://lollo-browser:8000/mcp (docs/browser.md)"
         ;;
     esac
   done
@@ -892,6 +948,9 @@ cmd_add() {
   conf_set "$name" "$emails" || die "could not write $(stacks_conf)"
   local hint="Cloudflare setup of '$name' stopped part-way; what exists is recorded in stacks/$name/stack.env. Fix the cause, then re-run: lolloctl add $name $emails"
   lollo=$(env_get "$f" LOLLO_HOSTNAME)
+  # Before the tunnel's routes, which include /notifications/, so the up below
+  # finds the keypair and has no route to remind of (notify_route_reminder).
+  ensure_notify_secrets "$name"
 
   if [[ -z $(env_get "$f" CF_ACCESS_POLICY_ID) ]]; then
     id=$(cf_policy_create "$acc" "lollo-$name" "$emails") || die "$hint"
@@ -1081,6 +1140,12 @@ cmd_remove() {
   if has_news_radar "$name"; then
     info "Its monitors, their sources and what they found are deleted too: their volume goes with the stack."
   fi
+  if has_volume "$name" browser-data; then
+    info "Its browser's kept sign-ins, settings and audit log are deleted too: their volume goes with the stack (no backup holds them)."
+  fi
+  if has_volume "$name" notifications-data; then
+    info "Its notification subscriptions (every device enrolled for the lollo's notifications) are deleted too: their volume goes with the stack."
+  fi
   state=$(env_get "$f" LETTA_STATE_DIR)
   if has_profile "$(env_get "$f" COMPOSE_PROFILES)" lollo-gmail-triggers || [[ -n $state && -d $state/lollo/gmail-triggers ]]; then
     info "Its Gmail triggers stop with it; their rules are in its state, so they go only with --purge."
@@ -1193,8 +1258,8 @@ cmd_remove() {
 
 cmd_profiles() {
   (($# <= 1)) || die "usage: lolloctl profiles [<profile>,<profile>...]"
-  local new n changed="" stale running docs=1
-  local -a stacks gone failed=() unrouted=() executors=() undropped=()
+  local new n changed="" stale running docs=1 rc kept=0
+  local -a stacks gone failed=() unrouted=() executors=() undropped=() unstarted=()
   mapfile -t stacks < <(list_stacks)
   if (($# == 0)); then
     require_config
@@ -1213,9 +1278,14 @@ cmd_profiles() {
 
   # Every run syncs the executor on running stacks, so each needs its token,
   # also when the list is unchanged (a deleted token is made again).
+  # The notifications service's keys and tokens, and the browser's secret,
+  # likewise, so a list that turns a sender on passes check_stack on a stack
+  # made before them.
   for n in "${stacks[@]}"; do
     ensure_executor_token "$n"
     ensure_outlook_secret "$n"
+    ensure_notify_secrets "$n"
+    ensure_browser_secrets "$n"
   done
 
   if [[ -n $changed ]]; then
@@ -1240,9 +1310,21 @@ cmd_profiles() {
     route_stack "$n" || unrouted+=("$n")
   done
 
+  # One stack that does not start (the browser's sandbox refused by the host,
+  # a failed build) must not keep the others from starting: the lists are
+  # written already, so a re-run would find nothing to change. Each failure is
+  # reported at the end, with the `up` that starts it. Not `(up_stack) ||`,
+  # which would turn errexit off inside it.
   if [[ -n $changed ]]; then
     for n in "${stacks[@]}"; do
-      up_stack "$n"
+      set +e
+      (
+        set -e
+        up_stack "$n"
+      )
+      rc=$?
+      set -e
+      ((rc == 0)) || unstarted+=("$n")
     done
   else
     info "profiles are already $new everywhere; nothing to change"
@@ -1251,17 +1333,28 @@ cmd_profiles() {
   # Compose leaves the containers of a dropped profile running. This looks at
   # what exists rather than at what changed, so a re-run also clears what an
   # interrupted run left behind.
+  # A stack that did not start keeps them: its old app-server still runs, with
+  # their servers in Settings -> MCP and its executor, which its `up` syncs;
+  # removing them first would fail every `letta mcp tools` call until then.
+  # The same command, run again after that `up`, removes them.
   for n in "${stacks[@]}"; do
     stale=$(stale_services "$n")
     [[ -n $stale ]] || continue
     mapfile -t gone <<<"$stale"
+    if [[ " ${unstarted[*]} " == *" $n "* ]]; then
+      info "$n: keeping ${gone[*]} (their profile is off) until it starts"
+      kept=1
+      continue
+    fi
     info "$n: removing ${gone[*]} (their profile is off)"
     compose "$n" rm -sf "${gone[@]}" || failed+=("$n")
   done
   # The executor follows the profile on every running stack, on every run, so a
   # re-run repairs a failed install or removal; a stopped stack gets it right
   # at its next `up`.
+  # A stack that did not start gets both at its `up`.
   for n in "${stacks[@]}"; do
+    [[ " ${unstarted[*]} " != *" $n "* ]] || continue
     if ! executor_wanted "$new" && ! executor_installed "$n"; then
       continue
     fi
@@ -1283,6 +1376,7 @@ cmd_profiles() {
   # the servers registered in Settings -> MCP.
   sync_doc_tools || docs=0
   for n in "${stacks[@]}"; do
+    [[ " ${unstarted[*]} " != *" $n "* ]] || continue
     drop_mcp_servers "$n" || undropped+=("$n")
   done
 
@@ -1301,6 +1395,15 @@ cmd_profiles() {
   ((${#executors[@]} == 0)) || warn "could not sync the lollo executor of: ${executors[*]}"
   ((docs)) || warn "could not sync the document tools (shared Gotenberg, networks)"
   ((${#undropped[@]} == 0)) || warn "could not remove servers whose profile is off from Settings -> MCP in: ${undropped[*]}"
+  if ((${#unstarted[@]})); then
+    # `up` takes one stack or all of them.
+    n=all
+    ((${#unstarted[@]} > 1)) || n=${unstarted[0]}
+    warn "the profiles are set, but these stacks did not start: ${unstarted[*]} (see the messages above)"
+    ((kept + ${#unrouted[@]} + ${#failed[@]} + ${#executors[@]} + ${#undropped[@]} == 0 && docs)) ||
+      die "fix the cause, then run: lolloctl up $n, then the same command again"
+    die "fix the cause, then run: lolloctl up $n"
+  fi
   ((${#unrouted[@]} + ${#failed[@]} + ${#executors[@]} + ${#undropped[@]} == 0 && docs)) || die "run the same command again"
 }
 
@@ -1493,9 +1596,17 @@ tilde() {
 
 # toolbox_mount SRC DEST ro|rw
 toolbox_mount() {
+  local real
   [[ -e $1 ]] || die "toolbox: $1 does not exist$(release_mode && echo " (in release mode, toolbox mounts must be under $(host_home), which the wrapper mounts)")"
   [[ $1 == /* && $2 == /* ]] || die "toolbox: mount paths must be absolute: $1 $2"
   [[ $1$2 != *:* ]] || die "toolbox: mount paths cannot contain ':': $1 $2"
+  # The data directory holds every stack's secrets, and it may be under the home
+  # (~/lollo-rozzo), where `mount ~`, or a file linked into it, would hand it to
+  # an agent's workspace.
+  real=$(realpath -m -- "$1")
+  if inside "$real" "$LOLLO_DATA" || inside "$LOLLO_DATA" "$real"; then
+    die "toolbox: a toolbox mount cannot hold the data directory $LOLLO_DATA: $1"
+  fi
   run+=(-v "$1:$2:$3")
 }
 
@@ -1566,7 +1677,9 @@ toolbox_builtins() {
 toolbox_personal() {
   local file=$1 line w a n=0 src dest mode val name
   [[ -f $file ]] || return 0
-  [[ -O $file ]] || die "$file is not owned by you"
+  # In release mode the wrapper checked the owner on the host, where it is real;
+  # here a macOS share may report another (check_mounts).
+  release_mode || [[ -O $file ]] || die "$file is not owned by you"
   ((((8#$(file_mode "$file")) & 8#022) == 0)) || die "$file is writable by others (chmod 600 $file)"
   while IFS= read -r line || [[ -n $line ]]; do
     read -ra w <<<"$line"
@@ -1669,7 +1782,7 @@ cmd_toolbox() {
     info "toolbox: nothing of yours found"
   fi
   [[ " ${secret_names[*]} " == *" CLAUDE_CODE_OAUTH_TOKEN "* ]] ||
-    warn "no Claude token, so claude will ask you to log in; to set one up once: claude setup-token, then: secret-tool store --label='Claude toolbox' service claude-toolbox"
+    warn "no Claude token, so claude will ask you to log in; to set one up once: claude setup-token, then on Linux: secret-tool store --label='Claude toolbox' service claude-toolbox, or on macOS: security add-generic-password -s claude-toolbox -a \"\$USER\" -w"
   # Secrets reach docker through its environment, so they never show in argv
   # (which `env -i NAME=value` would do); `-e NAME` copies each one.
   (
@@ -1802,10 +1915,32 @@ backup_prune() {
   ((${#old[@]} == 0)) || info "$name: removed ${#old[@]} older backup(s): ${old[*]}"
 }
 
+# The stack's volumes a backup holds, each in the entry of the same name, and
+# restore puts back: "<entry> <volume> <owner> <mode> <only>". restore gives the
+# volume that owner and mode (a volume Docker fills from an image takes the
+# image's owner; one restore creates would be root's). <only> google: only with
+# --with-google, as Lettuce's Google client and tokens are; a refresh token
+# opens the person's mail and Drive, and reconnecting costs them a minute.
+# Not browser-data, on purpose: it holds the browser's kept sign-ins (live
+# session cookies for the sites people chose), which a backup would copy to
+# wherever backups go, readable by whoever holds them. People sign in again and
+# set the browser up again after a restore (docs/browser.md).
+BACKUP_VOLUMES=(
+  "vault vault-data 10001:10001 700 always"
+  "pipelock pipelock-data 65532:65532 700 always"
+  "news-radar news-radar-data 10002:10002 700 always"
+  "notifications notifications-data 10005:10005 700 always"
+  "google-policy google-policy 0:0 755 google"
+  "google-creds google-creds 0:0 755 google"
+)
+
+# The platform file backup_stack writes, removed when its subshell exits.
+BACKUP_PLATFORM_FILE=
+
 # backup_stack NAME -> one backup of the stack into $dest/NAME. Run in a subshell:
-# the lock it takes is released when that exits.
+# the lock it takes is released, and its platform file removed, when that exits.
 backup_stack() {
-  local name=$1 f state dir ts prev s p lock vol choice="" mounts=() excludes=() stale=()
+  local name=$1 f state dir ts prev s p e v only lock choice="" mounts=() excludes=() stale=()
   f=$(stack_env "$name")
   state=$(env_get "$f" LETTA_STATE_DIR)
   [[ -d $state ]] || die "$name: no state directory at $state"
@@ -1814,21 +1949,20 @@ backup_stack() {
   # A second run would take this one's .partial-* for a leftover and delete it.
   exec {lock}>"$dir/.lock"
   flock -n "$lock" || die "$name: another backup of $name is running"
-  mounts=(--label "lolloctl.backup=$name" -v "$state:/src/state:ro" -v "$f:/src/stack.env:ro")
-  # Turning the lollo-vault profile off keeps the volume, so look for it either way;
-  # `run -v` would create a missing one.
-  vol=$(vault_volume "$name")
-  if has_vault "$name"; then
-    mounts+=(-v "$vol:/src/vault:ro")
-  elif has_profile "$(env_get "$f" COMPOSE_PROFILES)" lollo-vault; then
-    warn "$name: the vault volume $vol does not exist yet; backing up without it"
-  fi
-  if has_receipts "$name"; then
-    mounts+=(-v "$(receipts_volume "$name"):/src/pipelock:ro")
-  fi
-  if has_news_radar "$name"; then
-    mounts+=(-v "$(news_radar_volume "$name"):/src/news-radar:ro")
-  fi
+  # config.env holds no secrets, and on a new host restore puts it back for init.
+  mounts=(--label "lolloctl.backup=$name" -v "$state:/src/state:ro" -v "$f:/src/stack.env:ro"
+    -v "$(config_file):/src/config.env:ro")
+  # Turning a profile off keeps its volume, so look for each either way; `run -v`
+  # would create a missing one.
+  for e in "${BACKUP_VOLUMES[@]}"; do
+    read -r e v _ _ only <<<"$e"
+    [[ $only != google || -n $google ]] || continue
+    if has_volume "$name" "$v"; then
+      mounts+=(-v "$(stack_volume "$name" "$v"):/src/$e:ro")
+    elif [[ $e == vault ]] && has_profile "$(env_get "$f" COMPOSE_PROFILES)" lollo-vault; then
+      warn "$name: the vault volume $(vault_volume "$name") does not exist yet; backing up without it"
+    fi
+  done
   excludes=(state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups)
   # The BFF rewrites upstream's skills on every connect.
   for s in "$(upstream_dir)"/docker/agent-skills/*/; do
@@ -1846,6 +1980,14 @@ backup_stack() {
   backup_rm "$name" "$dir" "${stale[@]}"
   ts=$(date -u +%Y%m%dT%H%M%SZ)
   [[ ! -e $dir/$ts && ! -e $dir/$ts.tar.gz ]] || die "$name: $dir/$ts already exists; run again in a second"
+  # The host's platform, as `platform`: agent tools are native programs, and
+  # restore leaves them out on a host of another architecture. Removed when the
+  # subshell this runs in exits; named .partial-*, so one a kill left goes with
+  # the rest on the next run.
+  BACKUP_PLATFORM_FILE=$dir/.partial-$ts.platform
+  trap 'rm -f -- "$BACKUP_PLATFORM_FILE"' EXIT
+  (umask 077 && host_platform >"$BACKUP_PLATFORM_FILE") || die "$name: could not ask Docker for this host's platform"
+  mounts+=(-v "$BACKUP_PLATFORM_FILE:/src/platform:ro")
   if stack_running "$name"; then
     choice=$(backup_choice "$name")
   fi
@@ -1877,11 +2019,12 @@ backup_stack() {
 }
 
 cmd_backup() {
-  local usage="usage: lolloctl backup <name|all> <dir> [--compress] [--no-tools] [--pause|--live] [--keep N]"
-  local dest compress="" tools=1 when="" keep="" n rc targets args=() failed=()
+  local usage="usage: lolloctl backup <name|all> <dir> [--compress] [--no-tools] [--with-google] [--pause|--live] [--keep N]"
+  local dest compress="" tools=1 google="" when="" keep="" n rc targets args=() failed=()
   while (($#)); do
     case $1 in
       --compress) compress=1 ;;
+      --with-google) google=1 ;;
       --no-tools) tools="" ;;
       --pause | --live)
         [[ -z $when || $when == "${1#--}" ]] || die "use --pause or --live, not both"
@@ -1990,6 +2133,252 @@ receipt_sessions() {
     sort -rn | awk '!seen[$2]++'
 }
 
+# ── restore ──────────────────────────────────────────────────────────────────
+# Run by sh in the backup container as: sh -c "$RESTORE_COPY" sh MODE SRC DST
+# KEEP_TOOLS, then ENTRY OWNER ROOT_OWNER ROOT_MODE for each of the backup's
+# entries to put back (BACKUP_VOLUMES, and state). DST/ENTRY is made to match
+# the backup's ENTRY: MODE rsync copies the directory SRC/ENTRY (a snapshot
+# keeps no owners, so OWNER gets them all); MODE tar extracts every ENTRY from
+# the archive SRC, with their owners, in one pass. With KEEP_TOOLS (a backup
+# taken with --no-tools, or from another architecture), DST/state/tools stays as
+# it is, and the backup's tools stay out. DST/ENTRY itself ends
+# up ROOT_OWNER's, mode ROOT_MODE. Entry names have no spaces.
+# shellcheck disable=SC2016 # expanded by sh in the container
+RESTORE_COPY='set -e
+mode=$1 src=$2 dst=$3 keep_tools=$4
+shift 4
+# prepare ENTRY OWNER ROOT_OWNER ROOT_MODE... -> rsync copies each entry; for tar,
+# each is emptied and added to $members
+prepare() {
+  while [ $# -gt 0 ]; do
+    if [ "$1" = state ] && [ -n "$keep_tools" ]; then keep=1; else keep=""; fi
+    if [ "$mode" = tar ]; then
+      if [ -n "$keep" ]; then
+        find "$dst/$1" -mindepth 1 -maxdepth 1 ! -name tools -exec rm -rf {} +
+      else
+        find "$dst/$1" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      fi
+      members="$members ./$1"
+    else
+      rsync -aH --numeric-ids --delete --chown="$2" ${keep:+--exclude=/tools/} "$src/$1/" "$dst/$1/"
+    fi
+    shift 4
+  done
+}
+# finish ENTRY OWNER ROOT_OWNER ROOT_MODE... -> each entry itself, its owner and mode
+finish() {
+  while [ $# -gt 0 ]; do
+    chown "$3" "$dst/$1"
+    chmod "$4" "$dst/$1"
+    shift 4
+  done
+}
+members=""
+prepare "$@"
+# -P: links to an absolute path or through .. made at once; without it GNU tar
+# first writes an empty mode-0 file in their place, which the virtiofs share of
+# Colima refuses to open, even to root. restore refused names outside DST.
+if [ "$mode" = tar ]; then tar -xzpPf "$src" --numeric-owner -C "$dst" ${keep_tools:+--exclude=./state/tools} $members; fi
+finish "$@"'
+
+# has_entry ENTRIES ENTRY -> success when ENTRY is one of the lines of ENTRIES
+has_entry() { grep -qxF -- "$2" <<<"$1"; }
+
+# archive_names FILE -> every name in the archive as written: -P, or tar would
+# strip a leading / from what it lists
+archive_names() { tar -tzPf "$1"; }
+
+# outside_name < NAMES -> the first name that is absolute or goes up with '..',
+# which RESTORE_COPY's -P would unpack outside its target; nothing if none
+outside_name() { grep -m1 -E '^/|(^|/)\.\.(/|$)' || true; }
+
+# archive_entries < NAMES -> the archive's entries one and two levels down
+# (stack.env, state, state/tools, vault...), one per line
+archive_entries() {
+  awk -F/ '$2 != "" { print $2; if (NF > 2 && $3 != "") print $2 "/" $3 }' | sort -u
+}
+
+# The directory restore reads the backup's files into, removed when lolloctl exits.
+RESTORE_FILES=
+
+# backup_files KIND BACKUP ENTRIES DIR -> the backup's stack.env, and its
+# config.env and platform when it has them, copied into DIR, mode 600; an
+# archive is read once
+backup_files() {
+  local kind=$1 b=$2 entries=$3 dir=$4 e files=()
+  for e in stack.env config.env platform; do
+    ! has_entry "$entries" "$e" || files+=("$e")
+  done
+  (
+    umask 077
+    if [[ $kind == snapshot ]]; then
+      cd -- "$b" && cp -- "${files[@]}" "$dir/"
+    else
+      tar -xzf "$b" -C "$dir" "${files[@]/#/./}"
+    fi
+  ) || return 1
+  for e in "${files[@]}"; do chmod 600 "$dir/$e"; done
+}
+
+# backup_stack_name STACK_ENV -> the stack a stack.env is for, from the line
+# `add` writes first
+backup_stack_name() {
+  sed -n '1s/^# Lettuce stack "\([^"]*\)".*/\1/p' "$1"
+}
+
+cmd_restore() {
+  local usage="usage: lolloctl restore <name> <backup> [--yes]"
+  local yes="" args=() name b kind entries dir state f files lock e v owner mode vol keep_tools="" answer
+  local emails conf from here me listed src=() mounts=() specs=() names=()
+  while (($#)); do
+    case $1 in
+      --yes) yes=1 ;;
+      -*) die "$usage" ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  ((${#args[@]} == 2)) || die "$usage"
+  name=${args[0]}
+  validate_name "$name"
+  [[ -e ${args[1]} ]] || die "${args[1]} does not exist"
+  b=$(realpath -- "${args[1]}")
+  [[ $b != *[:,]* ]] || die "the backup's path cannot contain ':' or ',': $b"
+  # A snapshot directory, or an archive: what `backup` writes in <dir>/<name>/.
+  if [[ -d $b ]]; then
+    [[ -f $b/stack.env && -d $b/state ]] || die "$b is not a backup: no stack.env and state/ in it"
+    kind=snapshot
+    require_mounted "$b"
+    entries=$(cd "$b" && for e in * state/*; do [[ -e $e ]] && printf '%s\n' "$e"; done)
+  elif [[ -f $b && $b == *.tar.gz ]]; then
+    kind=archive
+    require_mounted "$(dirname -- "$b")"
+    listed=$(archive_names "$b") || die "$b: could not read the archive"
+    e=$(outside_name <<<"$listed")
+    [[ -z $e ]] || die "$b: the archive has an entry that is absolute or goes up with '..': $e; restore unpacks names as written, so it refuses it"
+    entries=$(archive_entries <<<"$listed")
+    if ! has_entry "$entries" stack.env || ! has_entry "$entries" state; then
+      die "$b is not a backup: no stack.env and state/ in it"
+    fi
+  else
+    die "$b is not a backup: name a snapshot directory or a .tar.gz that backup wrote"
+  fi
+  command -v flock >/dev/null || die "flock is required but not installed (util-linux)"
+
+  # The backup's stack.env and config.env, read before anything here changes.
+  files=$(mktemp -d "$LOLLO_DATA/.restore.XXXXXX") || die "could not write in $LOLLO_DATA"
+  RESTORE_FILES=$files
+  trap 'rm -rf -- "$RESTORE_FILES"' EXIT
+  backup_files "$kind" "$b" "$entries" "$files" || die "could not read the backup's stack.env"
+  # A stack.env holds its stack's tunnel and Cloudflare ids: under another name,
+  # two stacks would share a tunnel, and `remove` of one would delete the other's.
+  from=$(backup_stack_name "$files/stack.env")
+  [[ -n $from ]] || die "$b/stack.env does not say which stack it belongs to (no '# Lettuce stack \"<name>\"' first line)"
+  [[ $from == "$name" ]] ||
+    die "$b is a backup of $from, not $name; it holds $from's tunnel and Cloudflare ids, so it can only be restored as $from"
+
+  dir=$(stack_dir "$name")
+  state=$dir/state
+  f=$(stack_env "$name")
+  (umask 077 && mkdir -p "$state")
+  chmod 700 "$dir"
+  exec {lock}>"$dir/.restore.lock"
+  flock -n "$lock" || die "$name: another restore of $name is running"
+
+  # Copying under a stack that has processes, even paused ones, would mix two
+  # states; down first, as for an upgrade.
+  if [[ -f $f ]] && stack_live "$name"; then
+    die "$name is running; stop it first: lolloctl down $name"
+  fi
+  if [[ -f $f || -n $(ls -A "$state") ]]; then
+    if [[ -z $yes ]]; then
+      stdin_is_terminal || die "$name already has data here; run with --yes to replace it with the backup"
+      info "This replaces $name's data here with $b:"
+      info "  $state and $f"
+      for e in "${BACKUP_VOLUMES[@]}"; do
+        read -r e v _ _ _ <<<"$e"
+        ! has_entry "$entries" "$e" || info "  the volume $(stack_volume "$name" "$v")"
+      done
+      printf 'Type the stack name to confirm: ' >&2
+      read -r answer || true
+      [[ $answer == "$name" ]] || die "aborted"
+    fi
+  fi
+  build_backup_image || die "could not build $BACKUP_IMAGE (backup/Dockerfile)"
+
+  # The state, as root's (the containers write it as root), with state/ itself
+  # yours, as `add` makes it; then the volumes the backup holds. One that does
+  # not exist yet is created with Compose's labels, so `up` takes it as the
+  # stack's own. One container copies them all.
+  me="$(id -u):$(id -g)"
+  if ! has_entry "$entries" state/tools; then
+    keep_tools=1
+    warn "$name: the backup has no agent tools (taken with --no-tools); keeping the ones here"
+  elif [[ -f $files/platform ]]; then
+    # Agent tools are native programs and modules: another architecture's would
+    # fail here with "exec format error".
+    from=$(<"$files/platform")
+    here=$(host_platform) || die "could not ask Docker for this host's platform"
+    if [[ $from != "$here" ]]; then
+      keep_tools=1
+      warn "$name: the backup comes from a $from host and this one is $here: its agent tools (state/tools) would not run here, so they are left out; agents install what they need again"
+    fi
+  fi
+  mounts=(-v "$state:/r/state")
+  specs=(state 0:0 "$me" 700)
+  names=(state)
+  for e in "${BACKUP_VOLUMES[@]}"; do
+    read -r e v owner mode _ <<<"$e"
+    has_entry "$entries" "$e" || continue
+    vol=$(stack_volume "$name" "$v")
+    if ! has_volume "$name" "$v"; then
+      host_docker volume create --label "com.docker.compose.project=lollo-$name" \
+        --label "com.docker.compose.volume=$v" "$vol" >/dev/null || die "$name: could not create the volume $vol"
+    fi
+    mounts+=(-v "$vol:/r/$e")
+    specs+=("$e" "$owner" "$owner" "$mode")
+    names+=("$vol")
+  done
+  if [[ $kind == snapshot ]]; then
+    src=(-v "$b:/b:ro" rsync /b)
+  else
+    src=(-v "$b:/a.tar.gz:ro" tar /a.tar.gz)
+  fi
+  info "$name: restoring ${names[*]}"
+  host_docker "${BACKUP_RUN[@]}" --label "lolloctl.restore=$name" "${src[@]:0:2}" "${mounts[@]}" "$BACKUP_IMAGE" \
+    sh -c "$RESTORE_COPY" sh "${src[@]:2}" /r "$keep_tools" "${specs[@]}" ||
+    die "$name: could not restore the backup; its data here is incomplete, so run this restore again"
+
+  # stack.env last, so a failed copy leaves the old one; it names this host's
+  # state directory, wherever the backup's host kept it.
+  mv -f -- "$files/stack.env" "$f"
+  env_set "$f" LETTA_STATE_DIR "$state"
+
+  # config.env only on a host that has none yet: then init picks it up.
+  if [[ ! -f $(config_file) && -f $files/config.env ]]; then
+    mv -f -- "$files/config.env" "$(config_file)"
+    info "config.env: restored from the backup; run lolloctl init next, with a Cloudflare API token for this host"
+  fi
+
+  # Who may sign in: the Access policy and ALLOWED_USERS change together (users),
+  # and stacks.conf is in step with the policy. A stack it lists keeps the users
+  # it admits now; one it lacks gets the backup's, as add would write them.
+  emails=$(env_get "$f" ALLOWED_USERS)
+  conf=$(conf_entries | awk -v n="$name" '$1 == n { print $2 }')
+  if [[ -n $conf && $(email_diff "$emails" "$conf") != "- -" ]]; then
+    env_set "$f" ALLOWED_USERS "$conf"
+    info "$name: admits $conf, as stacks.conf and the Access policy do, not the backup's $emails"
+  elif [[ -z $conf && -n $emails ]]; then
+    conf_set "$name" "$emails" || die "could not update stacks.conf"
+    info "$name: admits $emails, as in the backup; if its Access policy changed since, run: lolloctl users $name <email>[,<email>]"
+  fi
+  if [[ -f $(config_file) && $(env_get "$f" COMPOSE_PROFILES) != "$(cfg PROFILES)" ]]; then
+    warn "$name: its profiles ($(env_get "$f" COMPOSE_PROFILES)) differ from config.env's PROFILES ($(cfg PROFILES)); up will refuse it until they match (lolloctl profiles)"
+  fi
+  ! has_entry "$entries" google-creds || info "$name: the Google tokens are back; nobody needs to reconnect Google"
+  info "$name: restored from $b; start it with: lolloctl up $name && lolloctl skills $name"
+}
+
 cmd_receipts() {
   local usage="usage: lolloctl receipts <name> [<file.html> [<session>]]"
   local name=${1:-} report=${2:-} session=${3:-} sessions t s tmp
@@ -2034,7 +2423,8 @@ cmd_skills() {
   local n targets k
   targets=$(expand_targets "$1")
   for n in $targets; do
-    k=$(sync_skills "$n")
+    # Explicit: apply and _after-upgrade call this behind `||`, where set -e is off.
+    k=$(sync_skills "$n") || return 1
     info "$n: $k skill(s) installed"
   done
 }
@@ -2045,7 +2435,7 @@ cmd_mcp() {
   require_initialised
   mapfile -t groups < <(mcp_groups "$(cfg PROFILES)")
   ((${#groups[@]})) ||
-    die "the lollo-doc-tools, lollo-vault, lollo-news-radar and lollo-outlook profiles are all off; turn one on first, e.g.: lolloctl profiles $(cfg PROFILES),lollo-doc-tools"
+    die "the lollo-doc-tools, lollo-vault, lollo-news-radar, lollo-outlook and lollo-browser profiles are all off; turn one on first, e.g.: lolloctl profiles $(cfg PROFILES),lollo-doc-tools"
   targets=$(expand_targets "$1")
   for n in $targets; do
     register_mcp "$n" "${2:-}" "${groups[@]}" || failed+=("$n")
@@ -2061,10 +2451,15 @@ cmd_mcp() {
 # cmd__fetch_wrapper TAG -> downloads release TAG's wrapper and SHA256SUMS into
 # bin/.lolloctl.new and checks the sum. The sum comes from the same release,
 # so it catches a broken download, not a forged release: the attestation does
-# that (gh attestation verify).
+# that (gh attestation verify). A dev build has no release: fetch_dev_wrapper.
 cmd__fetch_wrapper() {
-  (($# == 1)) && [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || die "usage: lolloctl self-upgrade vX.Y.Z"
+  (($# == 1)) && [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+|-dev\.[a-z0-9-]+\.[0-9]+)?$ ]] ||
+    die "usage: lolloctl self-upgrade vX.Y.Z (or vX.Y.Z-rc.N, or a dev build's vX.Y.Z-dev.<slug>.<N>)"
   release_mode || die "self-upgrade is for a released lolloctl; from a clone, git pull"
+  if [[ $1 == *-dev.* ]]; then
+    fetch_dev_wrapper "$1"
+    return
+  fi
   local url bin sums want got
   url=https://github.com/$(release_get REPOSITORY)/releases/download/$1
   bin=$LOLLO_DATA/bin
@@ -2080,9 +2475,38 @@ cmd__fetch_wrapper() {
   chmod 755 "$bin/.lolloctl.new"
 }
 
+# fetch_dev_wrapper TAG -> writes dev build TAG's wrapper into bin/.lolloctl.new.
+# A dev build is only the lolloctl image's tag (publish.yml, release/README.md
+# "Dev builds"), from this release's own repository: it pulls that image, pins
+# its digest, checks that its RELEASE is TAG's, and fills the wrapper template
+# the image carries, as publish.yml fills a release's.
+fetch_dev_wrapper() {
+  local tag=$1 repo name digest ref version template bin=$LOLLO_DATA/bin
+  repo=$(release_get REPOSITORY)
+  name=ghcr.io/${repo%%/*}/lolloctl
+  name=${name,,}
+  host_docker pull -q "$name:$tag" </dev/null >/dev/null || die "no dev build $tag at $name"
+  digest=$(host_docker image inspect --format '{{json .RepoDigests}}' "$name:$tag" </dev/null |
+    jq -r --arg n "$name@" '.[] | select(startswith($n)) | ltrimstr($n)' | head -1) || true
+  [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not read the digest of $name:$tag"
+  ref=$name:$tag@$digest
+  # Every lolloctl image keeps the code where this one does, LOLLO_HOME.
+  version=$(host_docker run --rm --entrypoint cat "$ref" "$LOLLO_HOME/RELEASE" </dev/null | sed -n 's/^VERSION=//p') || true
+  [[ $version == "${tag#v}" ]] || die "$ref is not dev build $tag (its RELEASE says ${version:-nothing})"
+  template=$(host_docker run --rm --entrypoint cat "$ref" "$LOLLO_HOME/release/lolloctl-wrapper.sh" </dev/null) ||
+    die "$ref carries no wrapper"
+  printf '%s\n' "$template" | sed -e "s|@VERSION@|$tag|" -e "s|@IMAGE@|$ref|" -e "s|@REPOSITORY@|$repo|" >"$bin/.lolloctl.new"
+  if [[ ! -s $bin/.lolloctl.new ]] || grep -q '@[A-Z]*@' "$bin/.lolloctl.new"; then
+    rm -f "$bin/.lolloctl.new"
+    die "$ref's wrapper template could not be filled in"
+  fi
+  chmod 755 "$bin/.lolloctl.new"
+}
+
 # cmd__after_upgrade -> run by the new wrapper once it is in place: moves Lettuce
 # forward to the tag this release was tested with (never back: an older
-# letta-code may not read what a newer one wrote), else updates every stack
+# letta-code may not read what a newer one wrote), else updates every stack;
+# then installs the release's agent skills in every stack, once they are up
 cmd__after_upgrade() {
   local tested
   [[ -f $(config_file) ]] || return 0
@@ -2094,6 +2518,8 @@ cmd__after_upgrade() {
     warn_untested_ref
     cmd_up all
   fi
+  (cmd_skills all) ||
+    die "lollo-rozzo $(release_get VERSION) is in place, but its agent skills are not installed in every stack; fix the cause, then run: lolloctl skills all"
 }
 
 cmd_version() {
@@ -2102,7 +2528,7 @@ cmd_version() {
   else
     printf 'lollo-rozzo from a clone: %s\n' "$LOLLO_HOME"
   fi
-  # Restores run in it by hand (docs/operations.md, Backups).
+  # backup and restore copy with it.
   printf 'backup image: %s\n' "$BACKUP_IMAGE"
 }
 
@@ -2122,7 +2548,7 @@ main() {
   BACKUP_IMAGE=$(image_name backup)
   PIPELOCK_IMAGE=$(image_name pipelock)
   case $cmd in
-    init | apply | add | users | remove | profiles | upgrade | up | down | restart | check | status | list | logs | compose | shell | toolbox | skills | mcp | backup | receipts | version)
+    init | apply | add | users | remove | profiles | upgrade | up | down | restart | check | status | list | logs | compose | shell | toolbox | skills | mcp | backup | restore | receipts | version)
       "cmd_$cmd" "$@"
       ;;
     _fetch-wrapper) cmd__fetch_wrapper "$@" ;;

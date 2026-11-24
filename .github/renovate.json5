@@ -1,14 +1,11 @@
-// Renovate's configuration: what it updates, when, and what merges on its own.
-// It runs from .github/workflows/renovate.yml; CONTRIBUTING.md "Dependency
-// updates" explains the policy and the one-time GitHub setup.
+// Renovate's configuration: what it updates and what merges on its own.
+// It runs from .github/workflows/renovate.yml, whose cron is its only schedule:
+// a schedule here would make every run GitHub starts late do nothing.
+// CONTRIBUTING.md "Dependency updates" explains the policy and the one-time
+// GitHub setup.
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: ['config:recommended'],
-  timezone: 'Europe/Lisbon',
-  // Tuesdays and Fridays at 16:00, Saturdays and Sundays at 07:00. The workflow
-  // starts at both UTC hours that can be that hour in Lisbon; the run outside it
-  // creates and updates nothing.
-  schedule: ['* 16 * * 2,5', '* 7 * * 0,6'],
   // Four runs a week: no cap on PRs per hour.
   prHourlyLimit: 0,
   // config:recommended skips every tests/ folder, which holds pinned images too.
@@ -19,28 +16,34 @@
   },
   packageRules: [
     // Patch, minor and digest updates merge on their own once CI passes (GitHub
-    // auto-merge, with the CI jobs required on main), after three days, so a
-    // release that is pulled or compromised early never merges by itself.
+    // auto-merge, with the CI jobs required on main), after three days (Lettuce
+    // one, below), so a release that is pulled or compromised early never
+    // merges by itself.
     {
       matchUpdateTypes: ['patch', 'minor', 'digest'],
       automerge: true,
       minimumReleaseAge: '3 days',
       minimumReleaseAgeBehaviour: 'timestamp-optional',
     },
-    // A release with no date cannot be held three days (ghcr.io and mcr.microsoft.com
+    // A release with no date cannot be held (ghcr.io and mcr.microsoft.com
     // give none, nor does Docker Hub when its tag API fails): it gets a PR, not
     // an automatic merge.
     {
       matchUpdateTypes: ['patch', 'minor', 'digest'],
       matchJsonata: ['$not($exists(releaseTimestamp)) or releaseTimestamp = null'],
       automerge: false,
-      prBodyNotes: ['The registry gives no release date, so this update was not held for three days: it waits for a person.'],
+      prBodyNotes: ['The registry gives no release date, so this update could not be held: it waits for a person.'],
     },
     // These have upgrade steps CI does not run: their patch updates merge on
     // their own, their minor and major ones wait for a person.
     {
       matchDepNames: ['dmarchevsky/lettuce', 'coder/code-server', 'gotenberg/gotenberg'],
       separateMinorPatch: true,
+    },
+    // Lettuce is held one day, not three.
+    {
+      matchDepNames: ['dmarchevsky/lettuce'],
+      minimumReleaseAge: '1 day',
     },
     {
       matchDepNames: ['dmarchevsky/lettuce'],
@@ -94,6 +97,18 @@
       groupName: 'playwright',
       automerge: false,
       prBodyNotes: ['Before merging, check the pip package and the image are the same Playwright release, and run `scripts/code-server-e2e.sh --browser`.'],
+    },
+    // The browser's Playwright: the engine's npm playwright-core and the
+    // service's pip playwright. Playwright's server refuses a client of another
+    // major.minor, and a new one can change the snapshots the service masks, so
+    // they move in one PR that waits for a person. After the group above, so
+    // the service's pip playwright lands here, not there.
+    {
+      matchFileNames: ['browser/**'],
+      matchDepNames: ['playwright', 'playwright-core'],
+      groupName: 'browser Playwright',
+      automerge: false,
+      prBodyNotes: ['Before merging, check the engine\'s playwright-core and the service\'s playwright have the same major.minor (the engine refuses another), then run `tests/run-sidecar.sh browser` and the browser\'s acceptance suite: browser/README.md, "Build and test".'],
     },
     // What goes with a version is recomputed in the same branch
     // (scripts/renovate-post-upgrade.sh; the workflow allows only that script).

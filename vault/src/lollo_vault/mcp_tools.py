@@ -23,8 +23,11 @@ INSTRUCTIONS = (
     "without passing through you. Load the using-vault-secrets skill first. Ask for 'text' only when you must "
     "reason about the value itself (and a public detail such as the country is not enough); it needs a reason the "
     "user reads before approving. "
-    "Unless the user set a field to share without asking, they approve first: post the approve_url you get back "
-    "in your reply, since they may not get a notification, and wait with get_result. Use values only for the "
+    "Unless the user set a field to share without asking, they approve first: start the one wait command its answer "
+    "gives you (vault-wait, with every request's id, as a Bash call with run_in_background: true; get_result "
+    "without a shell), and give the user each approve_url in that same response or in the message that ends your "
+    "turn (they see only what you write, and may not get a notification; a response with no tool call ends your "
+    "turn). Use values only for the "
     "approved purpose. Never repeat a value in your reply, memory or files, and never open a filled file to check "
     "it: check the template instead."
 )
@@ -53,7 +56,8 @@ def build_server(service: Service) -> MCPServer:
         "({{VAULT_<ALIAS>_<FIELD>}}), to use two secrets with the same fields in one command. delivery 'text' "
         "returns the values into the conversation, which the AI provider sees: use it only when you must reason "
         "about a value, and give the reason, which the user reads. Secrets that need approval return an id for "
-        "get_result and an approve_url to post to the user; fields the user shares without asking answer at once. "
+        "get_result and an approve_url to give the user (start the wait first); fields the user shares "
+        "without asking answer at once. "
         "Never repeat a value in your reply, memory or files.",
         annotations=ToolAnnotations(title="Request a secret", read_only_hint=False, open_world_hint=False),
     )
@@ -71,10 +75,11 @@ def build_server(service: Service) -> MCPServer:
         description="Get the answer to a request_secret: pending, denied, expired, or done with the handle and "
         "placeholders (or, for delivery 'text', the values) of the fields the user agreed to share (they may "
         f"withhold some). wait_seconds (0-{MAX_WAIT_SECONDS}) waits for the answer. Handles and values are "
-        "returned once. Never repeat a value in your reply, memory or files.",
+        "returned once. collect false reports the status only and leaves the handle or values for a later call "
+        "(vault-wait uses it). Never repeat a value in your reply, memory or files.",
         annotations=ToolAnnotations(title="Get request result", read_only_hint=True, open_world_hint=False),
     )
-    async def get_result(request_id: str, wait_seconds: float = 0) -> dict[str, Any]:
-        return await service.get_result(request_id, wait_seconds)
+    async def get_result(request_id: str, wait_seconds: float = 0, collect: bool = True) -> dict[str, Any]:
+        return await service.get_result(request_id, wait_seconds, collect)
 
     return server

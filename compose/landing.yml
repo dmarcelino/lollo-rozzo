@@ -17,7 +17,7 @@
 # Relative paths resolve against --project-directory (upstream/docker).
 services:
   landing:
-    profiles: ["lollo-vault", "lollo-gmail-triggers", "lollo-news-radar", "lollo-code-server", "lollo-outlook"]
+    profiles: ["lollo-vault", "lollo-gmail-triggers", "lollo-news-radar", "lollo-code-server", "lollo-outlook", "lollo-browser"]
     build:
       context: ${LOLLO_HOME:?LOLLO_HOME is not set}/landing
       additional_contexts:

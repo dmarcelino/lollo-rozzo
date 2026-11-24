@@ -20,7 +20,7 @@
     <div class="item-main">
       <span class="item-name">{{ m.name }}{% if m.paused %} <span class="pill warn">Paused</span>{% endif %}{% if m.news %} <span class="pill">News</span>{% endif %}</span>
       <span class="item-desc">{{ describe(m.schedule) }} &middot; Reports: {{ where_reports_go(m) }}</span>
-      <span class="item-desc">Sources: {{ m.sources | join(", ") }}{% if m.include %} &middot; only with: {{ m.include | join(", ") }}{% endif %}{% if m.exclude %} &middot; never with: {{ m.exclude | join(", ") }}{% endif %}{% if m.where %} &middot; only at: {{ m.where | join(", ") }}{% endif %}{% if m.days_ahead is not none %} &middot; events in the next {{ m.days_ahead }} days{% endif %}</span>
+      <span class="item-desc">Sources: {{ m.sources | join(", ") }}{% if m.include %} &middot; only with: {{ m.include | join(", ") }}{% endif %}{% if m.exclude %} &middot; never with: {{ m.exclude | join(", ") }}{% endif %}{% if m.where %} &middot; only at: {{ m.where | join(", ") }}{% if m.where_unknown == "drop" %} (leaving out what isn't placed){% endif %}{% endif %}{% if m.days_ahead is not none %} &middot; events in the next {{ m.days_ahead }} days{% endif %}</span>
       <span class="item-desc">
         {% if last %}Last report: {{ status_text(last.status)[1] }} <span class="muted">{{ last.at | time }}</span>{% if last.error %} <span class="muted">({{ last.error }})</span>{% endif %}{% else %}<span class="muted">No report yet</span>{% endif %}
         {% if m.last_empty %} &middot; <span class="muted">nothing new at {{ m.last_empty | time }}</span>{% endif %}
@@ -59,7 +59,7 @@
   <li class="item">
     <div class="item-main">
       <span class="item-name">{{ s.name }} {% if s.unused %}<span class="pill">Unused</span>{% elif s.healthy %}<span class="pill ok">Working</span>{% else %}<span class="pill bad">Broken</span>{% endif %}</span>
-      <span class="item-desc">{{ s.kind }} from {{ s.host }} &middot; {% if s.unused %}not fetched until a monitor uses it{% else %}every {{ s.every }}{% endif %}{% if s.used_by %} &middot; used by {{ s.used_by | join(", ") }}{% endif %}</span>
+      <span class="item-desc">{{ s.kind }} from {{ s.host }} &middot; {% if s.unused %}not fetched until a monitor uses it{% else %}every {{ s.every }}{% endif %}{% if s.used_by %} &middot; used by {{ s.used_by | join(", ") }}{% endif %}{% if s.place %} &middot; in {{ s.place }}{% endif %}</span>
       <span class="item-desc">{% if s.last_ok %}Last read {{ s.last_ok | time }}{% else %}<span class="muted">Not read yet</span>{% endif %}{% if s.reason %} &middot; {{ s.reason }}{% endif %}</span>
     </div>
     {% if not s.used_by %}
@@ -74,4 +74,30 @@
 {% else %}
 <p class="muted">No sources yet.</p>
 {% endif %}
+<h2>Places</h2>
+<p class="muted">Where monitors that are limited to some towns look up an item's town: a phrase naming a place, such as a venue, found in the item's venue, or in its title or links when neither the item nor its source says where it is. Letters and digits are compared, ignoring case, accents, spaces and punctuation.</p>
+{% if places %}
+<ul class="items">
+  {% for p in places %}
+  <li class="item">
+    <div class="item-main">
+      <span class="item-name">{{ p.phrase }} &rarr; {{ p.locality }}</span>
+      <span class="item-desc muted">Added by {{ p.added_by }} {{ p.at | time }}</span>
+    </div>
+    <form method="post" action="{{ base }}/p/{{ p.key }}/delete" class="item-action">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="button" aria-label="Delete {{ p.phrase }}">Delete</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No places yet.</p>
+{% endif %}
+<form method="post" action="{{ base }}/p" class="item-form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Place <input type="text" name="phrase" required maxlength="160" placeholder="Grand Coliseum Hall"></label>
+  <label>Town <input type="text" name="locality" required maxlength="60" placeholder="Southtown"></label>
+  <button type="submit" class="button ghost">Add</button>
+</form>
 {% endblock %}

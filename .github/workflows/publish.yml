@@ -1,13 +1,20 @@
-# Publishes a release (release/README.md): on a vX.Y.Z or vX.Y.Z-rc.N tag, and
-# only after every check of ci.yml passes. Nothing is published from main, and
-# there is no `latest`: the lolloctl image holds the Docker socket, so a
-# moving tag would let one push reach every host.
+# Publishes lollo-rozzo (release/README.md), only after every check of ci.yml
+# passes, in one of two ways:
+# - A release: on a vX.Y.Z or vX.Y.Z-rc.N tag on a commit of main or of a
+#   hotfix/* branch. Its GitHub release carries the wrapper.
+# - A dev build: on a pull request from a branch of this repository (Renovate's
+#   excepted), when it opens or gets commits, or by hand on any branch but
+#   main. Only the lolloctl image's tag vX.Y.Z-dev.<slug>.<N> (release/dev-tag),
+#   which `lolloctl self-upgrade` installs: no git tag, no GitHub release.
+# Every tag is new and never moves, and there is no `latest`: the lolloctl image
+# holds the Docker socket, so a moving tag would let one push reach every host.
 #
 # Each platform builds on a runner of its own architecture (ubuntu-24.04 for
 # linux/amd64, ubuntu-24.04-arm for linux/arm64), never under emulation, which
 # was ten times slower; a job per image then joins the two into one image.
 #
-# 1. plan: the images, from release/images (the one list).
+# 1. plan: the kind (release or dev), the tag, and the images, from
+#    release/images (the one list).
 # 2. build (one job per image and platform): its content tag
 #    (release/content-tag); when that tag is not in the registry yet, the
 #    image for that platform, pushed by digest only, with an SBOM and BuildKit
@@ -18,47 +25,116 @@
 #    full name), once every image is published for both platforms.
 # 5. ctl (one job per platform): the lolloctl image, carrying RELEASE, pushed
 #    by digest.
-# 6. release: the lolloctl image's tag on both digests, the wrapper pinned to
-#    its digest, SHA256SUMS, the release notes (which images changed, and so
-#    which sidecars restart), and the GitHub release.
+# 6. release, for a release: the lolloctl image's tag on both digests, the
+#    wrapper pinned to its digest, SHA256SUMS, the release notes
+#    (release/NOTES.md's highlights, then which images changed, and so which
+#    sidecars restart), and the GitHub release. The only job that writes to
+#    the repository.
+#    dev, for a dev build: the lolloctl image's tag on both digests and its
+#    attestation; the run's summary says how to install it.
 # The GHCR packages it creates come out public, as this repository is, so hosts
-# pull without credentials (release/README.md, "Cutting a release", step 3).
+# pull without credentials (release/README.md, "Cutting a release", step 5).
 name: Publish
 
 on:
   push:
     tags: ['v*']
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# One run at a time per tag, or per branch of a repository (a fork's apart),
+# so two dev builds of a branch never take the same number and nothing outside
+# shares a release's group. A run is never cancelled once it has started: one
+# stopped between tagging an image and attesting it would leave the image
+# unattested for good, since later runs reuse it. A new push replaces only a
+# build still waiting.
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-${{ github.event_name == 'push' && 'tag' || 'branch' }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: false
 
+# The commit to publish: a pull request's head, not the merge commit GitHub
+# would check out.
+env:
+  SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
+  # A fork's pull request gets no token that can publish, and Renovate's would
+  # publish one dev build per dependency: both are skipped, and every job after
+  # this one with them. A Renovate branch can still be built by hand.
   checks:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.head_ref, 'renovate/'))
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   plan:
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
     outputs:
+      kind: ${{ steps.tag.outputs.kind }}
+      tag: ${{ steps.tag.outputs.tag }}
       images: ${{ steps.images.outputs.images }}
     steps:
+      # Every branch, to tell whether a release's commit is on main or a hotfix/* branch.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Check the tag against VERSION
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Work out the kind and the tag
+        id: tag
         env:
-          TAG: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          set -eu
-          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "::error::$TAG is not vX.Y.Z or vX.Y.Z-rc.N"; exit 1; }
+          set -euo pipefail
           v=$(cat VERSION)
-          t=${TAG#v}
-          [[ ${t%-rc.*} == "$v" ]] || { echo "::error::VERSION ($v) and the tag ($TAG) disagree"; exit 1; }
+          if [[ $EVENT == push ]]; then
+            tag=$GITHUB_REF_NAME
+            [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "::error::$tag is not vX.Y.Z or vX.Y.Z-rc.N"; exit 1; }
+            t=${tag#v}
+            [[ ${t%-rc.*} == "$v" ]] || { echo "::error::VERSION ($v) and the tag ($tag) disagree"; exit 1; }
+            # Read whole before grep: grep -q stops at the first match, and git,
+            # cut off with a long list, would fail the pipeline.
+            branches=$(git branch -r --contains "$SHA" --format='%(refname:short)')
+            grep -qxE 'origin/(main|hotfix/.+)' <<<"$branches" ||
+              { echo "::error::$tag is not on main or a hotfix/* branch: a release is tagged there"; exit 1; }
+            kind=release
+          else
+            [[ $EVENT == pull_request || $GITHUB_REF_TYPE == branch ]] || { echo "::error::a dev build is of a branch, not of $GITHUB_REF_NAME"; exit 1; }
+            [[ $BRANCH != main ]] || { echo "::error::main gets releases, not dev builds: tag an RC"; exit 1; }
+            base=$(release/dev-tag "$BRANCH")
+            name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lolloctl
+            # The first number not published yet; only "not found" counts as
+            # free, so a registry error never reuses a number.
+            n=1
+            while out=$(docker buildx imagetools inspect "$name:$base.$n" 2>&1); do n=$((n + 1)); done
+            [[ $out == *"not found"* ]] || { echo "::error::cannot tell whether $name:$base.$n exists: $out"; exit 1; }
+            tag=$base.$n
+            kind=dev
+          fi
+          echo "$kind $tag"
+          {
+            echo "kind=$kind"
+            echo "tag=$tag"
+          } >>"$GITHUB_OUTPUT"
       - id: images
         run: |
           set -eu
@@ -87,6 +163,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SHA }}
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -136,6 +213,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SHA }}
           persist-credentials: false
       # By exact name: an image's name can start another's (code-server,
       # code-server-editor), so a pattern would also fetch the other image's
@@ -195,17 +273,18 @@ jobs:
           retention-days: 1
 
   release-file:
-    needs: image
+    needs: [plan, image]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       packages: read
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ needs.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SHA }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -261,6 +340,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SHA }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -289,7 +369,8 @@ jobs:
           retention-days: 1
 
   release:
-    needs: ctl
+    needs: [plan, ctl]
+    if: needs.plan.outputs.kind == 'release'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -298,11 +379,12 @@ jobs:
       id-token: write
       attestations: write
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SHA }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -341,7 +423,7 @@ jobs:
           push-to-registry: true
       - name: Write the wrapper, SHA256SUMS and the release notes
         env:
-          IMAGE: ${{ steps.ctl.outputs.name }}:${{ github.ref_name }}@${{ steps.ctl.outputs.digest }}
+          IMAGE: ${{ steps.ctl.outputs.name }}:${{ needs.plan.outputs.tag }}@${{ steps.ctl.outputs.digest }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -356,6 +438,14 @@ jobs:
           : >"$RUNNER_TEMP/prev"
           [[ -z $prev ]] || gh release download "$prev" --pattern RELEASE --output "$RUNNER_TEMP/prev" --clobber || true
           {
+            # The highlights the release skill wrote (release/README.md),
+            # when there are any: an RC shows the next release's draft.
+            if [[ -f release/NOTES.md ]] && grep -q '[^[:space:]]' release/NOTES.md; then
+              cat release/NOTES.md
+              echo
+              echo "## Release details"
+              echo
+            fi
             echo "lollo-rozzo $TAG, tested with Lettuce $(sed -n 's/^LETTUCE_REF=//p' RELEASE)."
             echo
             echo "Install or upgrade: release/README.md. Verify the wrapper: \`gh attestation verify lolloctl --repo $GITHUB_REPOSITORY\`."
@@ -387,3 +477,75 @@ jobs:
           [[ $TAG != *-rc.* ]] || flags+=(--prerelease)
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
             --notes-file dist/NOTES.md "${flags[@]}" dist/lolloctl dist/RELEASE dist/SHA256SUMS
+
+  # A dev build's last step: the lolloctl image's tag, and nothing on GitHub
+  # Releases. It writes nothing to the repository.
+  dev:
+    needs: [plan, ctl]
+    if: needs.plan.outputs.kind == 'dev'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ctl-digest-*
+          path: ${{ runner.temp }}/ctl
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the lolloctl image on both platforms' digests
+        id: ctl
+        run: |
+          set -euo pipefail
+          name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lolloctl
+          # A tag never moves: refuse one that exists, and one the registry
+          # cannot say is free.
+          if out=$(docker buildx imagetools inspect "$name:$TAG" 2>&1); then
+            echo "::error::$name:$TAG is published already; run the workflow again for the next number"
+            exit 1
+          fi
+          [[ $out == *"not found"* ]] || { echo "::error::cannot tell whether $name:$TAG exists: $out"; exit 1; }
+          refs=()
+          for arch in amd64 arm64; do
+            d=$(cat "$RUNNER_TEMP/ctl/$arch")
+            [[ $d =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no lolloctl build for $arch"; exit 1; }
+            refs+=("$name@$d")
+          done
+          docker buildx imagetools create -t "$name:$TAG" "${refs[@]}"
+          digest=$(docker buildx imagetools inspect "$name:$TAG" --format '{{json .Manifest}}' | jq -er .digest)
+          echo "name=$name" >>"$GITHUB_OUTPUT"
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.ctl.outputs.name }}
+          subject-digest: ${{ steps.ctl.outputs.digest }}
+          push-to-registry: true
+      - name: Say how to install it
+        env:
+          IMAGE: ${{ steps.ctl.outputs.name }}:${{ needs.plan.outputs.tag }}@${{ steps.ctl.outputs.digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Dev build $TAG"
+            echo
+            echo "\`$IMAGE\`"
+            echo
+            echo "On a host whose lolloctl can install dev builds (release/README.md, \"Dev builds\"):"
+            echo
+            echo '```'
+            echo "lolloctl self-upgrade $TAG"
+            echo '```'
+            echo
+            echo "Back to a release: \`lolloctl self-upgrade vX.Y.Z\`."
+          } >>"$GITHUB_STEP_SUMMARY"

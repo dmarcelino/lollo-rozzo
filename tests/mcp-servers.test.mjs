@@ -193,7 +193,7 @@ test("run as lolloctl runs it: a JSON summary, or exit 3 and a message", () => {
   assert.equal(usage.status, 2);
   const noGroup = runScript("add", file, "everything");
   assert.equal(noGroup.status, 2);
-  assert.match(noGroup.stderr, /usage: .* add\|remove FILE doc-tools\|vault\|news-radar\|outlook/);
+  assert.match(noGroup.stderr, /usage: .* add\|remove FILE doc-tools\|vault\|news-radar\|outlook\|browser/);
 });
 
 test("adds the vault after the existing ones and keeps everything else as it was", async () => {
@@ -335,4 +335,31 @@ test("removing Outlook takes out only its exact HTTP entries, and leaves the vau
   const vault = await update(file, "remove", "vault", { settleMs: 0 });
   assert.deepEqual(vault.removed, ["vault"]);
   assert.deepEqual(serversIn(file), [GOOGLE, other]);
+});
+
+test("the browser owns only its exact HTTP entry, and leaves a server of the person's named browser", async () => {
+  const BROWSER = { name: "browser", transport: "http", url: "http://lollo-browser:8000/mcp" };
+  const NEWS_RADAR = { name: "news-radar", transport: "http", url: "http://lollo-news-radar:8000/mcp" };
+  const file = tmpFile(render(settings([GOOGLE, OUR_VAULT, NEWS_RADAR])));
+  const added = await update(file, "add", "browser", { settleMs: 0 });
+  assert.deepEqual(added.added, ["browser"]);
+  assert.deepEqual(serversIn(file), [GOOGLE, OUR_VAULT, NEWS_RADAR, BROWSER]);
+  const again = await update(file, "add", "browser", { settleMs: 0 });
+  assert.deepEqual(again.added, []);
+  assert.deepEqual(again.present, ["browser"]);
+  const removed = await update(file, "remove", "browser", { settleMs: 0 });
+  assert.deepEqual(removed.removed, ["browser"]);
+  assert.deepEqual(serversIn(file), [GOOGLE, OUR_VAULT, NEWS_RADAR]);
+
+  // Playwright MCP, say: the person's, under the same name; nothing is added or removed.
+  const mine = { name: "browser", transport: "stdio", command: "npx", args: ["@playwright/mcp"] };
+  const theirs = tmpFile(render(settings([mine])));
+  const before = fs.readFileSync(theirs, "utf8");
+  const conflict = await update(theirs, "add", "browser", { settleMs: 0 });
+  assert.deepEqual(conflict.added, []);
+  assert.deepEqual(conflict.conflicts, ["browser"]);
+  assert.equal(fs.readFileSync(theirs, "utf8"), before);
+  const none = await update(theirs, "remove", "browser", { settleMs: 0 });
+  assert.deepEqual(none.removed, []);
+  assert.equal(fs.readFileSync(theirs, "utf8"), before);
 });

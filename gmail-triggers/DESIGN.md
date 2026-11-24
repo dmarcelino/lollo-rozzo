@@ -2,6 +2,8 @@
 
 Note (2026-10-25): since this plan, the vault moved from `/secrets/` to `/lollo/secrets/`, next to a `/lollo/` landing page. Since 2026-10-28 the lollo pages live on each stack's own lollo address (`https://<name>-lollo.<domain>/gmail-triggers/`, landing/DESIGN.md), and the executor is the lollo executor (`landing/executor/run.mjs`, with `--gmail-triggers`). The record below is unchanged.
 
+Note (2026-11-21): **In** gained "A specific conversation": the person types a conversation id that they asked the agent for (`echo $LETTA_CONVERSATION_ID`), and the rule stores it as its `conversation`. This replaces the "Conversation target" row below and answers the spike's question about listing conversations: as of Lettuce v0.48.1 (letta-code 0.34.67) letta-code has no command that lists them and Lettuce's UI shows no id, so the agent is the only source. Triggers are still made only by the person, on the page; the agent only reports its id. The page checks the id's shape and the executor checks it again; nothing checks that it is a conversation of the rule's agent (letta-code 0.34.67 queues the task's turn with its agent and the id as given), so the form refuses to keep the id when the agent changes.
+
 Status: implemented on `feature/gmail-triggers`, with one change from the design below found in review: **the file spool was replaced by an HTTP API** (see "Revision: no shared spool"). Not yet done: the step 0 spike against a running stack and the step 6 end-to-end test. The executor passes letta's flags as `--name=<value>` (not `--name <value>`): letta-code parses them with strict `parseArgs`, which misreads a value starting with `-`.
 
 ## Goal
@@ -293,7 +295,7 @@ manifest-tracked like skills), outside the spool. The cron file is
 lollo-common/                 shared Python package (lollo_common)
   src/lollo_common/auth.py    moved from broker/src/secret_broker/auth.py
   src/lollo_common/static/lollo.css
-gmail-triggers/                the sidecar (Python 3.12, Starlette, Jinja2, httpx)
+gmail-triggers/                the sidecar (Python 3.14, Starlette, Jinja2, httpx)
   Dockerfile                   base / test / runtime stages, like broker/Dockerfile
   pyproject.toml               pinned dependencies
   src/gmail_triggers/

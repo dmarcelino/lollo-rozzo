@@ -108,7 +108,7 @@
     },
     {
       "from": 505,
-      "to": 750,
+      "to": 780,
       "label": "At the times you chose"
     }
   ],
@@ -149,7 +149,7 @@
       "to": "web",
       "y": 390,
       "label": "fetch each source",
-      "note": "public addresses, robots.txt honoured"
+      "note": "public addresses, robots.txt honoured but for feeds"
     },
     {
       "id": "items",
@@ -200,7 +200,8 @@
       "to": "you",
       "y": 725,
       "label": "a short report, from your interests",
-      "variant": "return"
+      "variant": "return",
+      "note": "nothing worth telling: it proposes a filter change, asks you"
     }
   ],
   "cards": [

@@ -10,8 +10,9 @@
 # KIND, and what it rewrites:
 # - shellcheck: SHELLCHECK_SHA256 in .github/workflows/ci.yml
 # - code-server: SHA256_AMD64 and SHA256_ARM64 in code-server/editor/Dockerfile
-# - officeagent: OFFICEAGENT_SHA256 in doc-tools/Dockerfile, checked against the
-#   release's SHA256SUMS and its attestation
+# - officeagent: OFFICEAGENT_SHA256_AMD64 and OFFICEAGENT_SHA256_ARM64 in
+#   doc-tools/Dockerfile, each tarball checked against the release's SHA256SUMS
+#   and its attestation
 # - pipelock: PIPELOCK_COMMIT in pipelock/Dockerfile
 # - doc-tools-lock: doc-tools/requirements.lock, compiled for doc-tools' Python
 #   with the uv doc-tools/Dockerfile pins
@@ -92,23 +93,32 @@ kind_code_server() {
   set_pin "$f" SHA256_ARM64 "$arm"
 }
 
-# The procedure doc-tools/README.md "Maintaining" gives: the tarball's hash must
-# be the one in the release's SHA256SUMS, and the tarball must carry the
-# release's build attestation.
+# The procedure doc-tools/README.md "Maintaining" gives, for the Linux x64 and
+# arm64 builds: each tarball's hash must be the one in the release's SHA256SUMS,
+# and each must carry the release's build attestation. Both are checked before
+# either pin moves.
 kind_officeagent() {
-  local f=doc-tools/Dockerfile repo=ilia-sokolov/OfficeAgent.NET name=officeagent-mcp-linux-x64.tar.gz v dir sum listed
+  local f=doc-tools/Dockerfile repo=ilia-sokolov/OfficeAgent.NET v dir arch name sum listed sums=()
   v=$(version "$f" OFFICEAGENT_VERSION)
   dir=$(mktemp -d)
   # Global, so the trap still has it once this function has returned.
   OA_DIR=$dir
   trap 'rm -rf "$OA_DIR"' EXIT
-  curl -fsSL -o "$dir/$name" "https://github.com/$repo/releases/download/v$v/$name" || die "cannot download $name $v"
   curl -fsSL -o "$dir/SHA256SUMS" "https://github.com/$repo/releases/download/v$v/SHA256SUMS" || die "cannot download SHA256SUMS of $v"
-  sum=$(sha256sum "$dir/$name" | cut -d' ' -f1)
-  listed=$(awk -v n="$name" '{ f = $2; sub(/^\*/, "", f) } f == n { print $1 }' "$dir/SHA256SUMS")
-  [[ $listed == "$sum" ]] || die "$name $v does not match its SHA256SUMS"
-  gh attestation verify "$dir/$name" --repo "$repo" >&2 || die "$name $v failed its attestation check"
-  set_pin "$f" OFFICEAGENT_SHA256 "$(sha256_hex "$sum")"
+  for arch in x64 arm64; do
+    name=officeagent-mcp-linux-$arch.tar.gz
+    curl -fsSL -o "$dir/$name" "https://github.com/$repo/releases/download/v$v/$name" || die "cannot download $name $v"
+    sum=$(sha256sum "$dir/$name" | cut -d' ' -f1)
+    listed=$(awk -v n="$name" '{ f = $2; sub(/^\*/, "", f) } f == n { print $1 }' "$dir/SHA256SUMS")
+    [[ $listed == "$sum" ]] || die "$name $v does not match its SHA256SUMS"
+    sums+=("$(sha256_hex "$sum")")
+  done
+  for arch in x64 arm64; do
+    name=officeagent-mcp-linux-$arch.tar.gz
+    gh attestation verify "$dir/$name" --repo "$repo" >&2 || die "$name $v failed its attestation check"
+  done
+  set_pin "$f" OFFICEAGENT_SHA256_AMD64 "${sums[0]}"
+  set_pin "$f" OFFICEAGENT_SHA256_ARM64 "${sums[1]}"
 }
 
 # A tag can be annotated (a tag object pointing at the commit), so follow it.

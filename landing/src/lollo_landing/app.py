@@ -11,10 +11,16 @@ executor sends `letta agents list` here when asked. That list is untrusted
 (agents are root in the app-server and can read the executor's token), so ids
 must look like ids before they go in a link and names are escaped text. The page
 runs no script and holds no sidecar data: opening it touches no other sidecar.
+
+It also serves the one web app manifest of the lollo host, which every lollo page
+links: adding any of them to the Home Screen gives the same "Lollo" app, opening
+here. With a sender of notifications on (the vault or the browser), the page
+links to /notifications/, the lollo's one switch per device.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -37,7 +43,7 @@ from .config import EDITOR, Settings, page_path
 log = logging.getLogger("lollo_landing")
 
 SECURITY_HEADERS = {
-    "content-security-policy": "default-src 'none'; style-src 'self'; img-src 'self'; "
+    "content-security-policy": "default-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; "
     "frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'",
     "x-content-type-options": "nosniff",
     "referrer-policy": "same-origin",
@@ -53,7 +59,34 @@ LABELS = {
     "lollo-news-radar": ("News Radar", "What your agents keep an eye on, and when they report"),
     "lollo-code-server": ("Code editor", "Your agents' files in VS Code"),
     "lollo-outlook": ("Outlook", "Your Outlook mail, calendar and tasks, as far as you allow"),
+    "lollo-browser": ("Browser", "Watch, take over and limit what your agents do on the web"),
 }
+
+# The profiles whose pages send notifications: with either on, lollo-notifications
+# runs and the page links to it (compose/notifications.yml has the same two).
+SENDERS = ("lollo-vault", "lollo-browser")
+NOTIFICATIONS = "/notifications/"
+
+# The one Home Screen app for the whole lollo host: its id, scope and start page are
+# the root, so the vault and the browser open inside it. Every lollo page links it.
+MANIFEST = json.dumps(
+    {
+        "id": "/",
+        "name": "Lollo",
+        "short_name": "Lollo",
+        "description": "Extras that run next to your Lettuce, each with its own page",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#e7eaf0",
+        "theme_color": "#e7eaf0",
+        "icons": [
+            {"src": f"/assets/icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png", "purpose": "any maskable"}
+            for n in (192, 512)
+        ],
+    },
+    indent=2,
+).encode()
 
 Handler = Callable[[Request, str], Awaitable[Response]]
 
@@ -89,13 +122,15 @@ def create_app(settings: Settings, authenticator: Authenticator, agents: AgentLi
     env = Environment(loader=PackageLoader("lollo_landing", "templates"), autoescape=select_autoescape(default=True))
     lollo_css = stylesheet()
     features = [Feature(p, *LABELS.get(p, (p, ""))) for p in settings.lollo_profiles]
+    notifications = any(p in settings.lollo_profiles for p in SENDERS)
 
     def render(name: str, status: int = 200, **ctx: object) -> HTMLResponse:
         html = env.get_template(name).render(lettuce=settings.lettuce_origin, **ctx)
         return HTMLResponse(html, status_code=status, headers=SECURITY_HEADERS)
 
     def page(handler: Handler, asset: bool = False) -> Callable[[Request], Awaitable[Response]]:
-        """`asset`: the stylesheet or icon, loaded by the page as a subresource; it holds nothing to protect."""
+        """`asset`: the stylesheet, an icon or the manifest, loaded by a page as a subresource; it holds
+        nothing to protect."""
 
         async def endpoint(request: Request) -> Response:
             try:
@@ -119,6 +154,7 @@ def create_app(settings: Settings, authenticator: Authenticator, agents: AgentLi
             email=email,
             features=[f for f in features if not (settings.lists_agents and f.profile == EDITOR)],
             any_feature=bool(features),
+            notifications=NOTIFICATIONS if notifications else None,
             lists_agents=settings.lists_agents,
             agents=None if listed is None else agent_rows(listed),
             editor=page_path(EDITOR),
@@ -128,9 +164,17 @@ def create_app(settings: Settings, authenticator: Authenticator, agents: AgentLi
     async def css(request: Request, email: str) -> Response:
         return Response(lollo_css, media_type="text/css", headers={**SECURITY_HEADERS, "cache-control": "no-cache"})
 
-    async def icon(request: Request, email: str) -> Response:
+    def icon(size: int) -> Handler:
+        async def serve(request: Request, email: str) -> Response:
+            return Response(
+                icons.png(size), media_type="image/png", headers={**SECURITY_HEADERS, "cache-control": "max-age=86400"}
+            )
+
+        return serve
+
+    async def manifest(request: Request, email: str) -> Response:
         return Response(
-            icons.png(192), media_type="image/png", headers={**SECURITY_HEADERS, "cache-control": "max-age=86400"}
+            MANIFEST, media_type="application/manifest+json", headers={**SECURITY_HEADERS, "cache-control": "no-cache"}
         )
 
     guarded = guard(settings.executor_token)
@@ -155,6 +199,9 @@ def create_app(settings: Settings, authenticator: Authenticator, agents: AgentLi
             Route("/", page(landing)),
             # Assets only under /assets/: the tunnel routes nothing else here but / (LOLLO_LANDING_PATH).
             Route("/assets/lollo.css", page(css, asset=True)),
-            Route("/assets/icon-192.png", page(icon, asset=True)),
+            Route("/assets/icon-192.png", page(icon(192), asset=True)),
+            Route("/assets/icon-512.png", page(icon(512), asset=True)),
+            # Fetched with the Access cookie (crossorigin="use-credentials" on every lollo page's link).
+            Route("/assets/manifest.webmanifest", page(manifest, asset=True)),
         ],
     )

@@ -12,4 +12,7 @@ pipelock            pipelock            -              lollo-pipelock
 code-server         code-server         lollo-common  lollo-code-server
 outlook             outlook             lollo-common  lollo-outlook
 code-server-editor  code-server/editor  -              lollo-code-server-editor
+browser             browser/service     lollo-common  lollo-browser
+browser-engine      browser/engine      -              lollo-browser-engine
+notifications       notifications       lollo-common  lollo-notifications
 backup              backup              -              -

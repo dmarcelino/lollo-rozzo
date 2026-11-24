@@ -7,7 +7,11 @@ agent chose.
   followed by hand, each checked again, at most MAX_REDIRECTS.
 - Polite: one user agent naming the project, robots.txt honoured for it (and its
   Crawl-delay), at least HOST_SPACING seconds between two requests to one host, a
-  pause after a 429 or 503, conditional requests reused.
+  pause after a 429 or 503, conditional requests reused. Rules are matched as RFC
+  9309 says (`*`, `$`, the longest rule wins), as the image's Python 3.14
+  `urllib.robotparser` does; test_fetch holds any interpreter to it. A feed's
+  own URL (`feed=True`) is read whatever robots.txt says, as feed readers do,
+  but only a feed is kept from it.
 - Bounded: a timeout per request, a cap on every body.
 - No cookies, no credentials, no script: a challenge or waiting room is a failure.
 
@@ -20,6 +24,7 @@ from __future__ import annotations
 import codecs
 import ipaddress
 import math
+import re
 import socket
 import ssl
 import time
@@ -35,6 +40,7 @@ import httpcore
 import httpx
 
 from .config import (
+    ERROR_BODY,
     HOST_BACKOFF,
     HOST_SPACING,
     MAX_CRAWL_DELAY,
@@ -67,11 +73,24 @@ WAITING_ROOM_HOSTS = ("queue-it.net",)
 
 class FetchError(Exception):
     """A fetch that yields nothing; the message says why, in a few words.
-    retry_after: the seconds the site asked to be left alone, when it asked."""
+    retry_after: the seconds the site asked to be left alone, when it asked.
+    page: what the site answered with an error status, its body cut to
+    ERROR_BODY: website text for an agent repairing the source, never for logs."""
 
-    def __init__(self, message: str, retry_after: int = 0):
+    def __init__(self, message: str, retry_after: int = 0, page: Page | None = None):
         super().__init__(message)
         self.retry_after = retry_after
+        self.page = page
+
+
+class RobotsRefusal(FetchError):
+    """robots.txt refuses the URL, or answered without rules (unreadable: RFC
+    9309 then refuses everything). A feed's own URL is read past it (Fetcher.get's
+    feed=True); a host that could not be reached at all is a plain FetchError."""
+
+    def __init__(self, message: str, unreadable: bool = False, page: Page | None = None):
+        super().__init__(message, page=page)
+        self.unreadable = unreadable
 
 
 class HostBusy(FetchError):
@@ -205,6 +224,9 @@ class Page:
     last_modified: str = ""
     # The encoding the Content-Type header names, when it names one Python knows.
     charset: str = ""
+    # A feed read past robots.txt (Fetcher.get's feed=True): "disallowed" when its
+    # rules refuse it, "unreadable" when it answered without rules; "" otherwise.
+    robots_exempt: str = ""
 
     @property
     def not_modified(self) -> bool:
@@ -262,6 +284,49 @@ def looks_challenged(body: bytes) -> bool:
     return any(m in head for m in CHALLENGE_MARKERS)
 
 
+# The root element of an RSS, Atom or RSS 1.0 document, with or without a prefix.
+FEED_ROOT = re.compile(r"<(?:[A-Za-z_][\w.-]{0,40}:)?(?:rss|feed|rdf)[\s/>]", re.I)
+# How much of an answer is scanned for the root: long licence comments and
+# stylesheet lines come before it in some feeds.
+FEED_HEAD = 65536
+
+
+def looks_like_feed(body: bytes) -> bool:
+    """Whether the body starts as an RSS, Atom or RSS 1.0 document (its root
+    element, after a BOM, UTF-8 or UTF-16, whitespace, processing instructions
+    such as the XML declaration or a stylesheet, comments and a doctype), or is a
+    JSON Feed, which feedparser reads too. What robots.txt refuses is read only
+    when it is a feed. A scan, not a pattern: nothing here can backtrack on a
+    hostile answer."""
+    head = body[:FEED_HEAD]
+    if head.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = head.decode("utf-16", errors="replace")
+    else:
+        text = head.decode("utf-8", errors="replace").removeprefix("\ufeff")
+    if text.lstrip().startswith("{"):
+        return "jsonfeed.org/version/" in text
+    i = 0
+    while True:
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if text.startswith("<?", i):
+            end = text.find("?>", i + 2)
+            i = end + 2
+        elif text.startswith("<!--", i):
+            end = text.find("-->", i + 4)
+            i = end + 3
+        elif text[i : i + 9].lower() == "<!doctype":
+            end, subset = text.find(">", i), text.find("[", i)
+            if 0 <= subset < end:  # an internal subset: the doctype ends after its "]"
+                bracket = text.find("]", subset)
+                end = text.find(">", bracket) if bracket >= 0 else -1
+            i = end + 1
+        else:
+            return FEED_ROOT.match(text, i) is not None
+        if end < 0:
+            return False
+
+
 class Fetcher:
     def __init__(
         self,
@@ -289,6 +354,14 @@ class Fetcher:
         self._locks: dict[str, anyio.Lock] = {}
         # Per host: when read, the parser (None when nothing may be fetched), the crawl delay, why not.
         self._robots: dict[str, tuple[float, robotparser.RobotFileParser | None, float, str]] = {}
+        # Per host: what robots.txt answered when it could not be read, for the repair's sample.
+        self._robots_answers: dict[str, Page] = {}
+        # Refused URLs read as feeds that answered with something else: per URL, the
+        # robots.txt reading it was refused under. Until that host's robots.txt is
+        # read again, they fail without a request.
+        self._not_feeds: dict[str, float] = {}
+        # Hosts whose robots.txt could not be asked for at all (no connection, a timeout).
+        self._robots_unreachable: set[str] = set()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -302,15 +375,34 @@ class Fetcher:
         last_modified: str = "",
         max_bytes: int = MAX_RESPONSE,
         max_wait: float | None = None,
+        feed: bool = False,
     ) -> Page:
         """GET `url`, following redirects by hand; FetchError for anything but a
-        2xx or 304 page."""
+        2xx or 304 page. feed: a feed's own URL, read even where robots.txt
+        refuses it (or can't be read), as feed readers do, and its redirects with
+        it. Only a feed is kept from such a URL: any other answer, an error status
+        included, fails with the refusal and keeps no sample, and the URL then
+        fails without a request until robots.txt is read again (a 429 or 5xx is
+        asked again). A host whose robots.txt could not be asked for at all is
+        not asked for the feed either, and a pause robots.txt's 429 or 503 asks
+        for holds the feed too."""
         check_url(url)
+        refused: FetchError | None = None
+        exempt = ""
+        refused_hops: list[str] = []
         for _ in range(MAX_REDIRECTS + 1):
             if any(h in (urlsplit(url).hostname or "") for h in WAITING_ROOM_HOSTS):
                 raise FetchError("sent to a waiting room")
             wait_limit = self._max_wait if max_wait is None else min(max_wait, self._max_wait)
-            await self._allowed(url, wait_limit)
+            refusal = await self._refusal(url, wait_limit)
+            if refusal is not None:
+                if not feed or not isinstance(refusal, RobotsRefusal):
+                    raise refusal
+                exempt = exempt or ("unreadable" if refusal.unreadable else "disallowed")
+                refused = refused or FetchError(f"not a feed, and robots.txt refuses anything else here: {refusal}")
+                if self._not_feeds.get(url) == self._robots_read(url):
+                    raise refused
+                refused_hops.append(url)
             headers = {"accept": accept}
             if etag:
                 headers["if-none-match"] = etag
@@ -325,16 +417,22 @@ class Fetcher:
                 etag = last_modified = ""
                 continue
             if status == 304:
-                return Page(url, 304, "", b"", etag, last_modified)
+                return Page(url, 304, "", b"", etag, last_modified, robots_exempt=exempt)
             pause = 0
             if status in (429, 503):
                 pause = self._back_off(url, response_headers.get("retry-after", ""))
+            header = response_headers.get("content-type", "")
+            content_type = header.split(";")[0].strip().lower()
+            if refused is not None and not (200 <= status < 300 and looks_like_feed(body)):
+                # A passing failure (a 429, a 5xx) is asked again; any other answer is not.
+                if status < 500 and status != 429:
+                    self._remember_not_feeds(refused_hops)
+                raise FetchError(str(refused), retry_after=pause)
             if status in (401, 402, 403, 407, 429, 503) and looks_challenged(body):
                 raise FetchError(f"HTTP {status}: a challenge or waiting room", retry_after=pause)
             if not 200 <= status < 300:
-                raise FetchError(f"HTTP {status}", retry_after=pause)
-            header = response_headers.get("content-type", "")
-            content_type = header.split(";")[0].strip().lower()
+                answer = Page(url, status, content_type, body[:ERROR_BODY], charset=charset_of(header))
+                raise FetchError(f"HTTP {status}", retry_after=pause, page=answer)
             if content_type in ("text/html", "application/xhtml+xml") and looks_challenged(body):
                 raise FetchError("a challenge or waiting room instead of the page")
             return Page(
@@ -345,6 +443,7 @@ class Fetcher:
                 response_headers.get("etag", ""),
                 response_headers.get("last-modified", ""),
                 charset_of(header),
+                robots_exempt=exempt,
             )
         raise FetchError(f"more than {MAX_REDIRECTS} redirects")
 
@@ -406,11 +505,24 @@ class Fetcher:
         parser = entry[1] if entry else None
         return list(dict.fromkeys(parser.site_maps() or []))[:10] if parser else []
 
+    def _robots_read(self, url: str) -> float:
+        """When this URL's host's robots.txt was last read (asked for), or -1."""
+        entry = self._robots.get(host_of(url))
+        return entry[0] if entry else -1.0
+
+    def _remember_not_feeds(self, urls: list[str]) -> None:
+        if len(self._not_feeds) > 10_000:
+            self._not_feeds.clear()
+        for u in urls:
+            self._not_feeds[u] = self._robots_read(u)
+
     def _crawl_delay(self, host: str) -> float:
         entry = self._robots.get(host)
         return entry[2] if entry else 0.0
 
-    async def _allowed(self, url: str, max_wait: float) -> None:
+    async def _refusal(self, url: str, max_wait: float) -> FetchError | None:
+        """Why robots.txt keeps this URL from being fetched, or None. HostBusy (a
+        pause longer than the call may wait) is raised, feed or not."""
         host = host_of(url)
         entry = self._robots.get(host)
         # A robots.txt that could not be read is asked for again soon: the site may be back.
@@ -420,16 +532,21 @@ class Fetcher:
             self._robots[host] = entry
         parser = entry[1]
         if parser is None:
-            raise FetchError(entry[3])
+            if host in self._robots_unreachable:
+                return FetchError(entry[3])
+            return RobotsRefusal(entry[3], unreadable=True, page=self._robots_answers.get(host))
         if not parser.can_fetch(USER_AGENT_NAME, url):
-            raise FetchError("robots.txt disallows it")
+            return RobotsRefusal("robots.txt disallows it")
+        return None
 
     async def _load_robots(
         self, host: str, max_wait: float
     ) -> tuple[float, robotparser.RobotFileParser | None, float, str]:
         parser = robotparser.RobotFileParser()
         url = host + "/robots.txt"
-        unreadable = "robots.txt could not be read, so nothing is fetched (RFC 9309)"
+        self._robots_answers.pop(host, None)
+        self._robots_unreachable.discard(host)
+        unreadable = "robots.txt could not be read, which refuses everything (RFC 9309)"
         for _ in range(MAX_REDIRECTS + 1):
             try:
                 status, headers, body = await self._request(url, {"accept": "text/plain"}, 512 * 1024, max_wait)
@@ -437,6 +554,8 @@ class Fetcher:
                 raise
             except FetchError as e:
                 # The site itself is out of reach: say why, not that robots.txt is missing.
+                # Nothing is asked of it, a feed included: it would only time out again.
+                self._robots_unreachable.add(host)
                 return self._clock(), None, 0.0, str(e)
             if status in (301, 302, 303, 307, 308) and headers.get("location"):
                 try:
@@ -454,6 +573,12 @@ class Fetcher:
             parser.allow_all = True
             parser.modified()
         else:
+            if status in (429, 503):
+                # The pause it asks for holds every request to the host, a feed's too.
+                self._back_off(url, headers.get("retry-after", ""))
+            header = headers.get("content-type", "")
+            content_type = header.split(";")[0].strip().lower()
+            self._robots_answers[host] = Page(url, status, content_type, body[:ERROR_BODY], charset=charset_of(header))
             return self._clock(), None, 0.0, f"{unreadable}: HTTP {status}"
         delay = parser.crawl_delay(USER_AGENT_NAME)
         return self._clock(), parser, min(float(delay or 0), MAX_CRAWL_DELAY), ""
