@@ -23,7 +23,7 @@ dependencies = [
   "cssselect==1.6.0",
   "jmespath==1.1.0",
   "icalendar==7.3.0",
-  "dateparser==1.5.0",
+  "dateparser==1.5.1",
   "tzdata==2026.5",
 ]
 
