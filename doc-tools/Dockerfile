@@ -15,7 +15,7 @@ ARG OFFICEAGENT_SHA256_AMD64=434b74bdcc9017a3030ea22c3536bf528d82597a9aabd7fb686
 ARG OFFICEAGENT_SHA256_ARM64=6c62b2b0a1345c4602394492f9d38fc7ecb394de09fe6d526ef6c255408e286b
 ARG PYTHON_VERSION=3.12.16
 
-FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.9 AS uv
 
 # Debian 12, like the app-server: what runs here runs there.
 FROM debian:12-slim AS base
