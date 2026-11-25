@@ -8,11 +8,11 @@
 # container; the image has no git. Built by lolloctl via compose/code-server.yml;
 # tests/run-sidecar.sh code-server builds the `test` stage and runs it.
 # Global so the `test` stage can check the binary is the pinned release.
-ARG CODE_SERVER_VERSION=4.145.2
+ARG CODE_SERVER_VERSION=4.146.0
 FROM debian:12-slim AS fetch
 ARG CODE_SERVER_VERSION
-ARG SHA256_AMD64=2f6db6c3e8b733dd6b3aeee83532e148b2bae2e392353ba85452d03572348962
-ARG SHA256_ARM64=e867a34416e2da4a83496b09580001893e7a4e5bb58a0624c4fcd22819e7d53d
+ARG SHA256_AMD64=cf7e82ca5fe1df664d43a43d900c3c9710f8f3403a5e8d0e18f6a12d10d7401b
+ARG SHA256_ARM64=3df88f7f1feecce3583ab0109c5f6bf14f90ae3a44939b4257ccd9850ef37a6e
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl jq \
   && rm -rf /var/lib/apt/lists/*
