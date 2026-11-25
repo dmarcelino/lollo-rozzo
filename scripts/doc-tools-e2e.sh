@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # End-to-end test and measurements for the lollo-doc-tools profile (docs/doc-tools.md).
 # Opt-in and never run by tests/run.sh: it needs Docker, the stack's app-server
-# image and the Gotenberg image, and takes a few minutes.
+# image and the Gotenberg image, and takes a few minutes. It runs on Linux and
+# on macOS (Colima or Docker Desktop): its host-side commands work with GNU and
+# BSD tools alike, and its temp folder is one Docker's host sees ($TMPDIR, else
+# under ~/.cache, since Colima shares only the home folder by default).
 #
 #   scripts/doc-tools-e2e.sh [--report FILE] [--no-idle-wait] [APP_SERVER_IMAGE]
 #
@@ -100,7 +103,29 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/$P.XXXXXX")
+# The containers bind-mount it, so Docker's host must see it: macOS's $TMPDIR
+# is not shared into Colima's VM (only $HOME is, by default).
+docker_sees() { # docker_sees DIR -> whether a container mounting DIR sees its files
+  : >"$1/.docker-sees" &&
+    docker run --rm --network none -v "$1:/t:ro" --entrypoint test "$APP" -f /t/.docker-sees >/dev/null 2>&1
+}
+for base in "${TMPDIR:-/tmp}" "$HOME/.cache"; do
+  mkdir -p "$base" 2>/dev/null || continue
+  TMP=$(mktemp -d "${base%/}/$P.XXXXXX") || continue
+  if docker_sees "$TMP"; then
+    rm -f "$TMP/.docker-sees"
+    break
+  fi
+  rm -rf "$TMP"
+  TMP=
+done
+# now_ms -> milliseconds since the epoch: macOS's date has no %N, so bash 5's
+# EPOCHREALTIME, or whole seconds on an older bash
+now_ms() {
+  local us=${EPOCHREALTIME:-}
+  if [[ -n $us ]]; then printf '%s' "$((${us/[.,]/} / 1000))"; else printf '%s000' "$(date +%s)"; fi
+}
+[[ -n $TMP ]] || die "Docker cannot see a temp folder under ${TMPDIR:-/tmp} or $HOME/.cache; set TMPDIR to a folder it shares"
 mkdir -p "$TMP/out"
 
 # ── results ──────────────────────────────────────────────────────────────────
@@ -394,7 +419,7 @@ s0_wiring() {
 # tools_there STACK -> the launchers are in the stack's app-server
 tools_there() {
   expect "$1: /opt/lollo-doc-tools/bin lacks the launchers after a restart" \
-    test "$(docker exec "$P-$1-app" ls /opt/lollo-doc-tools/bin | paste -sd' ')" = "officeagent pdf-mcp"
+    test "$(docker exec "$P-$1-app" ls /opt/lollo-doc-tools/bin | paste -sd' ' -)" = "officeagent pdf-mcp"
 }
 
 s1_office() {
@@ -471,7 +496,7 @@ s2_pdf() {
   ok a pdf pdf_pages '{"operation":"split","paths":["merged.pdf"],"output_dir":"parts"}' || return 1
   expect "split wrote $(field '.result.outputs | length') parts, expected $pages" \
     test "$(field '.result.outputs | length')" = "$pages" || return 1
-  expect "split parts missing on disk" test "$(find "$w/parts" -name '*.pdf' | wc -l)" = "$pages" || return 1
+  expect "split parts missing on disk" test "$(find "$w/parts" -name '*.pdf' | wc -l | tr -d ' ')" = "$pages" || return 1
   ok a pdf pdf_info '{"path":"merged.pdf"}' || return 1
   sizes=$(jq -c .result.page_sizes <<<"$LAST")
   ok a pdf pdf_pages '{"operation":"rotate","paths":["merged.pdf"],"pages":"1","angle":90,"output":"rotated.pdf"}' || return 1
@@ -583,7 +608,7 @@ s4_concurrency() {
     done
   done
   expect "two concurrent outputs are identical" \
-    test "$(sha256sum "$(ws a)"/conc-?.pdf "$(ws b)"/conc-?.pdf | cut -d' ' -f1 | sort -u | wc -l)" = 6 || return 1
+    test "$(sha256sum "$(ws a)"/conc-?.pdf "$(ws b)"/conc-?.pdf | cut -d' ' -f1 | sort -u | wc -l | tr -d ' ')" = 6 || return 1
 }
 
 s5_restart_remove() {
@@ -684,17 +709,17 @@ measure_conversions() {
   }
 
   sampler_start
-  t0=$(date +%s%N)
+  t0=$(now_ms)
   run_batch one a
   peak=$(sampler_stop)
   mrow "Gotenberg peak RAM, 1 stack converting (3 files at once)" "$(mib "$peak")" \
-    "$okn/$n ok in $((($(date +%s%N) - t0) / 1000000)) ms"
+    "$okn/$n ok in $(($(now_ms) - t0)) ms"
   sampler_start
-  t0=$(date +%s%N)
+  t0=$(now_ms)
   run_batch four "${STACKS[@]}"
   peak=$(sampler_stop)
   mrow "Gotenberg peak RAM, 4 stacks converting (12 files at once)" "$(mib "$peak")" \
-    "$okn/$n ok in $((($(date +%s%N) - t0) / 1000000)) ms"
+    "$okn/$n ok in $(($(now_ms) - t0)) ms"
   [[ $okn == "$n" ]] || CONVERSION_NOTE="$((n - okn)) of $n conversions failed with 4 stacks converting at once"
 }
 CONVERSION_NOTE=
@@ -735,9 +760,10 @@ measure_calls() {
 measure_disk() {
   local s w docs idx rw tmpb
   for s in a c; do
-    w=$(ws "$s")
-    docs=$(du -sb --exclude=.officeagent "$w" | cut -f1)
-    idx=$(du -sb "$w/.officeagent" 2>/dev/null | cut -f1)
+    # The app-server's GNU du: macOS's has no -b or --exclude.
+    w=/work/agent-e2e-$s
+    docs=$(docker exec "$P-$s-app" du -sb --exclude=.officeagent "$w" | cut -f1)
+    idx=$(docker exec "$P-$s-app" du -sb "$w/.officeagent" 2>/dev/null | cut -f1)
     rw=$(docker container inspect --size -f '{{.SizeRw}}' "$P-$s-app")
     tmpb=$(docker exec "$P-$s-app" du -sb /tmp/lollo-doc-tools | cut -f1)
     mrow "Disk, stack $s: documents in the workspace / .officeagent index" "$docs B / ${idx:-0} B" \
@@ -745,7 +771,7 @@ measure_disk() {
     mrow "Disk, stack $s: container layer (SizeRw) / of which /tmp/lollo-doc-tools" "$rw B / $tmpb B" \
       "the shared volume adds nothing per stack"
   done
-  mrow "Disk, per stack: MCP settings (mcp-home)" "$(stat -c %s "$TMP/a/home/mcp-home/.letta/settings.json") B" \
+  mrow "Disk, per stack: MCP settings (mcp-home)" "$(wc -c <"$TMP/a/home/mcp-home/.letta/settings.json" | tr -d ' ') B" \
     "unchanged by calls"
 }
 

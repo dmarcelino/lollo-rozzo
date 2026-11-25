@@ -263,6 +263,24 @@ async def test_page_content_is_labelled_untrusted(env, sites):
     assert info["url"] == result["url"] and "instructions" in info["about"]
 
 
+async def test_a_screenshot_says_how_to_show_it_when_the_image_is_dropped(env, sites):
+    # Lettuce's mcp_call passes on only the text part: an agent once described a
+    # page it never saw. The text it does get says what a missing image means
+    # and names the helper that saves and shows it.
+    task = await env.task()
+    tab = await env.tab(task, sites.https("shop.example.com"))
+    raw = await env.call_raw("screenshot", {"task": task, "tab": tab})
+    show = json.loads(raw["content"][0]["text"])["show"]
+    # Both uses: --for-me to look at it, without it to show it to the user.
+    for words in ("no image", "browser-screenshot", "--for-me", "using-the-browser", "describe"):
+        assert words in show, words
+    tools = {t["name"]: t for t in (await env.rpc("tools/list")).json()["result"]["tools"]}
+    description = tools["screenshot"]["description"]
+    for words in ("browser-screenshot", "--for-me", "using-the-browser"):
+        assert words in description, words
+    assert set(tools["screenshot"]["inputSchema"]["properties"]) == {"task", "tab"}
+
+
 async def test_unknown_refs_fail_fast(env, sites):
     task = await env.task()
     tab = await env.tab(task, sites.https("shop.example.com"))
