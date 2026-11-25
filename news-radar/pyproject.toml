@@ -24,7 +24,7 @@ dependencies = [
   "jmespath==1.1.0",
   "icalendar==7.3.2",
   "dateparser==1.5.1",
-  "tzdata==2026.5",
+  "tzdata==2026.6",
 ]
 
 [project.optional-dependencies]
