@@ -3,14 +3,18 @@
 
 Takes a screenshot of a browser tab, saves it in the agent's workspace under
 browser-screenshots/, and prints where it is and the Markdown image line that
-shows it in the chat. Run it when the person asks to see a page: Lettuce's
-mcp_call and mcp_call_write pass on only a tool's text, so a screenshot taken
-through them reaches neither the agent nor the person.
+shows it in the chat. Run it when the person asks to see a page and a screenshot
+taken through mcp_call came back without its image (before Lettuce v0.50.1,
+mcp_call passed on only a tool's text).
 
 With --for-me, for the agent's own look at a layout or a map, it saves under
-browser-screenshots/ in the system's temporary folder instead (the folder 0700,
-the file 0600), prints no image line, and says to open it with Read and then
-remove it. Screenshots there older than an hour are removed first.
+/tmp/browser-screenshots/ instead (the folder 0700, the file 0600), prints no
+image line, and says to open it with Read and then remove it. Screenshots there
+older than an hour are removed first. It is /tmp and not the temporary folder
+TMPDIR names: since Lettuce v0.50.2 that is on the host, kept 14 days, while
+/tmp stays in the app-server's container. (LOLLO_SCREENSHOT_TMP overrides it,
+for tests.) A screenshot through mcp_call is saved in the workspace and shown
+to the person, so it is never the way to look for oneself.
 
 It calls the browser's screenshot tool through the mcp-servers wrapper, reads
 the image part of the result and writes it, never printing the image's data.
@@ -31,7 +35,6 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from urllib.parse import urlsplit
 
@@ -45,6 +48,8 @@ CALL_TIMEOUT = 90
 # --for-me screenshots older than this are removed on the next --for-me run.
 TMP_KEEP_SECONDS = 3600
 WRAPPER = "/root/.letta/skills/mcp-servers/scripts/mcp.sh"
+# --for-me's parent: the container's own /tmp, not $TMPDIR, which Lettuce keeps on the host.
+TMP = "/tmp"
 # Each accepted type, its extension, and how its bytes start.
 TYPES = {"image/jpeg": ("jpg", b"\xff\xd8\xff", "JPEG"), "image/png": ("png", b"\x89PNG\r\n\x1a\n", "PNG")}
 
@@ -137,7 +142,7 @@ def site_of(url: str) -> str:
 
 def tmp_folder() -> str:
     """The --for-me folder: private to the app-server's user, its old screenshots removed."""
-    folder = os.path.join(tempfile.gettempdir(), FOLDER)
+    folder = os.path.join(os.environ.get("LOLLO_SCREENSHOT_TMP", TMP), FOLDER)
     os.makedirs(folder, mode=0o700, exist_ok=True)
     os.chmod(folder, 0o700)
     cutoff = time.time() - TMP_KEEP_SECONDS
