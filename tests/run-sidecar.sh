@@ -20,7 +20,7 @@
 #   tests/run-sidecar.sh <dir> [pytest args...]
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-NODE_IMAGE=node:22.22.0-slim
+NODE_IMAGE=node:22.23.5-slim
 
 dir=${1:-}
 # The pytest image's build context: the folder, but the browser's service.
