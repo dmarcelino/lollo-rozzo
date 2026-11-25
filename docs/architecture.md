@@ -60,6 +60,7 @@ Paths are in the data directory: `~/lollo-rozzo` for a release install, `data/` 
 | settings, schedules, transcripts, Claude Code/Codex/gh logins, skills from Settings | `stacks/<name>/state/letta-home` | yes | `remove --purge` |
 | the agents' workspaces | `stacks/<name>/state/workspaces` | yes | `remove --purge` |
 | the tools agents installed | `stacks/<name>/state/tools` | yes, unless `--no-tools` | `remove --purge` |
+| background commands' output, subagent runs' logs (Runs -> subagent runs), agents' temporary files | `stacks/<name>/state/task-logs` | no | Lettuce, a run's folder after 14 days; `remove --purge` |
 | Gmail trigger rules | `stacks/<name>/state/lollo` | yes | `remove --purge` |
 | the stack's secrets and Cloudflare ids | `stacks/<name>/stack.env` | yes | `remove --purge` |
 | the installation's settings and cached Cloudflare ids | `config.env` | yes, in every stack's backup | never |
