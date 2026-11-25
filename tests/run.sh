@@ -7649,6 +7649,42 @@ test_doc_tools_lock_check_sees_a_pin_the_lock_lacks() {
     fail "expected mcp and pypdf reported, got: $(lock_lacks "$H/doc-tools/pyproject.toml" "$H/doc-tools/requirements.lock")"
 }
 
+# A lock compiled for another Python resolves other markers and wheels, and the
+# image still builds; moving PYTHON_VERSION or uv by hand without doc-tools-lock
+# leaves one. The header's command names what it was compiled for.
+# lock_not_compiled_for DOCKERFILE LOCK -> the Python minor and the uv that
+# DOCKERFILE pins and LOCK's header does not name, one a line
+lock_not_compiled_for() {
+  local py uv
+  py=$(sed -nE 's/^ARG PYTHON_VERSION=([0-9]+\.[0-9]+)(\.[0-9]+)?$/\1/p' "$1")
+  uv=$(awk '$1 == "FROM" && index($2, "ghcr.io/astral-sh/uv:") == 1 { print substr($2, 22) }' "$1")
+  [[ -n $py && -n $uv ]] || { printf 'no plain PYTHON_VERSION or uv pin in %s\n' "$1"; return; }
+  head -3 "$2" | grep -qF -- "--python-version $py " || printf 'python %s\n' "$py"
+  head -3 "$2" | grep -qF "ghcr.io/astral-sh/uv:$uv-debian-slim \\" || printf 'uv %s\n' "$uv"
+}
+
+test_doc_tools_lock_is_compiled_for_the_pinned_python_and_uv() {
+  local wrong
+  wrong=$(lock_not_compiled_for "$ROOT/doc-tools/Dockerfile" "$ROOT/doc-tools/requirements.lock")
+  [[ -z $wrong ]] || fail "doc-tools/requirements.lock was not compiled for doc-tools/Dockerfile's: $wrong (scripts/renovate-post-upgrade.sh doc-tools-lock)"
+}
+
+test_doc_tools_lock_check_sees_a_lock_compiled_for_another_python_or_uv() {
+  post_upgrade_fixture
+  local py
+  py=$(pin doc-tools/Dockerfile PYTHON_VERSION)
+  bump doc-tools/Dockerfile PYTHON_VERSION "${py%.*}.99"
+  [[ -z $(lock_not_compiled_for "$H/doc-tools/Dockerfile" "$H/doc-tools/requirements.lock") ]] ||
+    fail "a patch of the same Python reported: $(lock_not_compiled_for "$H/doc-tools/Dockerfile" "$H/doc-tools/requirements.lock")"
+  bump doc-tools/Dockerfile PYTHON_VERSION 3.99.1
+  sed -i 's|^FROM ghcr.io/astral-sh/uv:[^ ]* AS uv|FROM ghcr.io/astral-sh/uv:9.9.9 AS uv|' "$H/doc-tools/Dockerfile"
+  [[ $(lock_not_compiled_for "$H/doc-tools/Dockerfile" "$H/doc-tools/requirements.lock") == $'python 3.99\nuv 9.9.9' ]] ||
+    fail "expected python 3.99 and uv 9.9.9 reported, got: $(lock_not_compiled_for "$H/doc-tools/Dockerfile" "$H/doc-tools/requirements.lock")"
+  sed -i 's/^ARG PYTHON_VERSION=.*/ARG PYTHON_VERSION=latest/' "$H/doc-tools/Dockerfile"
+  [[ $(lock_not_compiled_for "$H/doc-tools/Dockerfile" "$H/doc-tools/requirements.lock") == "no plain PYTHON_VERSION or uv pin in "* ]] ||
+    fail "an unreadable PYTHON_VERSION passed"
+}
+
 # ── the CI gate ──────────────────────────────────────────────────────────────
 # The Main branch ruleset requires ci-passed alone: a job missing from its
 # needs is not required (scripts/check-ci-gate.sh).
