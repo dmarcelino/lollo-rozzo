@@ -1963,7 +1963,9 @@ backup_stack() {
       warn "$name: the vault volume $(vault_volume "$name") does not exist yet; backing up without it"
     fi
   done
-  excludes=(state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups)
+  # state/task-logs is the app-server's TMPDIR (Lettuce v0.50.2): background commands' output, which
+  # holds vault-wait's answers, and the agents' temporary files; Lettuce keeps it 14 days for its Runs pane.
+  excludes=(state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups state/task-logs)
   # The BFF rewrites upstream's skills on every connect.
   for s in "$(upstream_dir)"/docker/agent-skills/*/; do
     if [[ -d $s ]]; then

@@ -264,19 +264,20 @@ async def test_page_content_is_labelled_untrusted(env, sites):
 
 
 async def test_a_screenshot_says_how_to_show_it_when_the_image_is_dropped(env, sites):
-    # Lettuce's mcp_call passes on only the text part: an agent once described a
-    # page it never saw. The text it does get says what a missing image means
-    # and names the helper that saves and shows it.
+    # Lettuce's mcp_call saves the image in the agent's workspace and shows it to
+    # the person (since v0.50.1), and a client may still drop it: an agent once
+    # described a page it never saw. The text says when to call it that way, what a
+    # missing image means, and names the helper for a look of the agent's own.
     task = await env.task()
     tab = await env.tab(task, sites.https("shop.example.com"))
     raw = await env.call_raw("screenshot", {"task": task, "tab": tab})
     show = json.loads(raw["content"][0]["text"])["show"]
     # Both uses: --for-me to look at it, without it to show it to the user.
-    for words in ("no image", "browser-screenshot", "--for-me", "using-the-browser", "describe"):
+    for words in ("no image", "browser-screenshot", "--for-me", "using-the-browser", "describe", "asked to see"):
         assert words in show, words
     tools = {t["name"]: t for t in (await env.rpc("tools/list")).json()["result"]["tools"]}
     description = tools["screenshot"]["description"]
-    for words in ("browser-screenshot", "--for-me", "using-the-browser"):
+    for words in ("browser-screenshot", "--for-me", "using-the-browser", "asked to see"):
         assert words in description, words
     assert set(tools["screenshot"]["inputSchema"]["properties"]) == {"task", "tab"}
 

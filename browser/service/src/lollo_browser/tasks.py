@@ -111,13 +111,16 @@ _SUBMITS_JS = """(el, key) => {
 }"""
 
 
-# Lettuce's mcp_call passes on only a result's text, so the image after this text
-# can be missing: an agent once described a page it never saw.
+# Lettuce's mcp_call carries the image since v0.50.1, and saves it in the agent's
+# workspace and shows it to the person: right when they asked to see the page, wrong
+# for the agent's own look. Before, it dropped the image, and an agent once described
+# a page it never saw; another client still could.
 SHOW_SCREENSHOT = (
-    "The image follows this text. If no image reached you, the way you called this tool dropped it: "
-    "do not describe the page. In your shell, run "
-    "`python3 /root/.letta/skills/using-the-browser/browser-screenshot --for-me <task> <tab>` to look at it "
-    "yourself, or the same without --for-me to show it to the user, as the using-the-browser skill shows."
+    "The image follows this text. Through mcp_call it is saved in your workspace and shown to the user: "
+    "take a screenshot that way only when the user asked to see the page. To look at a page yourself, run "
+    "`python3 /root/.letta/skills/using-the-browser/browser-screenshot --for-me <task> <tab>` in your shell "
+    "instead. If no image reached you, the way you called this tool dropped it: do not describe the page; "
+    "run the same without --for-me to show it to the user, as the using-the-browser skill shows."
 )
 
 

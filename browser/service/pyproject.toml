@@ -16,7 +16,7 @@ dependencies = [
   "pyjwt[crypto]==2.15.1",
   "cryptography==50.0.2",
   # uvicorn's WebSocket support, for the live view.
-  "websockets==17.2",
+  "websockets==17.4",
   "playwright==1.65.2",
   # The Public Suffix List snapshot bundled with the release; never fetched.
   "tldextract==5.4.0",
