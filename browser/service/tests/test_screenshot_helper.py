@@ -98,10 +98,10 @@ def run(stub, *args):
 
 @pytest.fixture
 def tmp_folder(stub, tmp_path):
-    # --for-me writes under the system's temporary folder; TMPDIR points it here.
+    # --for-me writes under /tmp; LOLLO_SCREENSHOT_TMP points it here.
     tmp = tmp_path / "tmp"
     tmp.mkdir()
-    stub.env["TMPDIR"] = str(tmp)
+    stub.env["LOLLO_SCREENSHOT_TMP"] = str(tmp)
     return tmp / "browser-screenshots"
 
 
@@ -218,6 +218,18 @@ def test_for_me_saves_outside_the_workspace_and_shows_nothing(stub, tmp_folder):
     assert str(saved) in r.stdout
     assert "![" not in r.stdout  # no image line for the reply
     assert "Read" in r.stdout and f"rm {saved}" in r.stdout
+
+
+def test_for_me_ignores_tmpdir(stub, tmp_folder, tmp_path):
+    # Since Lettuce v0.50.2 the app-server's TMPDIR is on the host, kept 14 days.
+    elsewhere = tmp_path / "task-logs"
+    elsewhere.mkdir()
+    stub.env["TMPDIR"] = str(elsewhere)
+    stub.answer("jpeg")
+    r = run(stub, "--for-me", "task-1", "t1")
+    assert r.returncode == 0, r.stderr
+    assert list(elsewhere.iterdir()) == []
+    assert len(list(tmp_folder.iterdir())) == 1
 
 
 def test_for_me_takes_a_name_too(stub, tmp_folder):

@@ -60,6 +60,7 @@ Paths are in the data directory: `~/lollo-rozzo` for a release install, `data/` 
 | settings, schedules, transcripts, Claude Code/Codex/gh logins, skills from Settings | `stacks/<name>/state/letta-home` | yes | `remove --purge` |
 | the agents' workspaces | `stacks/<name>/state/workspaces` | yes | `remove --purge` |
 | the tools agents installed | `stacks/<name>/state/tools` | yes, unless `--no-tools` | `remove --purge` |
+| background commands' output, subagent runs' logs (Runs -> subagent runs), agents' temporary files | `stacks/<name>/state/task-logs` | no | Lettuce, a run's folder after 14 days; `remove --purge` |
 | Gmail trigger rules | `stacks/<name>/state/lollo` | yes | `remove --purge` |
 | the stack's secrets and Cloudflare ids | `stacks/<name>/stack.env` | yes | `remove --purge` |
 | the installation's settings and cached Cloudflare ids | `config.env` | yes, in every stack's backup | never |
@@ -69,7 +70,7 @@ Paths are in the data directory: `~/lollo-rozzo` for a release install, `data/` 
 | the browser's kept sign-ins, per-site settings and audit log (hand-offs live in memory and end with their task) | Docker volume `lollo-<name>_browser-data` | no, on purpose: it holds live sign-ins; after a restore, people sign in to those sites and set the browser up again | `remove` |
 | the devices enrolled for the lollo's notifications (the vault's and the browser's) | Docker volume `lollo-<name>_notifications-data` | yes, whenever it exists, so they keep getting notifications after a restore | `remove` |
 | Lettuce's Google client and tokens | Docker volumes `lollo-<name>_google-policy`, `lollo-<name>_google-creds` | only with `--with-google` | `remove` |
-| Lettuce's push subscriptions, pinned-agent lists and avatars | Docker volume `lollo-<name>_bff-data` | no; after a restore, people turn Lettuce's notifications on again | `remove` |
+| Lettuce's push subscriptions, pinned-agent lists, avatars, and the tokens and headers entered for http MCP servers in Settings -> MCP servers | Docker volume `lollo-<name>_bff-data` | no; after a restore, people turn Lettuce's notifications on again and enter those tokens again | `remove` |
 | the code editor's settings | Docker volume `lollo-<name>_code-server-data` | no; nothing in it is needed to restore a stack | `remove` |
 | the document tools | Docker volume `lollo-doc-tools-<hash>`, one per host | no; rebuilt from this repo | turning `lollo-doc-tools` off |
 

@@ -18,8 +18,8 @@ Both applications share the stack's Access policy, so `lolloctl users` changes w
 | Service | From | Profile | Networks | Mounts |
 |---|---|---|---|---|
 | `cloudflared` | upstream | `cloudflared` (required) | `default` | none |
-| `app-server` | upstream | always | `default`; `lollo-doc-tools-<name>` with `lollo-doc-tools` | `state/letta-home`, `letta-data`, `workspaces`, `tools`; the doc-tools volume read-only with `lollo-doc-tools` |
-| `bff` | upstream | always | the app-server's namespace | `google-policy`, `google-creds`, `bff-data`, `bff-auth`, `workspaces` (read-write since Lettuce v0.42, for the Files tab's delete); `letta-home` and the memory files read-only |
+| `app-server` | upstream | always | `default`; `lollo-doc-tools-<name>` with `lollo-doc-tools` | `state/letta-home`, `letta-data`, `workspaces`, `tools`, `task-logs` (its `TMPDIR` since Lettuce v0.50.2: background commands' output and subagent runs' logs); the doc-tools volume read-only with `lollo-doc-tools` |
+| `bff` | upstream | always | the app-server's namespace | `google-policy`, `google-creds`, `bff-data`, `bff-auth`, `workspaces` (read-write since Lettuce v0.42, for the Files tab's delete), `task-logs` (read-write since Lettuce v0.50.2, for Runs -> subagent runs and its 14-day cleanup); `letta-home` and the memory files read-only |
 | `channel-gateway` | upstream | `telegram` | the app-server's namespace | `letta-home`, `letta-data`, `workspaces` |
 | `searxng`, `ddg-mcp` | upstream | `search` | `default` | none |
 | `google-mcp` | upstream | `google` | `default` | `google-policy` read-only, `google-creds` |

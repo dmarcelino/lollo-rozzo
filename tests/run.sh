@@ -4096,7 +4096,7 @@ test_backup_copies_a_stopped_stack_without_asking() {
   log_has ".platform:/src/platform:ro -v $B/alfred:/dst lollo-backup:local"
   eq "$(find "$B/alfred" -name '.partial-*')" ""
   log_has "sh rsync /src /dst $(id -u):$(id -g)  .partial-"
-  log_has "state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups"
+  log_has "state/letta-home/mod-cache state/letta-home/claude/paste-cache state/letta-home/claude/backups state/task-logs"
   log_lacks "state/tools"
   log_lacks "/src/vault"
   [[ $(snapshots) =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || fail "expected one snapshot, got: $(snapshots)"
