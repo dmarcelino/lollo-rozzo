@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "69289e033814feb94ace4e44fa4cd19ab2834046"
     }
   },
   "components": [
@@ -80,13 +80,13 @@
         {
           "path": "lib/cloudflare.sh",
           "line": 114,
-          "end_line": 128,
+          "end_line": 129,
           "label": "lollo host routes"
         },
         {
           "path": "lib/cloudflare.sh",
-          "line": 154,
-          "end_line": 173,
+          "line": 155,
+          "end_line": 174,
           "label": "ingress rules"
         }
       ]
@@ -94,21 +94,21 @@
     {
       "id": "pages",
       "type": "security",
-      "label": "vault, code editor",
-      "sublabel": "/vault/, /code-server/",
+      "label": "vault, code editor, Outlook",
+      "sublabel": "/vault/, /code-server/, /outlook/",
       "pos": [
         490,
         210
       ],
       "size": [
-        170,
+        200,
         62
       ],
       "sources": [
         {
           "path": "lib/cloudflare.sh",
           "line": 118,
-          "end_line": 123,
+          "end_line": 124,
           "label": "PROFILE_ROUTES"
         },
         {
@@ -141,14 +141,14 @@
         },
         {
           "path": "landing/src/lollo_landing/app.py",
-          "line": 110,
-          "end_line": 125,
+          "line": 111,
+          "end_line": 126,
           "label": "landing page"
         },
         {
           "path": "landing/src/lollo_landing/app.py",
-          "line": 135,
-          "end_line": 158,
+          "line": 136,
+          "end_line": 159,
           "label": "routes, executor API"
         }
       ]
@@ -202,8 +202,8 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 283,
-          "end_line": 295,
+          "line": 284,
+          "end_line": 296,
           "label": "executor_cron"
         }
       ]
@@ -258,8 +258,8 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 270,
-          "end_line": 272,
+          "line": 271,
+          "end_line": 273,
           "label": "install paths"
         },
         {
@@ -320,20 +320,20 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 297,
-          "end_line": 329,
+          "line": 298,
+          "end_line": 330,
           "label": "LOLLO_INSTALL"
         },
         {
           "path": "lolloctl",
-          "line": 355,
-          "end_line": 395,
+          "line": 356,
+          "end_line": 396,
           "label": "install and sync_executor"
         },
         {
           "path": "lib/common.sh",
-          "line": 651,
-          "end_line": 706,
+          "line": 652,
+          "end_line": 696,
           "label": "token and LOLLO_PROFILES"
         }
       ]

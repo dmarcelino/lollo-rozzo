@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "69289e033814feb94ace4e44fa4cd19ab2834046"
     }
   },
   "components": [
@@ -76,27 +76,33 @@
       "id": "vault",
       "type": "backend",
       "label": "lollo services",
-      "sublabel": "vault, gmail-triggers, news-radar, landing",
+      "sublabel": "vault, gmail-triggers, news-radar, outlook, landing",
       "pos": [
         40,
         460
       ],
       "size": [
-        220,
+        270,
         64
       ],
       "sources": [
         {
           "path": "compose/pipelock-proxy.yml",
           "line": 21,
-          "end_line": 37,
+          "end_line": 38,
           "label": "NO_PROXY list"
         },
         {
           "path": "lib/common.sh",
-          "line": 1011,
-          "end_line": 1025,
+          "line": 1028,
+          "end_line": 1042,
           "label": "check_pipelock"
+        },
+        {
+          "path": "outlook/src/lollo_outlook/outlook_client.py",
+          "line": 43,
+          "end_line": 46,
+          "label": "Outlook calls Microsoft directly"
         }
       ]
     },
@@ -191,8 +197,8 @@
         },
         {
           "path": "lib/common.sh",
-          "line": 785,
-          "end_line": 786,
+          "line": 797,
+          "end_line": 798,
           "label": "only lollo-pipelock mounts it"
         }
       ]
@@ -213,14 +219,14 @@
       "sources": [
         {
           "path": "lolloctl",
-          "line": 1977,
-          "end_line": 2011,
+          "line": 1985,
+          "end_line": 2019,
           "label": "receipts: no network, read-only"
         },
         {
           "path": "lolloctl",
-          "line": 1814,
-          "end_line": 1814,
+          "line": 1822,
+          "end_line": 1822,
           "label": "backup mounts it read-only"
         }
       ]
@@ -365,7 +371,7 @@
       "items": [
         "Advisory, not a boundary: the stack network still reaches the internet, and any agent can unset HTTPS_PROXY",
         "No TLS interception: for HTTPS it sees the host name, not paths, bodies or responses",
-        "The BFF (its Remote Pi SSH runs included), lollo-vault, google-mcp, lollo-gmail-triggers, lollo-news-radar and the Telegram gateway connect directly; NO_PROXY also keeps searxng, ddg-mcp, gotenberg, host.docker.internal and the hosts in PIPELOCK_DIRECT direct"
+        "The BFF (its Remote Pi SSH runs included), lollo-vault, google-mcp, lollo-gmail-triggers, lollo-news-radar, lollo-outlook and the Telegram gateway connect directly; NO_PROXY also keeps searxng, ddg-mcp, gotenberg, host.docker.internal and the hosts in PIPELOCK_DIRECT direct"
       ]
     },
     {
@@ -374,7 +380,7 @@
       "items": [
         "lollo-pipelock hardened: read-only, no capabilities, no host mounts",
         "Only lollo-pipelock mounts pipelock-data, whatever the profiles",
-        "The app-server's proxy variables point at lollo-pipelock, and its NO_PROXY lists lollo-vault, lollo-gmail-triggers, lollo-news-radar and lollo, so pipelock never sees the vault's values or the executor's token"
+        "The app-server's proxy variables point at lollo-pipelock, and its NO_PROXY lists lollo-vault, lollo-gmail-triggers, lollo-news-radar, lollo-outlook and landing, so pipelock never sees the vault's values, the executor's token or Outlook's mail"
       ]
     }
   ]

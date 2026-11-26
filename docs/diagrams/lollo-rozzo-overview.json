@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "b537162f494aa3bef69c0d6af8cefe38f99b552e"
+      "revision": "40f2b267aab3d6d89ec36626188f2e9c8f411e77"
     }
   },
   "components": [
@@ -91,19 +91,19 @@
       ],
       "size": [
         120,
-        902
+        1022
       ],
       "sources": [
         {
           "path": "lib/cloudflare.sh",
           "line": 114,
-          "end_line": 129,
+          "end_line": 130,
           "label": "lollo host routes"
         },
         {
           "path": "lib/cloudflare.sh",
-          "line": 155,
-          "end_line": 174,
+          "line": 156,
+          "end_line": 175,
           "label": "tunnel ingress"
         },
         {
@@ -191,8 +191,8 @@
         },
         {
           "path": "lolloctl",
-          "line": 389,
-          "end_line": 399,
+          "line": 392,
+          "end_line": 402,
           "label": "sync_executor"
         },
         {
@@ -329,8 +329,8 @@
         },
         {
           "path": "lolloctl",
-          "line": 495,
-          "end_line": 502,
+          "line": 516,
+          "end_line": 523,
           "label": "image lolloctl builds"
         }
       ]
@@ -456,6 +456,34 @@
       ]
     },
     {
+      "id": "outlook",
+      "type": "security",
+      "label": "lollo-outlook",
+      "sublabel": "/outlook/, outlook-data",
+      "pos": [
+        560,
+        980
+      ],
+      "size": [
+        170,
+        62
+      ],
+      "sources": [
+        {
+          "path": "compose/outlook.yml",
+          "line": 1,
+          "end_line": 61,
+          "label": "service, hardening and volume"
+        },
+        {
+          "path": "outlook/src/lollo_outlook/mcp_tools.py",
+          "line": 182,
+          "end_line": 205,
+          "label": "every tool checks the policy"
+        }
+      ]
+    },
+    {
       "id": "engine",
       "type": "backend",
       "label": "lollo-browser-engine",
@@ -490,7 +518,7 @@
       "sublabel": "/code-server/ gate",
       "pos": [
         560,
-        980
+        1100
       ],
       "size": [
         170,
@@ -512,7 +540,7 @@
       "sublabel": "socket only, no port",
       "pos": [
         560,
-        1100
+        1220
       ],
       "size": [
         170,
@@ -534,7 +562,7 @@
       "sublabel": "SSH in, code-egress out",
       "pos": [
         560,
-        1220
+        1340
       ],
       "size": [
         170,
@@ -556,7 +584,7 @@
       "sublabel": "letta-home, workspaces",
       "pos": [
         840,
-        1220
+        1340
       ],
       "size": [
         150,
@@ -565,9 +593,9 @@
       "sources": [
         {
           "path": "docs/architecture.md",
-          "line": 53,
+          "line": 55,
           "label": "the stack's data",
-          "end_line": 72
+          "end_line": 74
         },
         {
           "path": "compose/code-server.yml",
@@ -607,6 +635,7 @@
         "lollo-browser",
         "gmail",
         "news-radar",
+        "outlook",
         "gate"
       ],
       "pad": 14
@@ -687,6 +716,10 @@
     },
     {
       "from": "cloudflared",
+      "to": "outlook"
+    },
+    {
+      "from": "cloudflared",
       "to": "lollo-browser"
     },
     {
@@ -740,6 +773,12 @@
     {
       "from": "appserver",
       "to": "lollo-browser",
+      "label": "/mcp",
+      "variant": "security"
+    },
+    {
+      "from": "appserver",
+      "to": "outlook",
       "label": "/mcp",
       "variant": "security"
     },
@@ -827,6 +866,7 @@
         "The code editor runs nothing agents wrote; its terminals are SSH sessions into the shell, which is no stronger than an agent.",
         "Pipelock is advisory: the stack network keeps its direct route out. The browser's engine is the exception: on its internal network, pipelock is its only way out.",
         "lollo-news-radar fetches public websites directly, public addresses only (not drawn).",
+        "lollo-outlook calls Microsoft Graph directly, never through pipelock (not drawn).",
         "Chromium's sandbox stays on in the browser's engine, which holds no data and obeys only lollo-browser."
       ]
     },
@@ -834,7 +874,7 @@
       "dot": "amber",
       "title": "Volumes not drawn",
       "items": [
-        "vault-data: only lollo-vault. pipelock-data: only lollo-pipelock. news-radar-data: only lollo-news-radar. notifications-data: only lollo-notifications. browser-data: only lollo-browser, never backed up.",
+        "vault-data: only lollo-vault. pipelock-data: only lollo-pipelock. news-radar-data: only lollo-news-radar. outlook-data: only lollo-outlook. notifications-data: only lollo-notifications. browser-data: only lollo-browser, never backed up.",
         "google-creds: the BFF, google-mcp, and lollo-gmail-triggers read-only.",
         "code-server-sock, code-server-data, code-exec-keys: only the code editor's services.",
         "state/lollo/gmail-triggers: only lollo-gmail-triggers, outside every app-server mount."

@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "69289e033814feb94ace4e44fa4cd19ab2834046"
     },
     "legend": {
       "entries": {
@@ -58,8 +58,8 @@
         },
         {
           "path": "lolloctl",
-          "line": 169,
-          "end_line": 185,
+          "line": 170,
+          "end_line": 186,
           "label": "the lollo's Access app"
         }
       ]
@@ -73,13 +73,13 @@
         {
           "path": "lib/cloudflare.sh",
           "line": 114,
-          "end_line": 128,
+          "end_line": 129,
           "label": "page routes, landing page"
         },
         {
           "path": "lib/cloudflare.sh",
-          "line": 154,
-          "end_line": 174,
+          "line": 155,
+          "end_line": 175,
           "label": "404 for the rest"
         }
       ]
@@ -324,7 +324,7 @@
       "title": "Who uses what",
       "items": [
         "vault: PAGE, FORM and FETCH (its own fetch() calls send X-CSRF-Token)",
-        "gmail-triggers and news-radar: PAGE and FORM; lollo landing page: PAGE only (no forms, no script)",
+        "gmail-triggers and news-radar: PAGE and FORM; outlook: PAGE, FORM and FETCH (its connect handover); lollo landing page: PAGE only (no forms, no script)",
         "Assets (stylesheets, scripts, icons, the manifest) need the JWT but no Fetch Metadata",
         "The code editor's gate uses Authenticator and COOP, with its own Sec-Fetch rules (docs/code-server.md)"
       ]

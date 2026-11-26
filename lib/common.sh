@@ -516,6 +516,7 @@ compose_env() {
     -f "$LOLLO_HOME/compose/news-radar.yml" \
     -f "$LOLLO_HOME/compose/pipelock.yml" \
     -f "$LOLLO_HOME/compose/code-server.yml" \
+    -f "$LOLLO_HOME/compose/outlook.yml" \
     -f "$LOLLO_HOME/compose/browser.yml" \
     -f "$LOLLO_HOME/compose/notifications.yml" \
     -f "$LOLLO_HOME/compose/landing.yml" \
@@ -683,6 +684,17 @@ ensure_executor_token() {
   f=$(stack_env "$1")
   [[ -n $(env_get "$f" LOLLO_EXECUTOR_TOKEN) ]] ||
     env_set "$f" LOLLO_EXECUTOR_TOKEN "$(openssl rand -hex 32)"
+}
+
+# ensure_outlook_secret NAME -> gives the stack, once, the key that encrypts the
+# Outlook sidecar's stored session at rest. Kept only in stack.env (the sidecar's
+# environment), never on the data volume. Nothing rotates it; replacing it makes
+# the stored session unreadable, so the person reconnects with the bookmarklet.
+ensure_outlook_secret() {
+  local f
+  f=$(stack_env "$1")
+  [[ -n $(env_get "$f" OUTLOOK_SECRET) ]] ||
+    env_set "$f" OUTLOOK_SECRET "$(openssl rand -hex 32)"
 }
 
 # NOTIFY_SOURCES: the senders of the notifications service, "<SOURCE> <service>":
@@ -860,13 +872,13 @@ check_stack() {
   k=$(jq -r '([.services | to_entries[]
       | select([(.value.volumes // [])[] | select(.source == "google-creds" or .source == "vault-data"
         or .source == "pipelock-data" or .source == "code-server-data" or .source == "code-exec-keys"
-        or .source == "code-server-sock" or .source == "news-radar-data" or .source == "browser-data"
-        or .source == "notifications-data")] | length > 0)
-      | .key] + ["lollo-gmail-triggers", "lollo-vault", "lollo-pipelock", "lollo-news-radar", "lollo-code-server", "lollo-code-server-editor", "lollo-code-server-exec", "lollo-browser", "lollo-notifications"]) as $held
+        or .source == "code-server-sock" or .source == "news-radar-data" or .source == "outlook-data"
+        or .source == "browser-data" or .source == "notifications-data")] | length > 0)
+      | .key] + ["lollo-gmail-triggers", "lollo-vault", "lollo-pipelock", "lollo-news-radar", "lollo-outlook", "lollo-code-server", "lollo-code-server-editor", "lollo-code-server-exec", "lollo-browser", "lollo-notifications"]) as $held
     | [.services | to_entries[] | .key as $k | (.value.volumes_from // [])[]
       | sub("^service:"; "") | sub(":(ro|rw)$"; "") | select(. as $t | $held | index($t)) | "\($k) from \(.)"]
     | join(", ")' <<<"$rendered")
-  [[ -z $k ]] || die "$name: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data, the notification subscriptions or the code editor ($k)"
+  [[ -z $k ]] || die "$name: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session, the browser's data, the notification subscriptions or the code editor ($k)"
   # Both volumes outlive their profile, so these hold whatever the profiles.
   k=$(volume_users "$rendered" vault-data lollo-vault)
   [[ -z $k ]] || die "$name: $k mount(s) the vault's volume; only the vault service may"
@@ -874,6 +886,8 @@ check_stack() {
   [[ -z $k ]] || die "$name: $k mount(s) pipelock's volume (its signing key and receipts); only lollo-pipelock may"
   k=$(volume_users "$rendered" news-radar-data lollo-news-radar)
   [[ -z $k ]] || die "$name: $k mount(s) News Radar's volume; only lollo-news-radar may"
+  k=$(volume_users "$rendered" outlook-data lollo-outlook)
+  [[ -z $k ]] || die "$name: $k mount(s) the Outlook session volume (the bearer token); only lollo-outlook may"
   k=$(volume_users "$rendered" browser-data lollo-browser)
   [[ -z $k ]] || die "$name: $k mount(s) the browser's volume (its kept sign-ins, settings and audit log); only lollo-browser may"
   k=$(volume_users "$rendered" notifications-data "$NOTIFY_SERVICE")
@@ -920,6 +934,9 @@ check_stack() {
   fi
   if has_profile "$profiles" lollo-news-radar; then
     check_news_radar "$name" "$rendered"
+  fi
+  if has_profile "$profiles" lollo-outlook; then
+    check_outlook "$name" "$rendered" "$f"
   fi
   if has_profile "$profiles" lollo-browser; then
     [[ $(env_get "$f" BROWSER_ENGINE_SECRET) =~ $BROWSER_SECRET_RE ]] ||
@@ -1088,9 +1105,9 @@ check_sidecar() {
 # check_pipelock NAME RENDERED -> the pipelock service keeps what
 # compose/pipelock.yml gives it (check_sidecar), and the app-server uses it
 # (compose/pipelock-proxy.yml) for everything but stack-internal traffic:
-# pipelock must never see the vault's values or the executor's token (which
-# goes to gmail-triggers, news-radar and landing), nor the vault values agents
-# type through the browser (lollo-browser).
+# pipelock must never see the vault's values, the executor's token (which
+# goes to gmail-triggers, news-radar and landing), Outlook's mail, nor the vault
+# values agents type through the browser (lollo-browser).
 check_pipelock() {
   local name=$1 rendered=$2 k v
   check_sidecar "$name" "$rendered" lollo-pipelock lollo-pipelock compose/pipelock.yml
@@ -1100,7 +1117,7 @@ check_pipelock() {
       die "$name: the app-server's $k must be http://lollo-pipelock:8888 with the lollo-pipelock profile (compose/pipelock-proxy.yml)"
   done
   for k in NO_PROXY no_proxy; do
-    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-browser landing; do
+    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-outlook lollo-browser landing; do
       jq -e --arg k "$k" --arg v "$v" '.services["app-server"].environment[$k] // "" | split(",") | index($v)' <<<"$rendered" >/dev/null ||
         die "$name: the app-server's $k must list $v; pipelock must not see its traffic (compose/pipelock-proxy.yml)"
     done
@@ -1234,6 +1251,23 @@ check_news_radar() {
   jq -e '[(.volumes // [])[] | select(.type != "tmpfs") | {type, source, target}]
     == [{"type": "volume", "source": "news-radar-data", "target": "/data"}]' <<<"$svc" >/dev/null ||
     die "$name: lollo-news-radar may mount only its volume news-radar-data, at /data (compose/news-radar.yml)"
+}
+
+# check_outlook NAME RENDERED ENV_FILE -> the Outlook service keeps what
+# compose/outlook.yml gives it: a hardened sidecar (check_sidecar) on the default
+# network only, mounting only its own volume, outlook-data, at /data; and the key
+# that seals the session there (OUTLOOK_SECRET) is at least 32 characters.
+check_outlook() {
+  local name=$1 rendered=$2 k svc
+  check_sidecar "$name" "$rendered" lollo-outlook lollo-outlook compose/outlook.yml
+  svc=$(jq -c '.services["lollo-outlook"]' <<<"$rendered")
+  jq -e '(.networks // {"default": null} | keys) == ["default"]' <<<"$svc" >/dev/null ||
+    die "$name: lollo-outlook must be on the default network only"
+  jq -e '[(.volumes // [])[] | select(.type != "tmpfs") | {type, source, target}]
+    == [{"type": "volume", "source": "outlook-data", "target": "/data"}]' <<<"$svc" >/dev/null ||
+    die "$name: lollo-outlook may mount only its volume outlook-data, at /data (compose/outlook.yml)"
+  k=$(env_get "$3" OUTLOOK_SECRET)
+  ((${#k} >= 32)) || die "$name: OUTLOOK_SECRET must be at least 32 characters (delete the line and run: lolloctl up $name)"
 }
 
 # browser_network_members NAME RENDERED -> the services on the browser's

@@ -1,0 +1,61 @@
+# Merged by lolloctl on top of upstream/docker/compose.yml for every stack.
+# The Outlook sidecar (outlook/, outlook/DESIGN.md, docs/outlook.md): an
+# agent-facing Outlook mailbox (mail, calendar, tasks, and read-only shared
+# mailboxes) under a per-stack policy the person sets on the Outlook page.
+# Opt-in behind the `lollo-outlook` profile; without it this file adds nothing.
+#
+# Agents reach it at http://lollo-outlook:8000/mcp over the stack network, and
+# the tunnel forwards https://<name>-lollo.<domain>/outlook/ to it
+# (cf_tunnel_configure). That reachability is not the control: what agents may do
+# is set on the page (behind the lollo's own Cloudflare Access application, which
+# agents cannot forge) and enforced by the sidecar. Lettuce's JWT, which
+# cloudflared hands the BFF in plain HTTP inside the namespace agents share, is
+# for another audience, so the page refuses it (`lolloctl check` refuses a stack
+# where it would not).
+#
+# The connected Outlook session (the bearer token and refresh material) lives,
+# encrypted, on a named volume that no other service mounts. It calls Microsoft
+# directly, so it has the default network and nothing else. `lolloctl check`
+# refuses a stack where another service mounts the volume, or where this service
+# loses read_only or cap_drop ALL, gains privileges, capabilities, devices,
+# another network, another service's namespaces or mounts, or a bind mount. The
+# encryption key is OUTLOOK_SECRET, generated once per stack and kept only in
+# this environment, never on the volume.
+services:
+  lollo-outlook:
+    profiles: ["lollo-outlook"]
+    build:
+      context: ${LOLLO_HOME:?LOLLO_HOME is not set}/outlook
+      # The shared package (Access JWT and CSRF checks) every lollo image installs.
+      additional_contexts:
+        lollo-common: ${LOLLO_HOME:?LOLLO_HOME is not set}/lollo-common
+    image: ${LOLLO_IMAGE_OUTLOOK:-lollo-outlook:local}
+    environment:
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      # The lollo's own Access application and host, never Lettuce's.
+      CF_ACCESS_AUD: ${CF_LOLLO_AUD:-}
+      CF_ACCESS_ISSUER: ${CF_ACCESS_ISSUER:-}
+      ALLOWED_USERS: ${ALLOWED_USERS:-}
+      PUBLIC_ORIGIN: ${LOLLO_ORIGIN:-}
+      OUTLOOK_SECRET: ${OUTLOOK_SECRET:-}
+      TZ: ${TZ:-UTC}
+    networks:
+      - default
+    volumes:
+      - outlook-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # scrypt needs ~32 MiB per key derivation (at startup, not per call).
+    mem_limit: 256m
+    pids_limit: 128
+    restart: unless-stopped
+
+volumes:
+  # Deleted by `lolloctl remove` (compose down -v): removing a stack deletes its
+  # Outlook session. Not under stacks/<name>/, and deliberately NOT copied by
+  # `lolloctl backup` (reconnecting with the bookmarklet is cheap, and a backup
+  # should not carry a live mail credential).
+  outlook-data:

@@ -10,7 +10,7 @@
       "url": "https://github.com/dmarcelino/lollo-rozzo.git",
       "provider": "github",
       "link_mode": "web",
-      "revision": "55339f6690baf6425b2687fc0aac98856aabb304"
+      "revision": "69289e033814feb94ace4e44fa4cd19ab2834046"
     }
   },
   "components": [
@@ -31,8 +31,8 @@
       "sources": [
         {
           "path": "README.md",
-          "line": 9,
-          "end_line": 12,
+          "line": 11,
+          "end_line": 14,
           "label": "what each person gets"
         }
       ]
@@ -118,7 +118,7 @@
       "sources": [
         {
           "path": "README.md",
-          "line": 11,
+          "line": 13,
           "label": "the Lettuce web UI"
         }
       ]
@@ -139,7 +139,7 @@
       "sources": [
         {
           "path": "README.md",
-          "line": 12,
+          "line": 14,
           "label": "the lollo extras"
         }
       ]
@@ -160,9 +160,9 @@
       "sources": [
         {
           "path": "docs/architecture.md",
-          "line": 57,
+          "line": 58,
           "label": "per-stack state",
-          "end_line": 60
+          "end_line": 61
         }
       ]
     },
@@ -440,7 +440,7 @@
       "items": [
         "Each stack is its own Compose project, lollo-<name>",
         "No ports published on the host: each tunnel connects outbound",
-        "Lollo pages: vault, Gmail triggers, News Radar, code editor (those turned on)"
+        "Lollo pages: vault, Gmail triggers, News Radar, code editor, Outlook (those turned on)"
       ]
     }
   ]

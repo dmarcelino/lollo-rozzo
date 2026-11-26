@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for a sidecar image (landing/, vault/, gmail-triggers/, news-radar/, code-server/,
-# browser/, notifications/) or the document tools (doc-tools/). They run in a container built from the image's
+# outlook/, browser/, notifications/) or the document tools (doc-tools/). They run in a container built from the image's
 # `test` stage, so the host needs only Docker.
 # agent-skills/ is mounted for the vault's helper tests (vault-run, vault-fill,
 # vault-wait) and the browser's (browser-screenshot). For landing,
@@ -27,7 +27,7 @@ dir=${1:-}
 context=$ROOT/$dir
 [[ $dir != browser ]] || context=$ROOT/browser/service
 if [[ ! $dir =~ ^[a-z][a-z0-9-]*$ || ! -f $context/Dockerfile ]]; then
-  echo "usage: tests/run-sidecar.sh <dir> [pytest args...]   (dir: landing, vault, gmail-triggers, news-radar, code-server, doc-tools, browser, notifications)" >&2
+  echo "usage: tests/run-sidecar.sh <dir> [pytest args...]   (dir: landing, vault, gmail-triggers, news-radar, code-server, outlook, doc-tools, browser, notifications)" >&2
   exit 2
 fi
 shift

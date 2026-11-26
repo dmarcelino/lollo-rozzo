@@ -120,6 +120,7 @@ PROFILE_ROUTES=(
   'lollo-gmail-triggers ^/gmail-triggers(/|$) http://lollo-gmail-triggers:8000'
   'lollo-news-radar ^/news-radar(/|$) http://lollo-news-radar:8000'
   'lollo-code-server ^/code-server(/|$) http://lollo-code-server:8000'
+  'lollo-outlook ^/outlook(/|$) http://lollo-outlook:8000'
   'lollo-browser ^/browser(/|$) http://lollo-browser:8000'
 )
 # The landing page and its assets (any file under /assets/), served by the landing

@@ -342,6 +342,7 @@ case $args in
         lollo-news-radar) echo lollo-news-radar ;;
         lollo-pipelock) echo lollo-pipelock ;;
         lollo-code-server) printf '%s\n' lollo-code-server lollo-code-server-editor lollo-code-server-exec ;;
+        lollo-outlook) echo lollo-outlook ;;
         lollo-browser) printf '%s\n' lollo-browser-engine lollo-browser ;;
         lollo-doc-tools) ;;
       esac

@@ -143,6 +143,15 @@ triggers_config() {
   landing_config
 }
 
+# outlook_config -> the rendered config also holds the Outlook service
+# compose/outlook.yml renders, and the landing service
+outlook_config() {
+  config_edit '.services["lollo-outlook"] = {"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],
+      "environment":'"$LOLLO_ENV"',"networks":{"default":null},
+      "volumes":[{"type":"volume","source":"outlook-data","target":"/data","volume":{}}]}'
+  landing_config
+}
+
 # news_radar_config -> the rendered config also holds the News Radar service
 # compose/news-radar.yml renders, and the landing service
 news_radar_config() {
@@ -956,7 +965,7 @@ test_check_refuses_the_vault_profile_without_the_vault() {
 # proxy settings from compose/pipelock-proxy.yml
 pipelock_config() {
   local svc=${1:-'{"read_only":true,"cap_drop":["ALL"],"tmpfs":["/tmp"],"volumes":[{"type":"volume","source":"pipelock-data","target":"/data"}]}'}
-  local np=localhost,127.0.0.1,::1,lollo-pipelock,lollo-vault,lollo-gmail-triggers,lollo-news-radar,lollo-browser,landing,searxng,ddg-mcp,google-mcp,host.docker.internal
+  local np=localhost,127.0.0.1,::1,lollo-pipelock,lollo-vault,lollo-gmail-triggers,lollo-news-radar,lollo-outlook,lollo-browser,landing,searxng,ddg-mcp,google-mcp,host.docker.internal
   config_edit '.services["lollo-pipelock"] = '"$svc"'
     | .services["app-server"].environment += {"HTTPS_PROXY":"http://lollo-pipelock:8888","HTTP_PROXY":"http://lollo-pipelock:8888",
       "https_proxy":"http://lollo-pipelock:8888","http_proxy":"http://lollo-pipelock:8888","NO_PROXY":"'"$np"'","no_proxy":"'"$np"'",
@@ -1051,7 +1060,7 @@ test_check_refuses_a_proxy_that_would_see_the_vault_or_the_executor() {
   added
   local k v
   for k in NO_PROXY no_proxy; do
-    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-browser landing; do
+    for v in lollo-vault lollo-gmail-triggers lollo-news-radar lollo-outlook lollo-browser landing; do
       with_pipelock
       config_edit '.services["app-server"].environment["'"$k"'"] |= (split(",") - ["'"$v"'"] | join(","))'
       ctl check alfred
@@ -1190,7 +1199,7 @@ test_check_refuses_another_service_on_a_symlink_to_the_rules() {
 }
 
 test_check_refuses_volumes_from_gmail_triggers() {
-  triggers_refused ".services.bff.volumes_from = [\"lollo-gmail-triggers:ro\"]" "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data, the notification subscriptions or the code editor (bff from lollo-gmail-triggers)"
+  triggers_refused ".services.bff.volumes_from = [\"lollo-gmail-triggers:ro\"]" "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session, the browser's data, the notification subscriptions or the code editor (bff from lollo-gmail-triggers)"
 }
 
 test_check_refuses_a_volume_bound_to_the_rules() {
@@ -1251,7 +1260,7 @@ test_check_refuses_volumes_from_a_google_creds_holder_whatever_the_profiles() {
     | .services.searxng = {"volumes_from":["service:bff"]}'
   ctl check alfred
   bad_rc
-  out_has "alfred: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data, the notification subscriptions or the code editor (searxng from bff)"
+  out_has "alfred: volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session, the browser's data, the notification subscriptions or the code editor (searxng from bff)"
 }
 
 test_check_refuses_volumes_from_the_vault() {
@@ -1421,6 +1430,96 @@ test_check_refuses_another_service_on_the_news_radar_volume_whatever_the_profile
   ctl check alfred
   bad_rc
   out_has "searxng from lollo-news-radar"
+}
+
+# with_outlook -> alfred runs the lollo-outlook profile, and the rendered config
+# holds the hardened service
+with_outlook() {
+  sed -i 's/^PROFILES=.*/PROFILES=cloudflared,lollo-outlook/' "$D/config.env"
+  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=cloudflared,lollo-outlook/' "$D/stacks/alfred/stack.env"
+  outlook_config
+}
+
+# outlook_refused JQ EXPECTED -> with alfred's hardened Outlook edited by the jq
+# filter JQ, `check` fails and says EXPECTED (on a fresh fixture)
+outlook_refused() {
+  teardown
+  setup
+  added
+  with_outlook
+  config_edit "$1"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: $2"
+}
+OL='.services["lollo-outlook"]'
+
+test_check_accepts_the_hardened_outlook() {
+  added
+  with_outlook
+  ctl check alfred
+  ok_rc
+}
+
+test_check_refuses_an_outlook_that_loses_its_isolation() {
+  outlook_refused "del($OL)" "the lollo-outlook profile is on but lollo-outlook is not in the rendered config"
+  outlook_refused "del($OL.read_only)" "lollo-outlook must have read_only: true"
+  outlook_refused "$OL.cap_drop = [\"NET_RAW\"]" "lollo-outlook must drop all capabilities"
+  outlook_refused "$OL.privileged = true" "lollo-outlook must not set privileged"
+  outlook_refused "$OL.network_mode = \"service:app-server\"" "lollo-outlook must not set network_mode"
+  outlook_refused "$OL.volumes += [{\"type\":\"bind\",\"source\":\"/srv\",\"target\":\"/srv\"}]" "lollo-outlook must not mount host paths"
+  outlook_refused "$OL.volumes += [{\"type\":\"volume\",\"source\":\"scratch\",\"target\":\"/scratch\"}]" "lollo-outlook may mount only its volume outlook-data"
+  outlook_refused "$OL.networks = {\"default\":null,\"code-egress\":null}" "lollo-outlook must be on the default network only"
+  outlook_refused "$OL.environment.CF_ACCESS_AUD = \"\${CF_ACCESS_AUD}\"" "lollo-outlook must accept only the lollo's Access application"
+}
+
+test_check_refuses_a_short_outlook_secret() {
+  added
+  with_outlook
+  sed -i 's/^OUTLOOK_SECRET=.*/OUTLOOK_SECRET=short/' "$D/stacks/alfred/stack.env"
+  ctl check alfred
+  bad_rc
+  out_has "alfred: OUTLOOK_SECRET must be at least 32 characters"
+}
+
+test_check_refuses_another_service_on_the_outlook_volume_whatever_the_profiles() {
+  added
+  config_edit '.services.bff.volumes = [{"type":"volume","source":"outlook-data","target":"/x"}]'
+  ctl check alfred
+  bad_rc
+  out_has "alfred: bff mount(s) the Outlook session volume (the bearer token); only lollo-outlook may"
+  teardown
+  setup
+  added
+  config_edit '.services.searxng.volumes_from = ["lollo-outlook"]'
+  ctl check alfred
+  bad_rc
+  out_has "searxng from lollo-outlook"
+}
+
+test_up_creates_the_outlook_secret_once() {
+  added
+  local s
+  s=$(senv alfred OUTLOOK_SECRET)
+  [[ $s =~ ^[0-9a-f]{64}$ ]] || fail "bad secret [$s]"
+  ctl up alfred
+  ok_rc
+  eq "$(senv alfred OUTLOOK_SECRET)" "$s"
+  eq "$(stat -c %a "$D/stacks/alfred/stack.env")" 600
+  sed -i '/^OUTLOOK_SECRET=/d' "$D/stacks/alfred/stack.env"
+  ctl up alfred
+  ok_rc
+  [[ $(senv alfred OUTLOOK_SECRET) =~ ^[0-9a-f]{64}$ ]] || fail "secret not recreated"
+  [[ $(senv alfred OUTLOOK_SECRET) != "$s" ]] || fail "secret reused"
+}
+
+test_profiles_routes_outlook_and_lists_it_on_the_landing_page() {
+  added
+  outlook_config
+  ctl profiles cloudflared,lollo-outlook
+  ok_rc
+  eq "$(ingress)" '[{"hostname":"alfred-lollo.example.org","path":"^/outlook(/|$)","service":"http://lollo-outlook:8000"},'"$LANDING,$LOLLO_404,$LETTUCE_TAIL]"
+  eq "$(senv alfred LOLLO_PROFILES)" lollo-outlook
 }
 
 # ── browser ─────────────────────────────────────────────────────────────────
@@ -1675,7 +1774,7 @@ test_check_refuses_volumes_from_the_browser_whatever_the_profiles() {
   config_edit '.services.searxng.volumes_from = ["service:lollo-browser:ro"]'
   ctl check alfred
   bad_rc
-  out_has "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the browser's data, the notification subscriptions or the code editor (searxng from lollo-browser)"
+  out_has "volumes_from reaches the Google token, the vault, the gmail-triggers rules, the pipelock receipts, News Radar, the Outlook session, the browser's data, the notification subscriptions or the code editor (searxng from lollo-browser)"
 }
 
 test_check_refuses_sharing_the_browsers_network_namespace_whatever_the_profiles() {
@@ -2578,7 +2677,7 @@ test_compose_ignores_the_callers_environment() {
   PUBLIC_ORIGIN=https://evil.example ctl up alfred
   ok_rc
   log_lacks "PUBLIC_ORIGIN=https://evil.example"
-  log_has "--project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "--project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml --env-file $D/stacks/alfred/stack.env"
   log_lacks "pipelock-proxy.yml"
 }
 
@@ -2587,7 +2686,7 @@ test_compose_adds_the_proxy_overlay_only_with_pipelock() {
   with_pipelock
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/pipelock-proxy.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/pipelock-proxy.yml --env-file $D/stacks/alfred/stack.env"
 }
 
 # PIPELOCK_DIRECT: hosts an install reaches without pipelock (a model server on
@@ -4855,7 +4954,7 @@ test_compose_adds_the_doc_tools_overlay_and_its_values_only_with_the_profile() {
   with_docs
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env"
   log_has "docker-env DOC_TOOLS_NETWORK=lollo-doc-tools-alfred DOC_TOOLS_VOLUME=lollo-doc-tools-$(docs_tag)"
   grep -q '^DOC_TOOLS' "$D/stacks/alfred/stack.env" && fail "doc-tools values written to stack.env"
   true
@@ -4871,7 +4970,7 @@ test_up_with_doc_tools_builds_creates_and_connects_before_reporting() {
   log_has "docker network create --internal --label lollo.doc-tools.stack=alfred lollo-doc-tools-alfred"
   log_has "docker network connect --alias gotenberg lollo-doc-tools-alfred gotenberg-id"
   # The network exists before the app-server joins it, and Gotenberg joins after.
-  (($(line_of "network create") < $(line_of "-p lollo-alfred --project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env up -d"))) ||
+  (($(line_of "network create") < $(line_of "-p lollo-alfred --project-directory $U/docker -f $U/docker/compose.yml -f $H/compose/hardening.yml -f $H/compose/multi.yml -f $H/compose/vault.yml -f $H/compose/gmail-triggers.yml -f $H/compose/news-radar.yml -f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml -f $H/compose/doc-tools.yml --env-file $D/stacks/alfred/stack.env up -d"))) ||
     fail "the network was created after compose up"
   (($(line_of "-p lollo_shared") > $(line_of "up -d --no-build --pull missing --remove-orphans"))) || fail "gotenberg started before the stack"
 }
@@ -5461,7 +5560,7 @@ test_mcp_needs_the_doc_tools_or_the_vault_profile() {
   added
   ctl mcp alfred
   bad_rc
-  out_has "the lollo-doc-tools, lollo-vault, lollo-news-radar and lollo-browser profiles are all off"
+  out_has "the lollo-doc-tools, lollo-vault, lollo-news-radar, lollo-outlook and lollo-browser profiles are all off"
   log_lacks "node --input-type=module"
 }
 
@@ -5478,6 +5577,24 @@ test_mcp_registers_the_vault_with_its_profile() {
   eq "$(senv alfred VAULT_MCP_REGISTERED)" 1
   eq "$(senv alfred DOC_TOOLS_MCP_REGISTERED)" ""
   (($(line_of "restart --no-deps bff") > $(line_of "$VAULT_ADD"))) || fail "the BFF restarted before the change"
+}
+
+OUTLOOK_ADD="exec -T app-server node --input-type=module - add /root/.letta/mcp-home/.letta/settings.json outlook"
+
+test_mcp_registers_outlook_with_its_profile() {
+  added
+  with_outlook
+  mcp_answer '{"added":["outlook"],"present":[],"conflicts":[],"removed":[],"attempts":1}'
+  ctl mcp alfred
+  ok_rc
+  log_has "$OUTLOOK_ADD"
+  log_lacks "$VAULT_ADD"
+  log_lacks "$MCP_ADD"
+  grep -q 'lollo-outlook:8000/mcp' "$T/exec-stdin.log" || fail "the script was not streamed"
+  out_has "alfred: added outlook to Settings -> MCP"
+  eq "$(senv alfred OUTLOOK_MCP_REGISTERED)" 1
+  eq "$(senv alfred VAULT_MCP_REGISTERED)" ""
+  (($(line_of "restart --no-deps bff") > $(line_of "$OUTLOOK_ADD"))) || fail "the BFF restarted before the change"
 }
 
 test_mcp_registers_both_and_restarts_the_bff_once() {
@@ -5966,7 +6083,7 @@ test_compose_always_merges_the_code_editor_overlay() {
   added
   ctl up alfred
   ok_rc
-  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml --env-file"
+  log_has "-f $H/compose/pipelock.yml -f $H/compose/code-server.yml -f $H/compose/outlook.yml -f $H/compose/browser.yml -f $H/compose/notifications.yml -f $H/compose/landing.yml --env-file"
 }
 
 test_profiles_routes_the_code_editor_and_lists_it_on_the_landing_page() {

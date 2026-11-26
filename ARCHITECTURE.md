@@ -10,7 +10,7 @@ An interactive version, [lollo-rozzo-overview.html](docs/diagrams/lollo-rozzo-ov
 | Host | Access application | Tunnel routes it to |
 |---|---|---|
 | `<name>.<domain>` | Lettuce's (`CF_ACCESS_AUD`) | `app-server:8080`, the BFF's port in the app-server's network namespace |
-| `<name>-lollo.<domain>` | the lollo's (`CF_LOLLO_AUD`) | `^/vault(/\|$)` to `lollo-vault:8000`, `^/gmail-triggers(/\|$)` to `lollo-gmail-triggers:8000`, `^/news-radar(/\|$)` to `lollo-news-radar:8000`, `^/code-server(/\|$)` to `lollo-code-server:8000`, `^/browser(/\|$)` to `lollo-browser:8000` (each only with its profile), `^/notifications(/\|$)` to `lollo-notifications:8000` (with `lollo-vault` or `lollo-browser`), `^/(assets/[^/]+)?$` to `landing:8000` (with any of them); anything else gets a 404 |
+| `<name>-lollo.<domain>` | the lollo's (`CF_LOLLO_AUD`) | `^/vault(/\|$)` to `lollo-vault:8000`, `^/gmail-triggers(/\|$)` to `lollo-gmail-triggers:8000`, `^/news-radar(/\|$)` to `lollo-news-radar:8000`, `^/code-server(/\|$)` to `lollo-code-server:8000`, `^/outlook(/\|$)` to `lollo-outlook:8000`, `^/browser(/\|$)` to `lollo-browser:8000` (each only with its profile), `^/notifications(/\|$)` to `lollo-notifications:8000` (with `lollo-vault` or `lollo-browser`), `^/(assets/[^/]+)?$` to `landing:8000` (with any of them); anything else gets a 404 |
 
 Both applications share the stack's Access policy, so `lolloctl users` changes who may sign in to both. The lollo's services accept only the lollo's tokens, never Lettuce's, which agents could catch inside the app-server's namespace. The routes are written by `cf_tunnel_configure` ([lib/cloudflare.sh](lib/cloudflare.sh)) from `PROFILE_ROUTES`, on `add` and on every `profiles` run. `/executor/v1/` and `/healthz` are never routed.
 
@@ -31,6 +31,7 @@ Both applications share the stack's Access policy, so `lolloctl users` changes w
 | `lollo-code-server` (the gate) | [code-server/](code-server/README.md) | `lollo-code-server` | `default` | `code-server-sock` read-only |
 | `lollo-code-server-editor` | [code-server/editor/](code-server/README.md) | `lollo-code-server` | `code-exec` | `workspaces`, `code-server-data`, `code-exec-keys`, `code-server-sock` |
 | `lollo-code-server-exec` (the shell) | [code-server/exec/](code-server/README.md) | `lollo-code-server` | `code-exec`, `code-egress` | `workspaces`, `tools`, `code-exec-keys` read-only |
+| `lollo-outlook` | [outlook/](outlook/README.md) | `lollo-outlook` | `default` | `outlook-data` |
 | `lollo-browser` | [browser/service/](browser/README.md) | `lollo-browser` (needs `lollo-pipelock`) | `default`, `browser` | `browser-data` |
 | `lollo-browser-engine` | [browser/engine/](browser/README.md) | `lollo-browser` | `browser` | none (tmpfs `/tmp` only); our seccomp profile |
 | `lollo-notifications` | [notifications/](notifications/README.md) | `lollo-vault` or `lollo-browser` (none of its own) | `default` | `notifications-data` |
@@ -53,6 +54,7 @@ Both applications share the stack's Access policy, so `lolloctl users` changes w
 |---|---|---|
 | `vault-data` | `lollo-vault` | the encrypted vault; `backup` copies it read-only, `restore` puts it back |
 | `news-radar-data` | `lollo-news-radar` | monitors, sources, items, reports; `backup` copies it read-only, `restore` puts it back |
+| `outlook-data` | `lollo-outlook` | the sealed Outlook session and the policy; `backup` does not copy it |
 | `browser-data` | `lollo-browser` | kept sign-ins (per site), settings, hand-offs, audit log; never backed up, so sign-ins and settings are made again after a restore |
 | `notifications-data` | `lollo-notifications` | every device's push subscription for the lollo's notifications; `backup` copies it read-only, `restore` puts it back |
 | `pipelock-data` | `lollo-pipelock` | receipt signing key and receipts; `backup` and `receipts` read it read-only, `restore` puts it back |
@@ -73,6 +75,7 @@ Named volumes of a stack are deleted with it by `lolloctl remove` (`compose down
 | Agents (app-server) | `google-mcp` | MCP over HTTP, as Settings -> Google Workspace allows |
 | Agents | `lollo-vault` | MCP at `http://lollo-vault:8000/mcp`; `vault-run` at `/redeem` |
 | Agents | `lollo-news-radar` | MCP at `http://lollo-news-radar:8000/mcp` |
+| Agents | `lollo-outlook` | MCP at `http://lollo-outlook:8000/mcp`; tools only, never the token |
 | Agents | `lollo-browser` | MCP at `http://lollo-browser:8000/mcp`; vault values piped into its typing tool with `vault-run`/`vault-fill` (it never calls the vault) |
 | Agents | `lollo-pipelock` | `HTTPS_PROXY` (advisory) and `/fetch` for scanned pages |
 | Agents | Gotenberg | the PDF MCP, started per call from the doc-tools volume |
@@ -81,6 +84,7 @@ Named volumes of a stack are deleted with it by `lolloctl remove` (`compose down
 | `lollo-vault`, `lollo-browser` | `lollo-notifications` | `/notify/v1/send` with each sender's own token (`NOTIFY_TOKEN`), held only by it and the service, never by the app-server; the service then sends Web Push with the lollo's VAPID key ([notifications/README.md](notifications/README.md#rules)) |
 | `lollo-browser` | the browser's engine | Playwright's WebSocket at a path made from `BROWSER_ENGINE_SECRET`, and the display (VNC), which it relays to the person's page at `/browser/` |
 | The browser's engine | `lollo-pipelock` | every request Chromium makes, loopback included: its only way out, so pipelock refuses private addresses for it ([pipelock/README.md](pipelock/README.md#rules)) |
+| `lollo-outlook` | `login.microsoftonline.com`, `graph.microsoft.com` | redeems and refreshes the token, then Microsoft Graph; directly, never through pipelock |
 | `lollo-news-radar` | public websites | the sources agents set up: public addresses only, robots.txt honoured (a feed's own URL excepted), not through pipelock |
 | The gate | the editor | the editor's Unix socket |
 | The editor | the shell | SSH, for terminals and every git call |
@@ -102,9 +106,10 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 | `compose/news-radar.yml`, [`news-radar/`](news-radar/README.md) | the optional News Radar (`lollo-news-radar` profile) and its source |
 | `compose/pipelock.yml`, `compose/pipelock-proxy.yml`, [`pipelock/`](pipelock/README.md) | the optional egress proxy (`lollo-pipelock` profile), its proxy settings and its image |
 | `compose/code-server.yml`, [`code-server/`](code-server/README.md) | the optional code editor (`lollo-code-server` profile): its gate, the editor's image and the shell's image |
+| `compose/outlook.yml`, [`outlook/`](outlook/README.md) | the optional Outlook sidecar (`lollo-outlook` profile) and its source |
 | `compose/browser.yml`, [`browser/`](browser/README.md) | the optional agents' browser (`lollo-browser` profile): the engine (Chromium and its display) and `lollo-browser` (the agents' tools and the person's page), their internal network and volume |
 | `compose/notifications.yml`, [`notifications/`](notifications/README.md) | the lollo's notifications service (on with `lollo-vault` or `lollo-browser`): the one sender of Web Push for them, and the page at `/notifications/` |
-| `compose/landing.yml`, [`landing/`](landing/README.md) | the lollo's landing page (on with `lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server` or `lollo-browser`) and the lollo executor ([landing/executor/](landing/executor/README.md)), which runs the requests of Gmail triggers and News Radar and sends the landing page the agent list |
+| `compose/landing.yml`, [`landing/`](landing/README.md) | the lollo's landing page (on with `lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server`, `lollo-outlook` or `lollo-browser`) and the lollo executor ([landing/executor/](landing/executor/README.md)), which runs the requests of Gmail triggers and News Radar and sends the landing page the agent list |
 | `compose/doc-tools.yml`, `compose/shared/gotenberg.yml`, [`doc-tools/`](doc-tools/README.md) | the optional Office and PDF tools (`lollo-doc-tools` profile): the app-server's mount and network, the host's shared Gotenberg, and the tools' image and PDF server |
 | [`lollo-common/`](lollo-common/README.md) | code the lollo services share (sign-in checks, the executor API's checks, page styles, icons) |
 | [`agent-skills/`](agent-skills/README.md) | skills `lolloctl skills` installs for every agent of every stack |
@@ -116,8 +121,8 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 | `scripts/check-ci-gate.sh` | checks that CI's `ci-passed` job, the one check the `main` ruleset requires, waits for every other job |
 | `scripts/check-doc-links.mjs` | checks the Markdown's relative links and anchors, and each folder README's agents' pointer |
 | `scripts/renovate-post-upgrade.sh` | recomputes the hashes, tag commit and lock that go with a version Renovate moved |
-| `tests/` | offline tests (`tests/run.sh`; docker, curl, dig, gh and secret-tool are stubbed), the sidecars' tests (`tests/run-sidecar.sh vault`, `tests/run-sidecar.sh gmail-triggers`, `tests/run-sidecar.sh news-radar`, `tests/run-sidecar.sh code-server`, `tests/run-sidecar.sh landing`, `tests/run-sidecar.sh doc-tools`, `tests/run-sidecar.sh browser`, `tests/run-sidecar.sh notifications`) and pipelock's (`tests/run-pipelock.sh`) |
+| `tests/` | offline tests (`tests/run.sh`; docker, curl, dig, gh and secret-tool are stubbed), the sidecars' tests (`tests/run-sidecar.sh vault`, `tests/run-sidecar.sh gmail-triggers`, `tests/run-sidecar.sh news-radar`, `tests/run-sidecar.sh code-server`, `tests/run-sidecar.sh outlook`, `tests/run-sidecar.sh landing`, `tests/run-sidecar.sh doc-tools`, `tests/run-sidecar.sh browser`, `tests/run-sidecar.sh notifications`) and pipelock's (`tests/run-pipelock.sh`) |
 
 Instance data lives in a data directory apart from the code: `~/lollo-rozzo` for a release install (or wherever its admin put it), the clone's untracked `data/` for a clone (`LOLLO_DATA` names another). [docs/operations.md](docs/operations.md#files-on-the-host) lists what is in it.
 
-What each part does, and why it is built the way it is, is in its folder's README; how to use and run it, and its security model, in its guide under `docs/`. The design records of the larger features are next to their code: [code-server/DESIGN.md](code-server/DESIGN.md), [gmail-triggers/DESIGN.md](gmail-triggers/DESIGN.md), [landing/DESIGN.md](landing/DESIGN.md) (the lollo host) and [news-radar/DESIGN.md](news-radar/DESIGN.md).
+What each part does, and why it is built the way it is, is in its folder's README; how to use and run it, and its security model, in its guide under `docs/`. The design records of the larger features are next to their code: [code-server/DESIGN.md](code-server/DESIGN.md), [gmail-triggers/DESIGN.md](gmail-triggers/DESIGN.md), [landing/DESIGN.md](landing/DESIGN.md) (the lollo host), [news-radar/DESIGN.md](news-radar/DESIGN.md) and [outlook/DESIGN.md](outlook/DESIGN.md).

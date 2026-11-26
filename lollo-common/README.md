@@ -1,6 +1,6 @@
 # lollo-common
 
-The Python package `lollo_common`, shared by the seven lollo images: `landing` (the landing page), `vault`, `gmail-triggers`, `news-radar`, `code-server` (the code editor's gate), `browser` (the browser's service) and `notifications`. It holds the checks every lollo request goes through (the Access JWT, Fetch Metadata, Origin and CSRF, COOP), the guard of the executor API at `/executor/v1/` and of any other internal API, the request queue's routes, the senders' client of the notifications service and the payload checks it shares with that service, the agent-list rules, text clean-up, the icon encoder and the lollo stylesheet. It is a library, not a service: it has no compose profile, overlay or route of its own. The security model it implements is described in [docs/vault.md](../docs/vault.md), [docs/gmail-triggers.md](../docs/gmail-triggers.md) and [docs/code-server.md](../docs/code-server.md).
+The Python package `lollo_common`, shared by the eight lollo images: `landing` (the landing page), `vault`, `gmail-triggers`, `news-radar`, `code-server` (the code editor's gate), `outlook`, `browser` (the browser's service) and `notifications`. It holds the checks every lollo request goes through (the Access JWT, Fetch Metadata, Origin and CSRF, COOP), the guard of the executor API at `/executor/v1/` and of any other internal API, the request queue's routes, the senders' client of the notifications service and the payload checks it shares with that service, the agent-list rules, text clean-up, the icon encoder and the lollo stylesheet. It is a library, not a service: it has no compose profile, overlay or route of its own. The security model it implements is described in [docs/vault.md](../docs/vault.md), [docs/gmail-triggers.md](../docs/gmail-triggers.md) and [docs/code-server.md](../docs/code-server.md).
 
 ![How a lollo request is checked](../docs/diagrams/lollo-request-checks.svg)
 
@@ -18,11 +18,11 @@ An interactive version, [lollo-request-checks.html](../docs/diagrams/lollo-reque
 | `src/lollo_common/icons.py` | `png`: a small PNG encoder; each sidecar draws its own icon with it |
 | `src/lollo_common/lollo.py`, `static/lollo.css` | `stylesheet()`: the lollo's look, which every lollo page links to |
 
-Who uses what: the vault uses `admit` with `PAGE` and `FORM`; gmail-triggers and news-radar with `PAGE` and `FORM` plus `request_routes`; the landing page with `PAGE` plus `guard`; the notifications service with `PAGE` and `FETCH` plus `guard_sources` and `check_payload`, and the vault and the browser, its senders, with `Notifier`; the code editor's gate uses `Authenticator` and `COOP` with Sec-Fetch rules of its own.
+Who uses what: the vault uses `admit` with `PAGE` and `FORM`, and Outlook with `PAGE`, `FORM` and `FETCH`; gmail-triggers and news-radar with `PAGE` and `FORM` plus `request_routes`; the landing page with `PAGE` plus `guard`; the notifications service with `PAGE` and `FETCH` plus `guard_sources` and `check_payload`, and the vault and the browser, its senders, with `Notifier`; the code editor's gate uses `Authenticator` and `COOP` with Sec-Fetch rules of its own.
 
 ## How it plugs in
-- **Installed from a build context, not PyPI.** Each overlay (`compose/landing.yml`, `vault.yml`, `gmail-triggers.yml`, `news-radar.yml`, `code-server.yml`, `browser.yml`, `notifications.yml`) passes this directory as the build context named `lollo-common` (`additional_contexts`), and each Dockerfile copies it and runs `pip install` on it before its own package. `tests/run-sidecar.sh` and `scripts/code-server-e2e.sh` pass it with `--build-context`. It is never a pip dependency by name.
-- **The whole directory is copied into seven images.** Any file here changes that layer and rebuilds all seven, so `README.md`, `AGENTS.md` and `CLAUDE.md` are in `.dockerignore`: editing these docs rebuilds nothing.
+- **Installed from a build context, not PyPI.** Each overlay (`compose/landing.yml`, `vault.yml`, `gmail-triggers.yml`, `news-radar.yml`, `code-server.yml`, `outlook.yml`, `browser.yml`, `notifications.yml`) passes this directory as the build context named `lollo-common` (`additional_contexts`), and each Dockerfile copies it and runs `pip install` on it before its own package. `tests/run-sidecar.sh` and `scripts/code-server-e2e.sh` pass it with `--build-context`. It is never a pip dependency by name.
+- **The whole directory is copied into eight images.** Any file here changes that layer and rebuilds all eight, so `README.md`, `AGENTS.md` and `CLAUDE.md` are in `.dockerignore`: editing these docs rebuilds nothing.
 - **Settings it expects:** an object with `team_domain`, `audience`, `issuer`, `allowed_users` and `public_origin` (`AccessSettings`). The overlays fill them from `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` (set from `CF_LOLLO_AUD`), `CF_ACCESS_ISSUER`, `ALLOWED_USERS` and `PUBLIC_ORIGIN` (set from `LOLLO_ORIGIN`); `check_lollo_audience` refuses a lollo service with Lettuce's audience or another origin. The executor guard takes `LOLLO_EXECUTOR_TOKEN`, which `check_stack` requires to be 64 lowercase hex characters. `Notifier.from_env` takes the sender's `NOTIFY_TOKEN` (64 lowercase hex characters, or it refuses to start) and, optionally, `NOTIFY_URL` (the service's send URL, `DEFAULT_URL` otherwise). Every `check_stack` rule: [CONTRIBUTING.md](../CONTRIBUTING.md#what-check_stack-enforces).
 
 ## Rules
@@ -44,13 +44,14 @@ The lollo host keeps the lollo pages off Lettuce's origin; these checks guard th
 The notifications service puts `/notify/v1/send` behind `guard_sources`, with the same refusals as the executor API and a token per sender: the vault's and the browser's, each held only by that sender (as `NOTIFY_TOKEN`) and the service, never by the app-server, so agents cannot read them as they read the executor's. The handler learns the sender from its token, never from the payload. `check_payload` then holds the sender to its own: a link under `/<source>/` (no scheme, host, backslash, dot segment, encoded or not, or control character) and a tag starting with `<source>-`, and nothing but a title, a body, a link and a tag, so a notification has no action to carry. The service runs the same check on what it receives, and `Notifier` before it sends, so a sender's own tests fail first. `Notifier` logs the source, the tag and the outcome, never a title or a body, which may name a secret's labels; it never follows a redirect or goes through a proxy, which would carry the token elsewhere.
 
 ## Build and test
-The package has no tests or image of its own: the sidecars' tests cover it. Before changing it, run all seven:
+The package has no tests or image of its own: the sidecars' tests cover it. Before changing it, run all eight:
 ```bash
 tests/run-sidecar.sh landing
 tests/run-sidecar.sh vault
 tests/run-sidecar.sh gmail-triggers
 tests/run-sidecar.sh news-radar
 tests/run-sidecar.sh code-server
+tests/run-sidecar.sh outlook
 tests/run-sidecar.sh browser
 tests/run-sidecar.sh notifications
 ```

@@ -38,7 +38,8 @@ Operation (<target> is a stack name or "all")
   check <target>                refuse unsafe or inconsistent configuration
   skills <target>               install agent-skills/ into running stacks (every agent of the stack)
   mcp <target> [--force]        add the document tools (office, pdf; lollo-doc-tools profile), the vault
-                                (lollo-vault), News Radar (lollo-news-radar) and the browser (lollo-browser)
+                                (lollo-vault), News Radar (lollo-news-radar), Outlook (lollo-outlook) and the
+                                browser (lollo-browser)
                                 to Settings -> MCP, once per stack
                                 (--force: again, also where the person removed them)
   backup <target> <dir> [opts]  copy agents, memory, workspaces, tools, vault, News Radar, notification
@@ -413,6 +414,7 @@ up_stack() {
   local routed=1
   sync_push_contact "$1"
   ensure_executor_token "$1"
+  ensure_outlook_secret "$1"
   # No keypair yet: a stack from before the notifications service, whose tunnel
   # has no /notifications/ route. `up` makes no Cloudflare call; `profiles`
   # applies the routes (`add` and `profiles` make the keypair first themselves).
@@ -683,13 +685,15 @@ sync_doc_tools() {
 # out again, since a server that cannot start or answer makes every
 # `letta mcp tools` call fail, the other servers' included.
 MCP_SETTINGS=/root/.letta/mcp-home/.letta/settings.json
-MCP_GROUPS=(doc-tools vault news-radar browser)
-declare -A MCP_PROFILE=([doc-tools]=lollo-doc-tools [vault]=lollo-vault [news-radar]=lollo-news-radar [browser]=lollo-browser)
+MCP_GROUPS=(doc-tools vault news-radar outlook browser)
+declare -A MCP_PROFILE=([doc-tools]=lollo-doc-tools [vault]=lollo-vault [news-radar]=lollo-news-radar [outlook]=lollo-outlook
+  [browser]=lollo-browser)
 declare -A MCP_MARKER=([doc-tools]=DOC_TOOLS_MCP_REGISTERED [vault]=VAULT_MCP_REGISTERED [news-radar]=NEWS_RADAR_MCP_REGISTERED
-  [browser]=BROWSER_MCP_REGISTERED)
-declare -A MCP_LABEL=([doc-tools]="the document tools" [vault]="the vault" [news-radar]="News Radar" [browser]="the browser")
+  [outlook]=OUTLOOK_MCP_REGISTERED [browser]=BROWSER_MCP_REGISTERED)
+declare -A MCP_LABEL=([doc-tools]="the document tools" [vault]="the vault" [news-radar]="News Radar" [outlook]="Outlook"
+  [browser]="the browser")
 # What a same-named server of the person's differs in.
-declare -A MCP_KIND=([doc-tools]=command [vault]=URL [news-radar]=URL [browser]=URL)
+declare -A MCP_KIND=([doc-tools]=command [vault]=URL [news-radar]=URL [outlook]=URL [browser]=URL)
 # Set by register_mcp_group and drop_mcp_group when they changed the list.
 MCP_CHANGED=0
 
@@ -714,6 +718,7 @@ mcp_reminder() {
         doc-tools) info "Documents: office and pdf are in $url Settings -> MCP (docs/doc-tools.md)" ;;
         vault) info "Vault: vault is in $url Settings -> MCP (docs/vault.md)" ;;
         news-radar) info "News Radar: news-radar is in $url Settings -> MCP (docs/news-radar.md)" ;;
+        outlook) info "Outlook: outlook is in $url Settings -> MCP (docs/outlook.md)" ;;
         browser) info "Browser: browser is in $url Settings -> MCP (docs/browser.md)" ;;
       esac
       continue
@@ -731,6 +736,10 @@ mcp_reminder() {
       news-radar)
         info "News Radar: in $url Settings -> MCP, add an HTTP server:"
         info "  news-radar -> http://lollo-news-radar:8000/mcp (docs/news-radar.md)"
+        ;;
+      outlook)
+        info "Outlook: in $url Settings -> MCP, add an HTTP server:"
+        info "  outlook -> http://lollo-outlook:8000/mcp (docs/outlook.md)"
         ;;
       browser)
         info "Browser: in $url Settings -> MCP, add an HTTP server:"
@@ -1274,6 +1283,7 @@ cmd_profiles() {
   # made before them.
   for n in "${stacks[@]}"; do
     ensure_executor_token "$n"
+    ensure_outlook_secret "$n"
     ensure_notify_secrets "$n"
     ensure_browser_secrets "$n"
   done
@@ -2427,7 +2437,7 @@ cmd_mcp() {
   require_initialised
   mapfile -t groups < <(mcp_groups "$(cfg PROFILES)")
   ((${#groups[@]})) ||
-    die "the lollo-doc-tools, lollo-vault, lollo-news-radar and lollo-browser profiles are all off; turn one on first, e.g.: lolloctl profiles $(cfg PROFILES),lollo-doc-tools"
+    die "the lollo-doc-tools, lollo-vault, lollo-news-radar, lollo-outlook and lollo-browser profiles are all off; turn one on first, e.g.: lolloctl profiles $(cfg PROFILES),lollo-doc-tools"
   targets=$(expand_targets "$1")
   for n in $targets; do
     register_mcp "$n" "${2:-}" "${groups[@]}" || failed+=("$n")

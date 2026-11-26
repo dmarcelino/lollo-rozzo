@@ -20,7 +20,7 @@ Within one stack there is no such separation: agents run as root in the same con
 | Address | What is there | Who may sign in |
 |---|---|---|
 | `https://<name>.<your-domain>` | Lettuce: the web app (a PWA) and the agents | the stack's people, through Lettuce's Access application |
-| `https://<name>-lollo.<your-domain>` | the lollo pages that are on: a landing page at `/`, the vault at `/vault/`, Gmail triggers at `/gmail-triggers/`, News Radar at `/news-radar/`, the code editor at `/code-server/`, the browser at `/browser/`, and, with the vault or the browser, the Notifications page at `/notifications/` | the same people, through the lollo's own Access application |
+| `https://<name>-lollo.<your-domain>` | the lollo pages that are on: a landing page at `/`, the vault at `/vault/`, Gmail triggers at `/gmail-triggers/`, News Radar at `/news-radar/`, the code editor at `/code-server/`, Outlook at `/outlook/`, the browser at `/browser/`, and, with the vault or the browser, the Notifications page at `/notifications/` | the same people, through the lollo's own Access application |
 
 Both Access applications share the stack's one Access policy, so `lolloctl users` changes who may sign in to both. The lollo pages accept only the lollo's sign-in, never Lettuce's, which agents could catch inside their own container. Anything else on the lollo address gets a 404. When that name is already taken in the zone, `add` picks a numbered one (`-lollo-2` to `-lollo-9`); `lolloctl list` shows each stack's addresses.
 
@@ -39,17 +39,18 @@ An interactive version, [lollo-rozzo-overview.html](diagrams/lollo-rozzo-overvie
 | `channel-gateway` | the Telegram channel | `telegram` |
 | `searxng`, `ddg-mcp` | web search and the page reader for the agents | `search` |
 | `google-mcp` | Gmail, Calendar, Tasks and Contacts for the agents | `google` |
-| `landing` | the lollo's landing page | any of `lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server`, `lollo-browser` |
+| `landing` | the lollo's landing page | any of `lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server`, `lollo-outlook`, `lollo-browser` |
 | `lollo-vault` | the vault | `lollo-vault` |
 | `lollo-gmail-triggers` | Gmail triggers | `lollo-gmail-triggers` |
 | `lollo-news-radar` | News Radar | `lollo-news-radar` |
+| `lollo-outlook` | one Outlook mailbox for the agents, under the person's policy | `lollo-outlook` |
 | `lollo-pipelock` | the egress proxy | `lollo-pipelock` |
 | `lollo-code-server`, `lollo-code-server-editor`, `lollo-code-server-exec` | the code editor's gate, the editor, and the shell its terminals run in | `lollo-code-server` |
 | `lollo-browser`, `lollo-browser-engine` | the agents' browser: the tools agents use and your page at `/browser/`, and the engine, where Chromium loads pages on a network whose only way out is pipelock | `lollo-browser` (needs `lollo-pipelock`) |
 | `lollo-notifications` | the lollo's notifications: it sends the vault's and the browser's to every device enrolled on its page at `/notifications/`, and is the only service with the lollo's push key ([notifications.md](notifications.md)) | `lollo-vault` or `lollo-browser` (none of its own) |
 | `gotenberg` | document conversions, **one per host** for every stack (Compose project `lollo_shared`) | `lollo-doc-tools` |
 
-Every service runs with `no-new-privileges` and a memory cap. The memory caps are 8 GiB for each app-server and for the code editor's shell, 2 GiB for the editor, for Gotenberg and for the browser's engine, 1 GiB for upstream's other services, 512 MiB for the vault, pipelock and `lollo-browser`, 384 MiB for News Radar, 256 MiB for cloudflared, Gmail triggers and the code editor's gate, and 128 MiB for the landing page and the notifications service. These are caps, not reservations; measure idle use with `docker stats`. The lollo's services, pipelock, the browser's engine, and the code editor's gate and editor also run read-only with every capability dropped; the engine keeps Chromium's own sandbox on, which needs a seccomp profile of ours and, on the host, unprivileged user namespaces. The code editor's shell is the exception: it is as strong as an agent, so it keeps Docker's default capabilities except `NET_RAW`, and a writable root. Profiles are global: all stacks share one app-server image, whose contents depend on `PROFILES`, so `lolloctl profiles` changes the list for every stack at once.
+Every service runs with `no-new-privileges` and a memory cap. The memory caps are 8 GiB for each app-server and for the code editor's shell, 2 GiB for the editor, for Gotenberg and for the browser's engine, 1 GiB for upstream's other services, 512 MiB for the vault, pipelock and `lollo-browser`, 384 MiB for News Radar, 256 MiB for cloudflared, Gmail triggers, Outlook and the code editor's gate, and 128 MiB for the landing page and the notifications service. These are caps, not reservations; measure idle use with `docker stats`. The lollo's services, pipelock, the browser's engine, and the code editor's gate and editor also run read-only with every capability dropped; the engine keeps Chromium's own sandbox on, which needs a seccomp profile of ours and, on the host, unprivileged user namespaces. The code editor's shell is the exception: it is as strong as an agent, so it keeps Docker's default capabilities except `NET_RAW`, and a writable root. Profiles are global: all stacks share one app-server image, whose contents depend on `PROFILES`, so `lolloctl profiles` changes the list for every stack at once.
 
 ## Where the data lives
 Paths are in the data directory: `~/lollo-rozzo` for a release install, `data/` in a clone ([operations.md](operations.md#files-on-the-host)).
@@ -67,6 +68,7 @@ Paths are in the data directory: `~/lollo-rozzo` for a release install, `data/` 
 | the vault, encrypted | Docker volume `lollo-<name>_vault-data` | yes, whenever it exists | `remove` |
 | pipelock's receipts and signing key | Docker volume `lollo-<name>_pipelock-data` | yes, whenever it exists | `remove` |
 | monitors, their sources and what they found | Docker volume `lollo-<name>_news-radar-data` | yes, whenever it exists | `remove` |
+| the Outlook connection (the Microsoft tokens, sealed) and its policy | Docker volume `lollo-<name>_outlook-data` | no; the person reconnects | `remove` |
 | the browser's kept sign-ins, per-site settings and audit log (hand-offs live in memory and end with their task) | Docker volume `lollo-<name>_browser-data` | no, on purpose: it holds live sign-ins; after a restore, people sign in to those sites and set the browser up again | `remove` |
 | the devices enrolled for the lollo's notifications (the vault's and the browser's) | Docker volume `lollo-<name>_notifications-data` | yes, whenever it exists, so they keep getting notifications after a restore | `remove` |
 | Lettuce's Google client and tokens | Docker volumes `lollo-<name>_google-policy`, `lollo-<name>_google-creds` | only with `--with-google` | `remove` |
@@ -82,7 +84,7 @@ Paths are in the data directory: `~/lollo-rozzo` for a release install, `data/` 
 - **Agent web apps.** Upstream's agent-served apps on ports 3000-3099 are not exposed: they are unauthenticated, and one host cannot publish the same range twice.
 - **Data on disk.** A stack's data is only as private as the host. Whoever has root on it can read every stack.
 
-Each feature's own guarantees and limits are in its guide: [vault](vault.md#security-model), [Gmail triggers](gmail-triggers.md#security-model), [News Radar](news-radar.md#security-model), [code editor](code-server.md#security-model), [browser](browser.md#security-model), [document tools](doc-tools.md#security-model), [egress proxy](egress-firewall.md#what-it-does-not-do). [operations.md](operations.md#security-notes) has the operator's security notes.
+Each feature's own guarantees and limits are in its guide: [vault](vault.md#security-model), [Gmail triggers](gmail-triggers.md#security-model), [News Radar](news-radar.md#security-model), [code editor](code-server.md#security-model), [Outlook](outlook.md#security-model), [browser](browser.md#security-model), [document tools](doc-tools.md#security-model), [egress proxy](egress-firewall.md#what-it-does-not-do). [operations.md](operations.md#security-notes) has the operator's security notes.
 
 ## Glossary
 | Term | Meaning |
@@ -93,7 +95,7 @@ Each feature's own guarantees and limits are in its guide: [vault](vault.md#secu
 | app-server | The container that runs letta-code: the agents, their shell, memory and workspaces. Agents are root in it. |
 | BFF | "Backend for frontend": Lettuce's own server, which serves the web app, checks the sign-in and holds the only connection to the agents. |
 | profile | An optional feature, named in `PROFILES` (for example `search`, `google`, `lollo-vault`). It is on for every stack or for none. |
-| lollo, lollo pages | lollo-rozzo's own extras with a page of their own (the vault, Gmail triggers, News Radar, the code editor), on each stack's second address, `<name>-lollo.<domain>`. |
+| lollo, lollo pages | lollo-rozzo's own extras with a page of their own (the vault, Gmail triggers, News Radar, the code editor, Outlook), on each stack's second address, `<name>-lollo.<domain>`. |
 | sidecar | A small extra container next to the app-server, such as the vault or `google-mcp`, which agents use but which is not part of their container. |
 | MCP | Model Context Protocol: how agents call tools that run outside their own code, such as the vault or the document tools. Listed in Lettuce under **Settings -> MCP**. |
 | Cloudflare Tunnel | An outbound connection from the stack's `cloudflared` to Cloudflare, which carries the stack's traffic, so the host opens no port. |
