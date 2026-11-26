@@ -73,6 +73,7 @@ Developing Lollo Rozzo runs `./lolloctl` from a clone instead, which builds ever
 - [One-time Cloudflare and Google setup](docs/cloudflare-setup.md): the domain, Zero Trust, Google sign-in and the API token.
 - [Operations](docs/operations.md): everyday commands, people, profiles, upgrades, backups, troubleshooting and security notes.
 - [How it works](docs/architecture.md): the design, the two addresses per stack, what runs, where the data lives, limits.
+- [After a suspected prompt injection](docs/incident-response.md): inspect a stack with `lolloctl audit`, contain it, clean it, and which secrets to rotate.
 - [Google for agents](docs/google-setup.md): Gmail, Calendar, Tasks and Contacts for the agents (`google` profile).
 - The guide of each extra, with how to run it and its security model: [vault](docs/vault.md), [Gmail triggers](docs/gmail-triggers.md), [News Radar](docs/news-radar.md), [code editor](docs/code-server.md), [browser](docs/browser.md), [egress proxy](docs/egress-firewall.md), [document tools](docs/doc-tools.md).
 

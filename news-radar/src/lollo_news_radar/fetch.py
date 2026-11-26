@@ -52,6 +52,7 @@ from .config import (
     USER_AGENT,
     USER_AGENT_NAME,
 )
+from .sites import site_of
 
 Resolver = Callable[[str, int], Awaitable[list[str]]]
 
@@ -75,12 +76,15 @@ class FetchError(Exception):
     """A fetch that yields nothing; the message says why, in a few words.
     retry_after: the seconds the site asked to be left alone, when it asked.
     page: what the site answered with an error status, its body cut to
-    ERROR_BODY: website text for an agent repairing the source, never for logs."""
+    ERROR_BODY: website text for an agent repairing the source, never for logs.
+    code: why, as one of the fixed reason codes (store.REASONS), the only part
+    of a failure that reaches a report."""
 
-    def __init__(self, message: str, retry_after: int = 0, page: Page | None = None):
+    def __init__(self, message: str, retry_after: int = 0, page: Page | None = None, code: str = "other"):
         super().__init__(message)
         self.retry_after = retry_after
         self.page = page
+        self.code = code
 
 
 class RobotsRefusal(FetchError):
@@ -89,13 +93,16 @@ class RobotsRefusal(FetchError):
     feed=True); a host that could not be reached at all is a plain FetchError."""
 
     def __init__(self, message: str, unreadable: bool = False, page: Page | None = None):
-        super().__init__(message, page=page)
+        super().__init__(message, page=page, code="robots")
         self.unreadable = unreadable
 
 
 class HostBusy(FetchError):
     """The host asked for a longer pause than this call may wait: try again later.
     Never cached as the host's robots.txt answer."""
+
+    def __init__(self, message: str, retry_after: int = 0):
+        super().__init__(message, retry_after=retry_after, code="http_status")
 
 
 class BlockedAddress(Exception):
@@ -270,7 +277,7 @@ def check_url(url: str) -> str:
         pass
     else:
         if not is_public(host):
-            raise FetchError("not a public address")
+            raise FetchError("not a public address", code="refused_address")
     return url
 
 
@@ -376,6 +383,7 @@ class Fetcher:
         max_bytes: int = MAX_RESPONSE,
         max_wait: float | None = None,
         feed: bool = False,
+        site_ok: Callable[[str], bool] | None = None,
     ) -> Page:
         """GET `url`, following redirects by hand; FetchError for anything but a
         2xx or 304 page. feed: a feed's own URL, read even where robots.txt
@@ -385,21 +393,32 @@ class Fetcher:
         fails without a request until robots.txt is read again (a 429 or 5xx is
         asked again). A host whose robots.txt could not be asked for at all is
         not asked for the feed either, and a pause robots.txt's 429 or 503 asks
-        for holds the feed too."""
+        for holds the feed too. site_ok: every URL asked for, the first and each
+        redirect's, must pass it, or the fetch fails (unconfirmed_site) before
+        any request to that URL's site, its robots.txt included."""
         check_url(url)
         refused: FetchError | None = None
         exempt = ""
         refused_hops: list[str] = []
         for _ in range(MAX_REDIRECTS + 1):
+            if site_ok is not None and not site_ok(url):
+                # A run reads only the sites the person confirmed (and the source's own
+                # site while no active monitor reads it): a redirect elsewhere ends here,
+                # before any request to that site.
+                raise FetchError(
+                    f"leads to {site_of(url) or 'a URL'}, a site the person has not confirmed", code="unconfirmed_site"
+                )
             if any(h in (urlsplit(url).hostname or "") for h in WAITING_ROOM_HOSTS):
-                raise FetchError("sent to a waiting room")
+                raise FetchError("sent to a waiting room", code="challenge")
             wait_limit = self._max_wait if max_wait is None else min(max_wait, self._max_wait)
             refusal = await self._refusal(url, wait_limit)
             if refusal is not None:
                 if not feed or not isinstance(refusal, RobotsRefusal):
                     raise refusal
                 exempt = exempt or ("unreadable" if refusal.unreadable else "disallowed")
-                refused = refused or FetchError(f"not a feed, and robots.txt refuses anything else here: {refusal}")
+                refused = refused or FetchError(
+                    f"not a feed, and robots.txt refuses anything else here: {refusal}", code="not_feed"
+                )
                 if self._not_feeds.get(url) == self._robots_read(url):
                     raise refused
                 refused_hops.append(url)
@@ -412,7 +431,7 @@ class Fetcher:
             if status in (301, 302, 303, 307, 308):
                 location = response_headers.get("location", "")
                 if not location:
-                    raise FetchError(f"HTTP {status} without a location")
+                    raise FetchError(f"HTTP {status} without a location", code="http_status")
                 url = check_url(urljoin(url, location))
                 etag = last_modified = ""
                 continue
@@ -427,14 +446,14 @@ class Fetcher:
                 # A passing failure (a 429, a 5xx) is asked again; any other answer is not.
                 if status < 500 and status != 429:
                     self._remember_not_feeds(refused_hops)
-                raise FetchError(str(refused), retry_after=pause)
+                raise FetchError(str(refused), retry_after=pause, code="not_feed")
             if status in (401, 402, 403, 407, 429, 503) and looks_challenged(body):
-                raise FetchError(f"HTTP {status}: a challenge or waiting room", retry_after=pause)
+                raise FetchError(f"HTTP {status}: a challenge or waiting room", retry_after=pause, code="challenge")
             if not 200 <= status < 300:
                 answer = Page(url, status, content_type, body[:ERROR_BODY], charset=charset_of(header))
-                raise FetchError(f"HTTP {status}", retry_after=pause, page=answer)
+                raise FetchError(f"HTTP {status}", retry_after=pause, page=answer, code="http_status")
             if content_type in ("text/html", "application/xhtml+xml") and looks_challenged(body):
-                raise FetchError("a challenge or waiting room instead of the page")
+                raise FetchError("a challenge or waiting room instead of the page", code="challenge")
             return Page(
                 url,
                 status,
@@ -445,7 +464,7 @@ class Fetcher:
                 charset_of(header),
                 robots_exempt=exempt,
             )
-        raise FetchError(f"more than {MAX_REDIRECTS} redirects")
+        raise FetchError(f"more than {MAX_REDIRECTS} redirects", code="http_status")
 
     async def _request(
         self, url: str, headers: dict[str, str], max_bytes: int, max_wait: float
@@ -466,19 +485,19 @@ class Fetcher:
                 async with self._client.stream("GET", url, headers=headers) as response:
                     declared = response.headers.get("content-length", "")
                     if declared.isdigit() and int(declared) > max_bytes:
-                        raise FetchError(f"response over {max_bytes} bytes")
+                        raise FetchError(f"response over {max_bytes} bytes", code="too_large")
                     body = bytearray()
                     async for chunk in response.aiter_bytes():
                         body += chunk
                         if len(body) > max_bytes:
-                            raise FetchError(f"response over {max_bytes} bytes")
+                            raise FetchError(f"response over {max_bytes} bytes", code="too_large")
                     return response.status_code, response.headers, bytes(body)
             except BlockedAddress as e:
-                raise FetchError("not a public address") from e
+                raise FetchError("not a public address", code="refused_address") from e
             except UnknownHost as e:
                 raise FetchError(f"no such host: {e} (the name does not resolve; check the address)") from e
             except httpx.TimeoutException as e:
-                raise FetchError("timed out") from e
+                raise FetchError("timed out", code="timeout") from e
             except httpx.HTTPError as e:
                 raise FetchError(f"cannot connect ({type(e).__name__})") from e
             finally:

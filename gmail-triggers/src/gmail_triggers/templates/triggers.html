@@ -36,7 +36,7 @@
               title="{{ 'On: click to turn off' if rule.enabled else 'Off: click to turn on' }}">{{ box(rule.enabled) }}</button>
     </form>
     <a class="rule-main" href="{{ base }}/r/{{ rule.id }}">
-      <span class="rule-name">{{ rule.name }}{% if not rule.enabled %} <span class="pill">Off</span>{% endif %}</span>
+      <span class="rule-name">{{ rule.name }}{% if not rule.enabled %} <span class="pill">Off</span>{% endif %}{% if rule.anyone %} <span class="pill warn" title="Any sender whose mail reaches its labels can start a task">Anyone</span>{% endif %}</span>
       <span class="rule-desc">
         {{ rule.label_display() | join(", ") }}{% if rule.senders %}, from {{ rule.senders | length }} sender{{ "s" if rule.senders | length != 1 }}{% endif %}
         &middot; asks {{ rule.agent_name or rule.agent_id }}{% set chosen, conversation_id = chosen_conversation(rule) %}{% if conversation_id %} in conversation {{ conversation_id | truncate(16, true, "...", 0) }}{% endif %}
@@ -44,6 +44,7 @@
       <span class="rule-last">
         {% if last %}{{ run_status(last, rule) }} <span class="muted">{{ last.at | time }}</span>{% else %}<span class="muted">Not run yet</span>{% endif %}
         {% if pending.get(rule.id) %}<span class="pill warn">{{ pending[rule.id] }} waiting</span>{% endif %}
+        {% if rule.set_aside %}<span class="pill warn">{{ rule.set_aside }} set aside</span>{% endif %}
       </span>
     </a>
     <a class="rule-history" href="{{ base }}/r/{{ rule.id }}/history">History</a>

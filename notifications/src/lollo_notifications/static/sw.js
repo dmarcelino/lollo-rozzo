@@ -10,7 +10,7 @@
 "use strict";
 
 // The pages a tap may open; anything else opens the landing page.
-const PREFIXES = ["/vault/", "/browser/", "/notifications/"];
+const PREFIXES = ["/vault/", "/browser/", "/gmail-triggers/", "/news-radar/", "/notifications/"];
 
 // The URL a tap on a notification linking to `link` opens, on `origin`.
 function tapTarget(link, origin) {

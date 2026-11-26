@@ -362,3 +362,14 @@ def test_a_refused_form_view_does_not_ask_for_agents(api, env):
     put_agents(api)
     assert api.get(f"{PREFIX}/new").status_code == 403
     assert wanted(api) is False
+
+
+# -- body cap ---------------------------------------------------------------------
+
+
+def test_a_large_body_is_refused_before_it_is_read(api, env):
+    big = b"{" + b" " * (2 * 1024 * 1024) + b"}"
+    r = api.post(f"{API}/results", content=big, headers={**AUTH, "content-type": "application/json"})
+    assert r.status_code == 413
+    send_test(env.store, rule(env), env.store.now())
+    assert len(claim(api)) == 1

@@ -312,12 +312,26 @@ def settings(tmp_path) -> Settings:
     )
 
 
+class FakeNotifier:
+    """Stands in for lollo_common.notify.Notifier: keeps every payload, and
+    answers `accepted` (False: the notifications service refused or was down)."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, str]] = []
+        self.accepted = True
+
+    async def send(self, payload: object) -> bool:
+        assert isinstance(payload, dict)
+        self.sent.append(payload)
+        return self.accepted
+
+
 def make_env(settings: Settings, clock: Clock, fake: FakeGoogle | None = None) -> Env:
     fake = fake or FakeGoogle()
     client = httpx.AsyncClient(transport=httpx.MockTransport(fake.handler))
     store = Store(settings.db_path, clock=clock)
     google = Google(settings.policy_dir, settings.creds_dir, client, clock=clock)
-    poller = Poller(store, google, settings.poll_seconds)
+    poller = Poller(store, google, settings.poll_seconds, FakeNotifier())
     return Env(settings, store, google, poller, fake, clock, client)
 
 
@@ -353,7 +367,7 @@ def make_jwt(key: Any, **over: Any) -> str:
     }
     claims.update(over)
     claims = {k: v for k, v in claims.items() if v is not None}
-    return jwt.encode(claims, key, algorithm="RS256")
+    return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "test-key"})
 
 
 def raw_get(app: Any, raw_path: str, headers: dict[str, str]) -> int:

@@ -20,7 +20,7 @@ Within one stack there is no such separation: agents run as root in the same con
 | Address | What is there | Who may sign in |
 |---|---|---|
 | `https://<name>.<your-domain>` | Lettuce: the web app (a PWA) and the agents | the stack's people, through Lettuce's Access application |
-| `https://<name>-lollo.<your-domain>` | the lollo pages that are on: a landing page at `/`, the vault at `/vault/`, Gmail triggers at `/gmail-triggers/`, News Radar at `/news-radar/`, the code editor at `/code-server/`, the browser at `/browser/`, and, with the vault or the browser, the Notifications page at `/notifications/` | the same people, through the lollo's own Access application |
+| `https://<name>-lollo.<your-domain>` | the lollo pages that are on: a landing page at `/`, the vault at `/vault/`, Gmail triggers at `/gmail-triggers/`, News Radar at `/news-radar/`, the code editor at `/code-server/`, the browser at `/browser/`, and, with the vault, the browser, Gmail triggers or News Radar, the Notifications page at `/notifications/` | the same people, through the lollo's own Access application |
 
 Both Access applications share the stack's one Access policy, so `lolloctl users` changes who may sign in to both. The lollo pages accept only the lollo's sign-in, never Lettuce's, which agents could catch inside their own container. Anything else on the lollo address gets a 404. When that name is already taken in the zone, `add` picks a numbered one (`-lollo-2` to `-lollo-9`); `lolloctl list` shows each stack's addresses.
 

@@ -9,6 +9,49 @@ die() {
   exit 1
 }
 
+# ── text from containers ─────────────────────────────────────────────────────
+# Agents write what lolloctl reads from a stack's containers (agent names, MCP
+# server names, error output), so it could hold escape sequences that rewrite
+# the operator's terminal or reorder a line. Before such a value goes into a
+# message, every C0 control, DEL and C1 control becomes a visible \xNN, and every
+# bidirectional override or isolate (U+202A-U+202E, U+2066-U+2069) a visible
+# \u{NNNN}. jq works on code points, so other non-ASCII text stays as it is (a
+# byte-wise tr would cut UTF-8 apart: C1's bytes are continuation bytes).
+# Interactive sessions (shell, toolbox, compose exec) and logs are not filtered.
+# shellcheck disable=SC2016 # jq's own $variables
+PRINTABLE_JQ='def hex($w): [recurse(if . >= 16 then (. / 16 | floor) else empty end) | . % 16]
+  | reverse | map("0123456789abcdef"[.:. + 1]) | join("")
+  | if length < $w then ("0" * ($w - length)) + . else . end;
+def inert($lines): [explode[] as $c
+  | if $lines and ($c == 10 or $c == 9) then [$c] | implode
+    elif $c < 32 or $c == 127 or ($c >= 128 and $c <= 159) then "\\x" + ($c | hex(2))
+    elif ($c >= 8234 and $c <= 8238) or ($c >= 8294 and $c <= 8297) then "\\u{" + ($c | hex(4)) + "}"
+    else [$c] | implode end] | join("");'
+
+# printable VALUE -> VALUE with control and bidirectional characters escaped,
+# newlines and tabs included, so it stays on one line
+printable() {
+  jq -rjn --arg s "$1" "$PRINTABLE_JQ"' $s | inert(false)'
+}
+
+# printable_text -> stdin with the same escapes, but keeping newlines and tabs:
+# for error output of several lines
+printable_text() {
+  jq -Rrjs "$PRINTABLE_JQ"' inert(true)'
+}
+
+# inert_stderr CMD... -> runs CMD with its error output held back, then prints
+# that through printable_text; keeps CMD's exit status. For lolloctl's own
+# non-interactive calls into the app-server, whose error output agents can write.
+inert_stderr() {
+  local err rc=0
+  err=$(mktemp) || return 1
+  "$@" 2>"$err" || rc=$?
+  [[ ! -s $err ]] || printable_text <"$err" >&2
+  rm -f "$err"
+  return "$rc"
+}
+
 # ── env files ────────────────────────────────────────────────────────────────
 # config.env and stack.env are plain KEY=value files, read by Docker Compose as
 # well, so they are parsed here instead of being sourced: nothing in them runs.
@@ -474,13 +517,70 @@ pipelock_direct() {
   (IFS=, && printf '%s' "${out[*]}")
 }
 
+# A host name with at least one dot, as the deny list holds them, and the most
+# entries pipelock's entrypoint and the engine's launcher take.
+DENY_HOST_RE='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+DENY_HOSTS_MAX=500
+
+# stack_hosts ENV_FILE -> the stack's Lettuce host (PUBLIC_ORIGIN's), its lollo
+# host (LOLLO_HOSTNAME) and its Access team domain (<CF_ACCESS_TEAM_DOMAIN>
+# .cloudflareaccess.com), lower case, one per line; a value it lacks is left out
+stack_hosts() {
+  local h
+  h=$(env_get "$1" PUBLIC_ORIGIN)
+  h=${h#*://}
+  h=${h%%/*}
+  h=${h%%:*}
+  [[ -z $h ]] || printf '%s\n' "${h,,}"
+  h=$(env_get "$1" LOLLO_HOSTNAME)
+  [[ -z $h ]] || printf '%s\n' "${h,,}"
+  h=$(env_get "$1" CF_ACCESS_TEAM_DOMAIN)
+  [[ -z $h ]] || printf '%s.cloudflareaccess.com\n' "${h,,}"
+}
+
+# deny_hosts [ENV_FILE] -> the hosts no agent may reach through pipelock nor
+# open in the browser (agent-cannot-be-the-person): the Lettuce and lollo hosts
+# of every stack on this host and of ENV_FILE (a stack being rendered), and the
+# Access team domain, sorted, comma-separated. An agent's browser task holding
+# the person's Google session would otherwise complete their Access sign-in.
+# Read from each stack.env and config.env, never handed to Compose from
+# stack.env (compose_env passes it as LOLLO_DENY_HOSTS). Every Compose call
+# needs it, so a bad value never stops one: an empty team, or a value that is
+# not a host name, is left out with a warning, and check_browser refuses to
+# start a browser whose own stack's hosts are not all on the list.
+deny_hosts() {
+  local team s h hosts=() ok=()
+  team=$(cfg CF_TEAM_DOMAIN)
+  [[ -n $team ]] || warn "CF_TEAM_DOMAIN is empty, so the browser cannot be kept off the Access sign-in; run: lolloctl init"
+  mapfile -t hosts < <({
+    [[ -z $team ]] || printf '%s.cloudflareaccess.com\n' "${team,,}"
+    while read -r s; do
+      stack_hosts "$(stack_env "$s")"
+    done < <(list_stacks)
+    [[ -z ${1:-} ]] || stack_hosts "$1"
+  } | LC_ALL=C sort -u)
+  for h in "${hosts[@]}"; do
+    if [[ $h =~ $DENY_HOST_RE ]]; then
+      ok+=("$h")
+    else
+      warn "'$(printable "$h")' is not a host name, so pipelock and the browser cannot refuse it; check PUBLIC_ORIGIN, LOLLO_HOSTNAME and CF_ACCESS_TEAM_DOMAIN in the stacks' stack.env"
+    fi
+  done
+  ((${#ok[@]} <= DENY_HOSTS_MAX)) || die "more than $DENY_HOSTS_MAX hosts to deny; pipelock and the browser refuse a longer list"
+  (IFS=, && printf '%s' "${ok[*]}")
+}
+
 # compose_env ENV_FILE NAME ARGS... -> `compose`, reading ENV_FILE in place of
 # the stack's stack.env (check_stack renders a profile list before it is written)
 compose_env() {
-  local env_file=$1 name=$2 up profiles img direct extra=() vars=()
+  local env_file=$1 name=$2 up profiles img direct deny extra=() vars=()
   shift 2
   up=$(upstream_dir)
   profiles=$(env_get "$env_file" COMPOSE_PROFILES)
+  # Every stack's hosts and the Access team domain, for pipelock and the browser
+  # (compose/pipelock.yml, compose/browser.yml); lolloctl's, never stack.env's.
+  deny=$(deny_hosts "$env_file") || exit 1
+  vars+=(LOLLO_DENY_HOSTS="$deny")
   # The overlays' build contexts are under the code, which upstream/ is not
   # under; the shell's image builds FROM the app-server's, by name; upstream's
   # own switch, LETTA_IMAGE_NS, is global (init and upgrade set it). In release
@@ -688,7 +788,7 @@ ensure_executor_token() {
 # NOTIFY_SOURCES: the senders of the notifications service, "<SOURCE> <service>":
 # each has its own token, stack.env's NOTIFY_TOKEN_<SOURCE>, which only that
 # Compose service and NOTIFY_SERVICE get.
-NOTIFY_SOURCES=('VAULT lollo-vault' 'BROWSER lollo-browser')
+NOTIFY_SOURCES=('VAULT lollo-vault' 'BROWSER lollo-browser' 'GMAIL_TRIGGERS lollo-gmail-triggers' 'NEWS_RADAR lollo-news-radar')
 # The notifications service: the only one with the lollo's VAPID private key and
 # every sender's token. Compose runs it whenever a sender's profile is on.
 NOTIFY_SERVICE='lollo-notifications'
@@ -699,6 +799,22 @@ notify_keypair_missing() {
   local f
   f=$(stack_env "$1")
   [[ -z $(env_get "$f" LOLLO_VAPID_PUBLIC_KEY) || -z $(env_get "$f" LOLLO_VAPID_PRIVATE_KEY) ]]
+}
+
+# notify_route_unrouted NAME -> success when the stack has a sender on whose
+# token is still missing (a sender NOTIFY_SOURCES gained after the stack was
+# made) and no sender on that already had its token: the tunnel then routes no
+# /notifications/ yet. Runs before ensure_notify_secrets, so it holds once.
+notify_route_unrouted() {
+  local f profiles e new=0
+  f=$(stack_env "$1")
+  profiles=$(env_get "$f" COMPOSE_PROFILES)
+  for e in "${NOTIFY_SOURCES[@]}"; do
+    has_profile "$profiles" "${e#* }" || continue
+    [[ -z $(env_get "$f" "NOTIFY_TOKEN_${e%% *}") ]] || return 1
+    new=1
+  done
+  ((new))
 }
 
 # ensure_notify_secrets NAME -> gives the stack, once, what the notifications
@@ -849,11 +965,15 @@ check_stack() {
     | select(.value.environment.DISABLE_AUTOUPDATER != "1") | .key] | join(", ")' <<<"$rendered")
   [[ -z $updating ]] ||
     die "$name: DISABLE_AUTOUPDATER is not 1 for $updating; letta-code would reinstall itself over the pinned version (compose/hardening.yml)"
+  # The app-server's namespace (agents are root there), and the upstream helpers on
+  # the stack network, where Access JWTs, the vault passphrase and redeemed values
+  # travel in plain HTTP. A service whose profile is off is not rendered.
   sniffing=$(jq -r '[.services | to_entries[]
-    | select(.key == "app-server" or .value.network_mode == "service:app-server")
+    | select(.key == "app-server" or .value.network_mode == "service:app-server"
+      or (.key | IN("cloudflared", "searxng", "ddg-mcp", "google-mcp")))
     | select((.value.cap_drop // []) | (index("NET_RAW") or index("ALL")) | not) | .key] | join(", ")' <<<"$rendered")
   [[ -z $sniffing ]] ||
-    die "$name: $sniffing must drop NET_RAW; agents in the app-server's network namespace could capture the Access JWT (compose/hardening.yml)"
+    die "$name: $sniffing must drop NET_RAW; with it a container could capture the plain HTTP on the stack network, Access JWTs included (compose/hardening.yml)"
   k=$(volume_users "$rendered" google-creds bff google-mcp lollo-gmail-triggers)
   [[ -z $k ]] || die "$name: $k mount(s) google-creds (the Google token); only bff, google-mcp and lollo-gmail-triggers may"
   # volumes_from would hand another service every mount of the one it names.
@@ -1297,6 +1417,24 @@ check_browser() {
     die "$name: only lollo-browser-engine, lollo-browser and lollo-pipelock may join the browser network, and all three must (found: ${members:-none})"
   jq -e '.networks.browser.internal == true' <<<"$rendered" >/dev/null ||
     die "$name: the browser network must be internal; the engine's only way out is lollo-pipelock (compose/browser.yml)"
+  # Both layers refuse the stack's own hosts and its Access team domain, or a
+  # task holding the person's Google session could sign in to their pages.
+  # Another stack's hosts may be missing until that stack's next `up`.
+  local own list h missing
+  own=$(stack_hosts "$(stack_env "$name")")
+  for h in $own; do
+    [[ $h =~ $DENY_HOST_RE ]] ||
+      die "$name: '$(printable "$h")' is not a host name, so pipelock and the browser cannot refuse it; fix PUBLIC_ORIGIN, LOLLO_HOSTNAME or CF_ACCESS_TEAM_DOMAIN in its stack.env"
+  done
+  for s in lollo-pipelock lollo-browser-engine; do
+    list=$(jq -r --arg s "$s" '.services[$s].environment.LOLLO_DENY_HOSTS // ""' <<<"$rendered")
+    missing=""
+    for h in $own; do
+      [[ ",$list," == *",$h,"* ]] || missing+=" $h"
+    done
+    [[ -z $missing ]] ||
+      die "$name: $s must have the stack's own hosts in LOLLO_DENY_HOSTS (missing:$missing); an agent's browser task could otherwise sign in to the person's pages (compose/pipelock.yml, compose/browser.yml)"
+  done
 }
 
 # check_gmail_triggers NAME RENDERED STATE_DIR -> the gmail-triggers service keeps

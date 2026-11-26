@@ -257,6 +257,20 @@ def test_bodies_stream_both_ways(browser, editor):
     assert editor.bodies == [big]
 
 
+def test_uploads_to_the_editor_are_not_capped_but_the_gates_own_routes_are(browser, editor):
+    # Over lollo_common.limits' default cap: the editor's uploads keep working.
+    big = b"u" * (3 * 1024 * 1024)
+    editor.responses["/upload"] = httpx.Response(201, content=b"ok")
+    r = browser.post(f"{P}/upload", content=big, headers={**SCRIPT, "content-type": "application/octet-stream"})
+    assert r.status_code == 201 and editor.bodies == [big]
+    # Not signed in: refused before the body is read or forwarded.
+    r = browser.post(f"{P}/upload", content=big, headers={**SCRIPT, "cf-access-jwt-assertion": ""})
+    assert r.status_code == 403 and len(editor.bodies) == 1
+    # The gate's own routes keep the default cap.
+    r = browser.post("/healthz", content=big, headers={"content-type": "application/octet-stream"})
+    assert r.status_code == 413
+
+
 def test_an_editor_that_is_down_gets_a_page_not_a_crash(browser, editor):
     editor.down = True
     r = browser.get(f"{P}/")

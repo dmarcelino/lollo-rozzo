@@ -7,8 +7,9 @@
 #      policies, blocked schemes, proxy for loopback, listeners, VNC auth)
 #      through `docker exec`, then exits 1 when Chromium is killed;
 #   2. with Docker's default seccomp profile: exits 3, "Chromium's sandbox failed";
-#   3. with --no-sandbox as an argument or in the environment, or without a
-#      usable secret: exits 2 before Chromium starts.
+#   3. with --no-sandbox as an argument or in the environment, without a
+#      usable secret, or without a well-formed LOLLO_DENY_HOSTS: exits 2
+#      before Chromium starts.
 # Needs Docker on Linux with unprivileged user namespaces (browser/README.md,
 # Rules). Containers are named lollo-browser-engine-test-<pid>-<case> and
 # removed on exit.
@@ -23,9 +24,12 @@ docker build -q --target test -t "$image" "$ENGINE" >/dev/null
 # The secret reaches containers as `-e NAME`, never in an argument.
 BROWSER_ENGINE_SECRET=$(head -c 33 /dev/urandom | base64 | tr '+/' '-_')
 export BROWSER_ENGINE_SECRET
+# What lolloctl's deny_hosts gives a stack: its hosts and the Access team domain.
+LOLLO_DENY_HOSTS=alfred-lollo.example.com,alfred.example.com,team.cloudflareaccess.com
+export LOLLO_DENY_HOSTS
 hardened=(--network none --read-only --tmpfs /tmp --cap-drop ALL
   --security-opt no-new-privileges:true --memory 2g --pids-limit 512
-  -e BROWSER_ENGINE_SECRET -e BROWSER_PROXY=http://lollo-pipelock:8888)
+  -e BROWSER_ENGINE_SECRET -e BROWSER_PROXY=http://lollo-pipelock:8888 -e LOLLO_DENY_HOSTS)
 seccomp=(--security-opt "seccomp=$ENGINE/seccomp.json")
 
 names=()
@@ -106,5 +110,8 @@ expect_exit arg-other 2 "takes no arguments" "${hardened[@]}" "${seccomp[@]}" --
 expect_exit env-flags 2 "CHROMIUM_FLAGS would turn off" "${hardened[@]}" "${seccomp[@]}" -e CHROMIUM_FLAGS=--no-sandbox --
 expect_exit env-name 2 "NO_SANDBOX would turn off" "${hardened[@]}" "${seccomp[@]}" -e NO_SANDBOX=1 --
 expect_exit short-secret 2 "BROWSER_ENGINE_SECRET must be" "${hardened[@]}" "${seccomp[@]}" -e BROWSER_ENGINE_SECRET=short --
+# Never without the stack's denied hosts in its policies.
+expect_exit no-deny-hosts 2 "LOLLO_DENY_HOSTS is not set" "${hardened[@]}" "${seccomp[@]}" -e LOLLO_DENY_HOSTS= --
+expect_exit bad-deny-hosts 2 "LOLLO_DENY_HOSTS must be" "${hardened[@]}" "${seccomp[@]}" -e LOLLO_DENY_HOSTS=Bad_Host --
 
 exit "$failed"

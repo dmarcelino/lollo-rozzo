@@ -103,6 +103,19 @@ def test_detect_fails_closed():
 
 
 @pytest.mark.anyio
+async def test_the_service_caps_bodies_before_the_guard_and_mcp(tmp_path, limits):
+    from .conftest import build
+
+    parts = build(tmp_path, limits)
+    transport = httpx.ASGITransport(app=parts.guard, client=("10.20.0.7", 40000))
+    async with httpx.AsyncClient(transport=transport, base_url="http://lollo-browser:8000") as c:
+        big = b"{" + b" " * (2 * 1024 * 1024) + b"}"
+        r = await c.post(MCP_URL, content=big, headers={"content-type": "application/json"})
+        assert r.status_code == 413
+        assert (await c.get("/healthz")).status_code == 200
+
+
+@pytest.mark.anyio
 async def test_unknown_network_serves_loopback_only():
     def unresolvable(host):
         raise OSError(-2, "Name or service not known")

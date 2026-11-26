@@ -15,6 +15,11 @@
 # there can capture the plain HTTP that cloudflared sends to the BFF, Access JWT
 # included, and the vault accepts that JWT. Every container in the namespace
 # drops it; `lolloctl check` refuses a stack where one does not.
+# The same plain HTTP (Access JWTs, the vault passphrase, redeemed values) crosses
+# the stack network to every lollo sidecar, so the upstream helpers on it,
+# cloudflared, searxng, ddg-mcp and google-mcp, drop it too; none needs raw
+# sockets (cloudflared's ICMP proxy serves only private-network routes, which a
+# stack's tunnel has none of). `lolloctl check` holds them to it as well.
 services:
   app-server:
     security_opt: ["no-new-privileges:true"]
@@ -29,15 +34,19 @@ services:
     mem_limit: 1g
   cloudflared:
     security_opt: ["no-new-privileges:true"]
+    cap_drop: [NET_RAW]
     mem_limit: 256m
   searxng:
     security_opt: ["no-new-privileges:true"]
+    cap_drop: [NET_RAW]
     mem_limit: 1g
   ddg-mcp:
     security_opt: ["no-new-privileges:true"]
+    cap_drop: [NET_RAW]
     mem_limit: 1g
   google-mcp:
     security_opt: ["no-new-privileges:true"]
+    cap_drop: [NET_RAW]
     mem_limit: 1g
   channel-gateway:
     security_opt: ["no-new-privileges:true"]

@@ -39,6 +39,11 @@ RECONNECT_MIN_SECONDS = 1
 RECONNECT_MAX_SECONDS = 30
 
 ENGINE_SECRET = re.compile(r"[A-Za-z0-9_-]{16,256}")
+# LOLLO_DENY_HOSTS: every stack's Lettuce and lollo hosts and the Access team
+# domain, comma-separated, from lolloctl's deny_hosts. The engine and pipelock
+# refuse them; this service keeps their cookies out of kept sign-ins.
+DENY_HOST = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
+MAX_DENY_HOSTS = 500
 
 
 # The person's page, behind the tunnel route of the same name.
@@ -87,6 +92,8 @@ class Settings:
     # interface that routes to the engine (guard.detect_network).
     engine_network: ipaddress.IPv4Network | ipaddress.IPv6Network | None
     page: PageSettings
+    # Hosts whose cookies and storage no kept sign-in holds (LOLLO_DENY_HOSTS).
+    deny_hosts: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -115,7 +122,23 @@ class Settings:
             limits=limits,
             engine_network=network,
             page=_page(env, secret),
+            deny_hosts=deny_hosts(env.get("LOLLO_DENY_HOSTS", "")),
         )
+
+
+def deny_hosts(value: str) -> frozenset[str]:
+    """The hosts of LOLLO_DENY_HOSTS; empty when unset (pipelock and the engine
+    still refuse them). Refused whole when one entry is not a host name."""
+    value = value.strip()
+    if not value:
+        return frozenset()
+    hosts = value.split(",")
+    for host in hosts:
+        if not DENY_HOST.fullmatch(host):
+            raise ConfigError(f"LOLLO_DENY_HOSTS must be comma-separated lower-case host names; not {host!r}")
+    if len(hosts) > MAX_DENY_HOSTS:
+        raise ConfigError(f"LOLLO_DENY_HOSTS has more than {MAX_DENY_HOSTS} hosts")
+    return frozenset(hosts)
 
 
 def _page(env: dict[str, str], secret: str) -> PageSettings:

@@ -300,6 +300,66 @@ def test_initial_state_ignores_foreign_entries(tmp_path):
     assert [c["domain"] for c in state["cookies"]] == ["example.com"] and state["origins"] == []
 
 
+DENY = frozenset({"alfred.example.com", "alfred-lollo.example.com", "team.cloudflareaccess.com"})
+
+
+def test_a_kept_site_never_saves_a_denied_host(tmp_path):
+    # The person keeps the stacks' own domain: Access's cookie on the lollo host
+    # must not carry into every later task.
+    s = Sessions(tmp_path, deny_hosts=DENY)
+    s.set_keep_signed_in("example.com", True)
+    state = {
+        "cookies": [
+            cookie("shop.example.com"),
+            cookie(".example.com", "pref"),
+            cookie("alfred-lollo.example.com", "CF_Authorization"),
+            cookie(".alfred.example.com", "x"),
+            cookie("deep.alfred-lollo.example.com", "y"),
+        ],
+        "origins": [
+            {"origin": "https://shop.example.com", "localStorage": [{"name": "who", "value": "a"}]},
+            {"origin": "https://alfred-lollo.example.com", "localStorage": [{"name": "who", "value": "b"}]},
+        ],
+    }
+    assert s.save(state, {"example.com"}) == ["example.com"]
+    saved = json.loads(next((tmp_path / "signins").glob("*.json")).read_text())
+    assert {c["domain"] for c in saved["cookies"]} == {"shop.example.com", ".example.com"}
+    assert [o["origin"] for o in saved["origins"]] == ["https://shop.example.com"]
+    assert "alfred" not in json.dumps(saved)
+
+
+def test_a_tampered_sign_in_file_never_loads_a_denied_host(tmp_path):
+    s = Sessions(tmp_path, deny_hosts=DENY)
+    s.set_keep_signed_in("example.com", True)
+    s.save({"cookies": [cookie("shop.example.com")], "origins": []}, {"example.com"})
+    path = next((tmp_path / "signins").glob("*.json"))
+    data = json.loads(path.read_text())
+    data["cookies"] += [cookie("alfred.example.com", "CF_Authorization"), cookie("ALFRED-LOLLO.example.com.", "z")]
+    data["origins"].append({"origin": "https://alfred.example.com", "localStorage": []})
+    path.write_text(json.dumps(data))
+    state, loaded = s.initial_state()
+    assert loaded == {"example.com"}
+    assert [c["domain"] for c in state["cookies"]] == ["shop.example.com"] and state["origins"] == []
+
+
+def test_without_a_deny_list_nothing_more_is_dropped(tmp_path):
+    s = Sessions(tmp_path)
+    s.set_keep_signed_in("example.com", True)
+    s.save({"cookies": [cookie("alfred.example.com")], "origins": []}, {"example.com"})
+    state, _ = s.initial_state()
+    assert [c["domain"] for c in state["cookies"]] == ["alfred.example.com"]
+
+
+def test_deny_hosts_from_env():
+    assert Settings.from_env(ENV).deny_hosts == frozenset()
+    env = {**ENV, "LOLLO_DENY_HOSTS": "alfred-lollo.example.com,alfred.example.com,team.cloudflareaccess.com"}
+    assert Settings.from_env(env).deny_hosts == DENY
+    bad_lists = ("Alfred.example.com", "alfred.example.com,", "localhost", "https://alfred.example.com", "a b.x.com")
+    for bad in bad_lists:
+        with pytest.raises(ConfigError, match="LOLLO_DENY_HOSTS"):
+            Settings.from_env({**ENV, "LOLLO_DENY_HOSTS": bad})
+
+
 # ── hand-offs ────────────────────────────────────────────────────────────────
 
 

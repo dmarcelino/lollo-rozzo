@@ -1,0 +1,19 @@
+<!doctype html>
+<title>Denied host</title>
+<!-- The stack's own lollo host (LOLLO_DENY_HOSTS) reached from a page: a frame,
+a script's fetch and an image, a percent-encoded host, and a service worker
+that fetches it as it installs. The runner checks the fixture got none. -->
+<p id=out>probing</p>
+<iframe src="https://alfred-lollo.stack.test/acc-denied-iframe" width="300" height="100"></iframe>
+<img src="https://alfred-lollo.stack.test/acc-denied-img.svg" width="16" height="16">
+<script>
+const done = [];
+const note = (label) => { done.push(label); out.textContent = done.join(', '); };
+fetch('https://alfred-lollo.stack.test/acc-denied-fetch', {mode: 'no-cors'}).catch(() => {}).finally(() => note('fetch'));
+fetch('https://alfred%2Dlollo.stack.test/acc-denied-fetch-pct', {mode: 'no-cors'}).catch(() => {})
+  .finally(() => note('fetch %'));
+navigator.serviceWorker.register('/denied-sw.js', {scope: '/'})
+  .then(() => navigator.serviceWorker.ready).catch(() => {}).finally(() => {
+    setTimeout(() => note('probes done'), 3000);
+  });
+</script>

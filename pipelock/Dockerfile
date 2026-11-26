@@ -24,7 +24,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w \
 FROM alpine:3.24.4
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/pipelock /usr/local/bin/pipelock
-COPY pipelock.yaml /etc/pipelock/pipelock.yaml
+COPY pipelock.yaml shipped-blocklist /etc/pipelock/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 # A fixed non-root user that owns /data, so the named volume Docker creates on
 # first start inherits that ownership.

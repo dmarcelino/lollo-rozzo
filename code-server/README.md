@@ -12,7 +12,7 @@ An interactive version, [code-server-architecture.html](../docs/diagrams/code-se
 |---|---|
 | `Dockerfile`, `pyproject.toml` | The gate's image: Python 3.14 slim, `lollo-common` from its build context, pinned dependencies, a `test` stage; runs as uid 65534 on port 8000. |
 | `src/code_server_gate/config.py` | Settings from the environment; `PREFIX` (`/code-server`) and `EDITOR_SOCKET` (`/run/code-server/editor.sock`). |
-| `src/code_server_gate/app.py` | The gate: the Access JWT on every request and WebSocket, Fetch Metadata, the prefix, request and response header allow-lists, which responses may load as pages, and the HTTP and WebSocket proxy over the editor's socket. |
+| `src/code_server_gate/app.py` | The gate: the Access JWT on every request and WebSocket, Fetch Metadata, the prefix, request and response header allow-lists, which responses may load as pages, and the HTTP and WebSocket proxy over the editor's socket. Request bodies are capped (`lollo_common.limits.BodyLimit`) everywhere but under `/code-server/`: the gate checks the Access JWT before it touches a body there, then streams it to the editor, so uploads keep working at any size. |
 | `src/code_server_gate/__main__.py` | Starts uvicorn; keeps httpx and access logs off, since the editor's URLs carry file paths. |
 | `src/code_server_gate/templates/error.html` | The gate's own error page (no script). |
 | `tests/` | Gate tests (pytest): `FakeEditor` plays the editor over `httpx.MockTransport` and a fake WebSocket peer. |

@@ -10,15 +10,58 @@
   <p>{{ b.text }}</p>
 </div>
 {% endfor %}
+{% if awaiting or moves %}
+<h2>Waiting for you</h2>
+<p class="muted">An agent set these up. Nothing here reaches an agent's turn until you confirm it: check the sites it reads, then confirm, or delete it.</p>
+<ul class="items">
+  {% for a in awaiting %}
+  {% set m = a.monitor %}
+  <li class="item" id="m-{{ m.id }}">
+    <div class="item-main">
+      <span class="item-name">{{ m.name }} <span class="pill warn">To confirm</span></span>
+      <span class="item-desc">Set up by {{ a.agent }} &middot; {{ describe(m.schedule) }} &middot; Reports: {{ where_reports_go(m) }}</span>
+      <span class="item-desc">Reads: {% for s in a.sources %}{{ s.name }} ({{ s.site or "no site" }}{% if s.new %}, <strong>new site</strong>{% endif %}){% if not loop.last %}, {% endif %}{% endfor %}</span>
+    </div>
+    <form method="post" action="{{ base }}/m/{{ m.id }}/confirm" class="item-action">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="shown" value="{{ a.shown }}">
+      <button type="submit" class="button" aria-label="Confirm {{ m.name }}">Confirm</button>
+    </form>
+    <form method="post" action="{{ base }}/m/{{ m.id }}/delete" class="item-action">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="button ghost" aria-label="Delete {{ m.name }}">Delete</button>
+    </form>
+  </li>
+  {% endfor %}
+  {% for mv in moves %}
+  <li class="item">
+    <div class="item-main">
+      <span class="item-name">Source {{ mv.name }} <span class="pill warn">New site</span></span>
+      <span class="item-desc">An agent wants it to read {{ mv.after or "another site" }} instead of {{ mv.before or "its site" }}: {{ mv.url }}</span>
+      {% if mv.used_by %}<span class="item-desc">Used by: {{ mv.used_by | join(", ") }}. Until you confirm, it keeps reading the site it had.</span>{% endif %}
+    </div>
+    <form method="post" action="{{ base }}/s/{{ mv.name }}/move/confirm" class="item-action">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="shown" value="{{ mv.shown }}">
+      <button type="submit" class="button" aria-label="Confirm the new site of {{ mv.name }}">Confirm</button>
+    </form>
+    <form method="post" action="{{ base }}/s/{{ mv.name }}/move/discard" class="item-action">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="button ghost" aria-label="Discard the new site of {{ mv.name }}">Discard</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
 {% if groups %}
 {% for agent_name, monitors in groups %}
 <h2>{{ agent_name }}</h2>
 <ul class="items">
   {% for m in monitors %}
   {% set last = last_reports.get(m.id) %}
-  <li class="item{% if m.paused %} off{% endif %}">
+  <li class="item{% if m.paused or m.awaiting %} off{% endif %}">
     <div class="item-main">
-      <span class="item-name">{{ m.name }}{% if m.paused %} <span class="pill warn">Paused</span>{% endif %}{% if m.news %} <span class="pill">News</span>{% endif %}</span>
+      <span class="item-name">{{ m.name }}{% if m.awaiting %} <span class="pill warn">To confirm</span>{% endif %}{% if m.paused %} <span class="pill warn">Paused</span>{% endif %}{% if m.news %} <span class="pill">News</span>{% endif %}</span>
       <span class="item-desc">{{ describe(m.schedule) }} &middot; Reports: {{ where_reports_go(m) }}</span>
       <span class="item-desc">Sources: {{ m.sources | join(", ") }}{% if m.include %} &middot; only with: {{ m.include | join(", ") }}{% endif %}{% if m.exclude %} &middot; never with: {{ m.exclude | join(", ") }}{% endif %}{% if m.where %} &middot; only at: {{ m.where | join(", ") }}{% if m.where_unknown == "drop" %} (leaving out what isn't placed){% endif %}{% endif %}{% if m.days_ahead is not none %} &middot; events in the next {{ m.days_ahead }} days{% endif %}</span>
       <span class="item-desc">

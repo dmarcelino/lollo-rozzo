@@ -15,12 +15,14 @@ from importlib import resources
 from typing import Any
 
 import anyio
+from jinja2 import Environment, PackageLoader, select_autoescape
 from lollo_common.auth import COOP, FORM, PAGE, Authenticator, AuthError, admit
 from lollo_common.executor import AGENT_ID, CONVERSATION_ID
+from lollo_common.limits import BodyLimit
 from lollo_common.lollo import stylesheet
 from lollo_common.text import encodable
-from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -38,6 +40,7 @@ from .config import (
     MAX_RULE_PROMPT,
     MAX_RULES,
     MAX_SENDERS,
+    NEW_SENDERS_PER_DAY,
     PREFIX,
 )
 from .executor_api import executor_routes
@@ -249,6 +252,12 @@ def parse_rule(
         problems.append(f"Not an email address: {bad[0][:80]}")
     if len(senders) > MAX_SENDERS:
         problems.append(f"List at most {MAX_SENDERS} senders.")
+    # Who may set it off is the person's explicit choice: a list, or anyone.
+    anyone = form.get("anyone") == "on"
+    if anyone and senders:
+        problems.append('Leave "Only from" empty when anyone may set this off, or turn the switch off.')
+    elif not anyone and not senders:
+        problems.append('List who may set this off under "Only from", or turn on "Anyone may set this off".')
 
     agent_id = str(form.get("agent_id", ""))
     agent_name = ""
@@ -309,6 +318,8 @@ def parse_rule(
         label_ids=label_ids[:MAX_LABELS],
         label_names={lid: known[lid] for lid in label_ids[:MAX_LABELS]},
         senders=senders[:MAX_SENDERS],
+        anyone=anyone,
+        set_aside=current.set_aside if current else 0,
         verified_only=form.get("verified") == "on",
         agent_id=agent_id,
         agent_name=agent_name,
@@ -495,6 +506,7 @@ def create_app(
             examples=EXAMPLES,
             max_per_hour_limit=MAX_MAX_PER_HOUR,
             max_per_run=MAX_LISTED_MESSAGES,
+            new_senders_per_day=NEW_SENDERS_PER_DAY,
         )
 
     async def new_form(request: Request, email: str) -> Response:
@@ -622,4 +634,6 @@ def create_app(
             Mount(PREFIX, routes=ui),
         ],
         lifespan=lifespan,
+        # Bodies are capped before anything reads them (lollo_common.limits).
+        middleware=[Middleware(BodyLimit)],
     )

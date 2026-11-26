@@ -64,6 +64,8 @@ def saved_rule(env, **over) -> Rule:
         prompt="p",
     )
     fields.update(over)
+    # A rule saved without senders is one anyone may set off.
+    fields.setdefault("anyone", not fields.get("senders"))
     rule = Rule(**fields)
     rule.id = env.store.save_rule(rule)
     return rule
@@ -241,6 +243,36 @@ def test_create_edit_toggle_delete(client, env):
 
     assert post(client, f"{B}/r/{rule.id}/delete").status_code == 303
     assert env.store.rules() == []
+
+
+def test_a_rule_names_its_senders_or_says_anyone_may(client, env):
+    env.write_agents()
+    # Neither: refused, nothing saved.
+    r = post(client, f"{B}/rules", form(senders=""))
+    assert r.status_code == 400 and "Anyone may set this off" in r.text
+    assert env.store.rules() == []
+    # Both: refused.
+    r = post(client, f"{B}/rules", form(senders="hal@example.com", anyone="on"))
+    assert r.status_code == 400 and "Leave &#34;Only from&#34; empty" in r.text
+    assert env.store.rules() == []
+    # A list only.
+    assert post(client, f"{B}/rules", form(senders="hal@example.com")).status_code == 303
+    [listed] = env.store.rules()
+    assert listed.senders == ["hal@example.com"] and not listed.anyone
+    # The switch only.
+    assert post(client, f"{B}/rules", form(name="Forms", senders="", anyone="on")).status_code == 303
+    anyone = next(r for r in env.store.rules() if r.name == "Forms")
+    assert anyone.anyone and anyone.senders == []
+
+
+def test_anyone_rules_carry_a_warning(client, env):
+    env.write_agents()
+    listed = saved_rule(env, name="Listed", senders=["hal@example.com"])
+    anyone = saved_rule(env, name="Open")
+    page = client.get(f"{B}/").text
+    assert page.count(">Anyone</span>") == 1
+    assert "Anyone may set this trigger off." in client.get(f"{B}/r/{anyone.id}").text
+    assert "Anyone may set this trigger off." not in client.get(f"{B}/r/{listed.id}").text
 
 
 @pytest.mark.parametrize(

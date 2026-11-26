@@ -3,7 +3,8 @@
 ## Everyday
 ```bash
 lolloctl list                 # stacks, hostnames (Lettuce's and the lollo's), allowed users
-lolloctl status               # containers and health per stack
+lolloctl status               # containers and health per stack, with each one's runtime audit summary
+lolloctl audit alfred         # what differs from what lollo shipped or you accepted (agent-written files, the container)
 lolloctl logs alfred          # follow all services; or: logs alfred cloudflared
 lolloctl up all               # check, build what is built here, start (idempotent; also applies config changes)
 lolloctl restart alfred       # down + up
@@ -13,6 +14,7 @@ lolloctl compose alfred ps    # any docker compose command for one stack
 - Use `restart`, never `compose <name> restart app-server`. The BFF shares the app-server's network namespace and dies when the app-server is recreated on its own. `up` and `restart` always act on the whole stack. (`mcp` restarts the BFF alone, which is safe: the app-server keeps its namespace.)
 - After a host reboot, Docker brings the stacks back by itself (`restart: unless-stopped`).
 - `up` is offline: no Cloudflare call, no DNS lookup.
+- `status`, `up`, `skills` and `backup` print one line from the runtime audit per stack; it only reports. `lolloctl audit <name>` shows the findings ([Security notes](#security-notes)).
 
 ## People
 Who has a stack, and who may sign in to it, is `stacks.conf` in the data directory, one line per stack:
@@ -55,20 +57,31 @@ lolloctl shell alfred lucius   # agent name (any case) or id; without one, /work
 Agents run their Bash tool as root in the app-server with no sandbox. Each agent's tool starts in `/work/<agent-id>` with `AGENT_ID`, `AGENT_NAME` and `MEMORY_DIR` set, and `shell` sets the same. Like an agent, the shell can read every agent's workspace, memory and conversations in that stack, plus `/root/.letta` (provider and Claude/Codex credentials). It is close to what the agent sees but not identical: letta-code also sets the conversation id, the agent's secrets and a few `PATH` entries. Commands can be piped in: `lolloctl shell alfred lucius <<<'ls'`.
 
 ### Working on an agent's workspace with your own tools
-`shell` is the wrong place for your own credentials: agents share that container as root, so they could read anything you bring in while the shell is open. `toolbox` instead starts a throwaway container from the stack's app-server image with only that agent's workspace mounted:
+`shell` is the wrong place for your own credentials: agents share that container as root, so they could read anything you bring in while the shell is open. `toolbox` instead starts a throwaway container from the stack's app-server image, in that agent's workspace:
 ```bash
-lolloctl toolbox alfred lucius          # bash in /work/<agent-id>
-lolloctl toolbox alfred lucius claude   # straight into Claude Code
+lolloctl toolbox alfred lucius                 # bash in /work/<agent-id>, none of your credentials
+lolloctl toolbox --gh --claude alfred lucius claude   # straight into Claude Code, with your GitHub and Claude tokens
 ```
-It brings in whatever of these the host has, read-only, and says which:
-- your ssh-agent (`SSH_AUTH_SOCK`; the key itself never enters) and `~/.ssh/known_hosts`. On macOS the agent reaches the container through Docker's VM: at Docker Desktop's and OrbStack's fixed socket, and under Colima through an ssh tunnel into its VM that the wrapper opens for the run and closes after;
-- `~/.gitconfig`, and with a logged-in `gh`, a GitHub token git uses for `https://github.com`;
-- Claude Code's `CLAUDE.md`, `settings.json`, `skills`, `agents` and `commands` (from `~/.claude`, or `CLAUDE_CONFIG_DIR`), and a Claude token: `CLAUDE_CODE_OAUTH_TOKEN` if you set it, otherwise the keyring entry `claude-toolbox`. Set that entry up once with `claude setup-token`, then on Linux `secret-tool store --label='Claude toolbox' service claude-toolbox` (Ubuntu package `libsecret-tools`), or on macOS `security add-generic-password -s claude-toolbox -a "$USER" -w` (the login keychain).
+It mounts the stack's workspaces directory at `/work` and starts in `/work/<agent-id>`, so it also sees the stack's other agents' workspaces, which those agents already share. It always brings in, read-only, your `~/.gitconfig` and `~/.ssh/known_hosts` if you have them. Your credentials come in only when you choose them, each by its flag before the stack name or by a `use` line in your toolbox file (below), and only when the host has them; `toolbox` says which it brought:
+- `--ssh`: your ssh-agent (`SSH_AUTH_SOCK`; the key itself never enters). On macOS the agent reaches the container through Docker's VM: at Docker Desktop's and OrbStack's fixed socket, and under Colima through an ssh tunnel into its VM that the wrapper opens for the run and closes after;
+- `--gh`: with a logged-in `gh`, a GitHub token git uses for `https://github.com`;
+- `--claude`: Claude Code's `CLAUDE.md`, `settings.json`, `skills`, `agents` and `commands` (from `~/.claude`, or `CLAUDE_CONFIG_DIR`), and a Claude token: `CLAUDE_CODE_OAUTH_TOKEN` if you set it, otherwise the keyring entry `claude-toolbox`. Set that entry up once with `claude setup-token`, then on Linux `secret-tool store --label='Claude toolbox' service claude-toolbox` (Ubuntu package `libsecret-tools`), or on macOS `security add-generic-password -s claude-toolbox -a "$USER" -w` (the login keychain).
+
+To choose them once for every run, put a `use` line in your toolbox file, such as `use gh claude` (any of `gh`, `ssh`, `claude`). `--no-credentials` ignores that line for one run, for a look at a workspace you are not sure of; a flag given with it still counts. With nothing chosen, `toolbox` says how to choose.
+
+Before it starts, `toolbox` looks at the workspace for configuration that runs code when git or another tool is used there, and refuses to start if it finds any, listing what it found:
+- `.git/config` keys beyond what a clone, fetch, pull and push write (such as `core.fsmonitor`, `core.sshCommand`, `core.editor`, aliases or credential helpers), and remotes with the `ext::` or `fd::` transport;
+- hooks in `.git/hooks` that are not samples, `filter`, `diff` and `merge` drivers in `.gitattributes`, submodule `update` commands, and a `.git` that is a file or a link;
+- `.claude/`, `.mcp.json`, `.envrc` or `.npmrc` at the workspace's root or a repository's.
+
+It looks six levels deep (skipping `node_modules`, `.venv` and `vendor`), reads every git repository whatever its depth or folder, and also lists such configuration in the workspaces directory above the workspace, which every agent can write. It runs in a throwaway container with no network, none of your credentials and the workspaces read-only; it follows no link and runs nothing it reads. Read what it lists in the workspace (from `lolloctl shell alfred lucius`, say), then remove it, or start anyway with `--trust-workspace`. Either way, git in the toolbox ignores the workspace's fsmonitor, hooks, credential helpers and ssh command, never takes `/work` itself for a repository, and refuses `ext::` remotes: `--trust-workspace` means "start anyway", not "run its hooks" (for that, `git -c core.hooksPath=.git/hooks ...` on purpose).
 
 `/root` and `/tmp` are in memory, so history, caches and logins made inside are gone on exit; only what you write to the workspace stays, and the agent sees it. Tokens reach the container through docker's environment, never its command line. The container is not on the stack's network and is labelled `lolloctl.toolbox=<name>`.
 
 For anything else, write `~/.config/lolloctl/toolbox` (mode 600; it is parsed, never sourced, and words are split on spaces):
 ```
+# your credentials on every run
+use gh claude
 # shared skills that ~/.claude/skills links to keep their host path
 mount ~/team/shared-skills
 mount ~/.aws/config ~/.aws/config
@@ -76,7 +89,7 @@ mount ~/scratch /scratch rw
 secret AWS_SESSION_TOKEN secret-tool lookup service aws-session
 env AWS_PROFILE=dev
 ```
-`mount SRC [DEST] [rw]` is read-only unless `rw`, and `DEST` defaults to `SRC`; `~` is your home in `SRC` and `/root` in `DEST`. A mount may not hold the data directory, nor be inside it: with the data directory under your home, `mount ~` would hand every stack's secrets to the agent. `secret NAME COMMAND...` runs the command without a shell and passes its output as `NAME`; a secret overrides a built-in of the same name.
+`use KIND...` chooses credentials, as above. `mount SRC [DEST] [rw]` is read-only unless `rw`, and `DEST` defaults to `SRC`; `~` is your home in `SRC` and `/root` in `DEST`. A mount may not hold the data directory, nor be inside it: with the data directory under your home, `mount ~` would hand every stack's secrets to the agent. `secret NAME COMMAND...` runs the command without a shell and passes its output as `NAME`; a secret overrides a built-in of the same name.
 
 The tools agents installed (`/opt/agent-tools`: `npm i -g`, `go install`, `uv tool install`, downloaded binaries) are left out unless you ask for them, before the stack name:
 ```bash
@@ -85,9 +98,10 @@ lolloctl toolbox --tools=rw alfred lucius   # installs land there, for every age
 ```
 Without `--tools=rw`, an install inside the toolbox is gone on exit. To install something that needs none of your credentials, `lolloctl shell alfred` is the better place: your tokens never meet what agents wrote.
 
-Three limits:
+Its limits:
 - Only someone with Docker access on the host can run `toolbox`. Docker access is root on the host, so a stack's web-only users cannot, by design.
-- The workspace is the agent's to write, and what you run there runs with your credentials: git hooks, `.git/config` (`core.sshCommand`, credential helpers), package scripts, Makefiles. Look before you push, and prefer short-lived, narrowly scoped tokens.
+- The workspace is the agent's to write, and what you run there runs with whatever credentials you chose: package scripts, Makefiles, test suites, and anything `--trust-workspace` let through. The check before the start is not a boundary either: an agent can watch its workspace and add configuration in the moment between the check and the start. Git's fsmonitor, hooks and ssh command stay off even then, but a `filter`, `diff` or `merge` driver under a name the agent picks, or a `.claude/`, `.mcp.json`, `.envrc` or `.npmrc` added in that moment, would still run. Choose only the credentials the task needs, look before you push, and prefer short-lived, narrowly scoped tokens.
+- The names and error output `lolloctl` prints from a stack (an agent's name, MCP server names, what a failing call into the app-server wrote) have control characters shown as escapes such as `\x1b`, so an agent cannot rewrite your terminal through them. What you open yourself, `shell`, `toolbox`, `compose ... exec` and `logs`, shows the agents' text as it is.
 - `--tools` goes further: every agent of the stack writes those tools, and npm's global config (`/opt/agent-tools/etc/npmrc`) and cargo's (`/opt/agent-tools/cargo/config.toml`) are read on every call, so with it the agents' code runs with your credentials whenever you use them. With `rw`, whatever you write there is every agent's to read: never `cargo login` (its token goes to `CARGO_HOME`, on that mount) or `npm config set --location=global` with a token.
 
 ### Agent skills
@@ -157,7 +171,7 @@ lolloctl self-upgrade vX.Y.Z        # fetch that release's wrapper, pull its ima
 
 To try a fix or a feature before it is released, a pull request's dev build installs the same way: `lolloctl self-upgrade vX.Y.Z-dev.<slug>.<N>`, the tag the pull request's "Publish" run names in its summary. It has no release page: lolloctl pulls the build's image and makes its wrapper from it. Your lolloctl must already be a release that can install dev builds ([release/README.md](../release/README.md#dev-builds)). A dev build moves Lettuce forward like a release, so going back with `self-upgrade vX.Y.Z` keeps the newer Lettuce tag.
 
-In release mode, `toolbox` sees your home read-only, plus your toolbox file and Claude Code config (`CLAUDE_CONFIG_DIR`) wherever they are; a `mount` line in the toolbox file must name something under your home. The toolbox file's `secret` commands run on the host, in the wrapper, which first checks that the file is yours and that nobody else can write it.
+In release mode, `toolbox` sees your home read-only, plus your toolbox file and Claude Code config (`CLAUDE_CONFIG_DIR`) wherever they are; a `mount` line in the toolbox file must name something under your home. The wrapper runs `gh auth token` and the keychain or `secret-tool` lookup, and forwards your ssh-agent, only for the credentials the run chose (its flags and your `use` lines). The toolbox file's `secret` commands run on the host, in the wrapper, which first checks that the file is yours and that nobody else can write it.
 
 ## Running on macOS
 The wrapper runs on macOS with Colima, Docker Desktop or OrbStack, and bash 4 or later: macOS's own `/bin/bash` is 3.2, so `brew install bash` and put Homebrew's first on your `PATH` (cron and launchd jobs too). Docker runs in a VM there, so:
@@ -193,7 +207,7 @@ lolloctl backup all /mnt/backup --compress     # a .tar.gz per stack instead
 - never the browser's volume (`lollo-browser` profile), on purpose: it holds live sign-ins. `restore` leaves it as it is; restored on another host, people sign in to those sites again and set up the browser page's **Sites** again ([browser.md](browser.md#running-it));
 - with `--with-google` only, Lettuce's Google client and tokens (the `google-policy` and `google-creds` volumes). They are left out by default because a refresh token opens the person's mail and Drive, while reconnecting Google after a restore costs them a minute; use it for a one-off copy, such as moving to another host, not for routine backups.
 
-It leaves out caches, agents' background commands' output and temporary files (`state/task-logs`, which Lettuce keeps 14 days for its Runs pane; a restored stack starts without them), and the skills that come back by themselves: upstream's, which the BFF reinstalls on every connect, and those from `agent-skills/`, which `lolloctl skills` reinstalls. The state is root-owned, so `backup` reads it from a container of a small image (`backup/Dockerfile`: pulled by a release install, built from a clone; `lolloctl version` names it), with no network and read-only mounts. No sudo is needed.
+It leaves out caches, agents' background commands' output and temporary files (`state/task-logs`, which Lettuce keeps 14 days for its Runs pane; a restored stack starts without them), and what lolloctl puts back by itself: upstream's skills, which the BFF reinstalls on every connect, lollo's skills from `agent-skills/` and their manifest, which `lolloctl skills` reinstalls, and the lollo executor and its cron file, which `lolloctl up` reinstalls. Which skills are lollo's comes from the code, never from the stack's own list, so a copy an agent changed is never backed up and a restore cannot bring it back. The state is root-owned, so `backup` reads it from a container of a small image (`backup/Dockerfile`: pulled by a release install, built from a clone; `lolloctl version` names it), with no network and read-only mounts. No sudo is needed.
 
 - **Snapshots (the default).** Each run writes `<dir>/<name>/<UTC time>/`, owned by you with the original file modes. The original owners are not kept: a restore makes the state root's again, which is what nearly all of it is, so a file an agent gave to another user (say, a database directory owned by uid 999) comes back owned by root. Use `--compress` when those owners matter. Files unchanged since the previous snapshot are hard links to it, so a run costs only what changed, and each snapshot is still a complete copy. Hard links need a Linux filesystem at the destination (ext4, xfs, btrfs; not FAT or exFAT). `<dir>` is a local directory outside the data directory: for another machine, mount it (NAS, USB disk) or copy the snapshots onward with your own tools.
 - **`--compress`.** Writes `<dir>/<name>/<UTC time>.tar.gz` instead, mode 600. Inside the archive, files keep their real owners. Each archive holds everything again, so this suits one-off copies and moving to another host better than regular backups.
@@ -282,7 +296,8 @@ Each stack has two push-notification keypairs in `stack.env`: Lettuce's (`PUSH_V
 - Never add `DEV_BYPASS_*` to a stack. It disables authentication, and `check` refuses to start a stack that has it.
 - The Cloudflare API token can change your DNS. Scope it to one zone and one account, and consider an IP restriction.
 - Agents in one stack can read everything else in that stack, including its provider keys. That is why each person gets their own stack. The vault is the exception: it lives on a volume only the vault service mounts (`check` enforces that), encrypted with each person's passphrase. Root on the host can still read the vault service's memory while it is unlocked, and anything a person shares with an agent is stored in that conversation like the rest of it.
-- The app-server, and the containers sharing its network (BFF, channel-gateway), drop `NET_RAW`, so agents can't capture the Access token on its way to the BFF and use it on the vault. `check` refuses a stack that keeps it. The cost is raw sockets in agent shells, including the image's `ping` (see Troubleshooting).
+- The app-server, and the containers sharing its network (BFF, channel-gateway), drop `NET_RAW`, so agents can't capture the Access token on its way to the BFF and use it on the vault. So do the upstream helpers on the stack network (cloudflared, SearXNG, the DuckDuckGo reader, google-mcp), so a compromised helper can't capture the Access tokens and vault traffic that cross it either. `check` refuses a stack where any of them keeps it. The cost is raw sockets in agent shells, including the image's `ping` (see Troubleshooting).
 - The code editor shares an address with the vault and Gmail triggers (the stack's lollo address), so nothing agents write may run in it: it stays in Restricted Mode, has no marketplace, debugger or task providers, and sends every terminal to a separate container that is exactly as strong as an agent (see [code-server.md](code-server.md)). Never trust a folder in it.
 - The browser loads pages agents choose, with sign-ins the person keeps: its engine runs Chromium with its sandbox on, in a container whose only way out is pipelock, so pipelock is a boundary there and only there. A kept sign-in is usable by every agent of the stack, and recognising a checkout is a guess: see [browser.md](browser.md#security-model).
+- Agents can change what they share as root: lollo's own skills and helpers, the cron files, Settings -> MCP and the app-server container's files. `lolloctl audit <name>` (also summed up by `status`, `up`, `skills` and `backup`) compares them with what lollo shipped, from outside the agents' reach, and lists what you have not accepted (`--accept <kind:key>` once you recognise an entry). It only reports; after a suspected prompt injection, follow [incident-response.md](incident-response.md).
 - Gmail triggers start agents without the person typing anything, but only for rules they made on their Access-protected page, and only through Lettuce's own scheduler: see the security model in [gmail-triggers.md](gmail-triggers.md). News Radar does too, at the schedules agents set and only when something is new, within a daily cap per agent; the person sees and deletes them on their page: see [news-radar.md](news-radar.md#security-model). The sidecar reads Lettuce's Google token (read-only); `check` refuses any other service mounting it.

@@ -27,6 +27,7 @@ from .config import (
     UNHEALTHY_FAILURES,
 )
 from .extract import Item
+from .sites import sites_of
 
 MONITOR_ID = re.compile(r"[0-9a-f]{16}")
 REPORT_ID = re.compile(r"[0-9a-f]{32}")
@@ -90,7 +91,17 @@ CREATE TABLE IF NOT EXISTS monitors (
   where_terms TEXT NOT NULL DEFAULT '[]',
   from_now_at INTEGER,
   where_unknown TEXT NOT NULL DEFAULT 'keep',
+  -- 1 until the person confirms it on the page: it queues no report. Apart from
+  -- paused, which saving clears.
+  awaiting INTEGER NOT NULL DEFAULT 0,
   UNIQUE (agent_id, name)
+);
+-- A source's new spec that would move it to a site the person has not
+-- confirmed, while an active monitor uses it: applied only once they confirm.
+CREATE TABLE IF NOT EXISTS held_specs (
+  name TEXT PRIMARY KEY,
+  spec TEXT NOT NULL,
+  at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS reports (
   id TEXT PRIMARY KEY,
@@ -129,6 +140,34 @@ CREATE TABLE IF NOT EXISTS places (
 # queued: waiting for the executor; claimed: handed to it, waiting for its result.
 QUEUED, CLAIMED, OK, FAILED, LOST = "queued", "claimed", "ok", "failed", "lost"
 
+# Why a source is unhealthy, as stored and as a report says it: a fixed code
+# fetch.py or the runner chose, never text from the site (news-radar/monitors),
+# with the words the page shows. Anything else stored (a store from before)
+# reads as "other".
+REASONS = {
+    "http_status": "the site answers with an error",
+    "robots": "robots.txt refuses it",
+    "challenge": "a challenge or waiting room instead of the page",
+    "timeout": "the site does not answer in time",
+    "not_feed": "not a feed, and robots.txt refuses anything else",
+    "no_items": "no items, where its runs usually find some",
+    "extract_failed": "its items can't be read as before",
+    "refused_address": "not a public address",
+    "too_large": "its answer is too large",
+    "unconfirmed_site": "it leads to a site you have not confirmed",
+    "other": "it fails for another reason",
+}
+
+
+def reason_code(stored: str) -> str:
+    return stored if stored in REASONS else ("other" if stored else "")
+
+
+def reason_text(stored: str) -> str:
+    """The words the page shows for a stored reason ("" when healthy)."""
+    code = reason_code(stored)
+    return REASONS[code] if code else ""
+
 
 @dataclass
 class Monitor:
@@ -157,6 +196,8 @@ class Monitor:
     set_up_in: str = ""
     # When it was last saved with from_now: what its sources held then is its baseline.
     from_now_at: int | None = None
+    # Until the person confirms it on the page: no report.
+    awaiting: bool = False
 
     @property
     def reports_to(self) -> str:
@@ -181,6 +222,7 @@ class Monitor:
             "days_ahead": self.days_ahead,
             "news": self.news,
             "paused": self.paused,
+            "awaiting_confirmation": self.awaiting,
         }
 
 
@@ -277,10 +319,27 @@ class Store:
             ("where_terms", "TEXT NOT NULL DEFAULT '[]'"),
             ("from_now_at", "INTEGER"),
             ("where_unknown", "TEXT NOT NULL DEFAULT 'keep'"),
+            # Monitors from before keep reporting: never awaiting confirmation.
+            ("awaiting", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in columns:
                 with self._db:
                     self._db.execute(f"ALTER TABLE monitors ADD COLUMN {name} {definition}")
+        # The sites the person confirmed. Made once; on a store from before, every
+        # stored source's site counts as confirmed, so its monitors keep reporting.
+        exists = self._db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'confirmed_sites'"
+        ).fetchone()
+        if exists is None:
+            # sqlite3 opens no transaction of its own before CREATE: one explicit
+            # transaction keeps the table and its seed together.
+            self._db.execute("BEGIN IMMEDIATE")
+            with self._db:
+                self._db.execute("CREATE TABLE confirmed_sites (site TEXT PRIMARY KEY, at INTEGER NOT NULL)")
+                seed = sites_of(json.loads(r[0]) for r in self._db.execute("SELECT spec FROM sources"))
+                self._db.executemany(
+                    "INSERT OR IGNORE INTO confirmed_sites (site, at) VALUES (?, ?)", [(s, self.now()) for s in seed]
+                )
 
     def now(self) -> int:
         return int(self._clock())
@@ -351,7 +410,7 @@ class Store:
 
     def delete_source(self, name: str) -> None:
         with self._db:
-            for table in ("sources", "source_versions", "source_state"):
+            for table in ("sources", "source_versions", "source_state", "held_specs"):
                 self._db.execute(f"DELETE FROM {table} WHERE name = ?", (name,))
             self._db.execute("DELETE FROM items WHERE source = ?", (name,))
 
@@ -400,7 +459,7 @@ class Store:
             fill=json.loads(row["fill"]),
             sample=row["sample"],
             unhealthy_since=row["unhealthy_since"],
-            unhealthy_reason=row["unhealthy_reason"],
+            unhealthy_reason=reason_code(row["unhealthy_reason"]),
         )
 
     def source_state(self, name: str) -> SourceState:
@@ -423,10 +482,13 @@ class Store:
         last_modified: str = "",
         sample: str = "",
         fill: dict[str, float] | None = None,
+        code: str = "",
     ) -> None:
         """One run's outcome in one transaction: new and changed items, the
         conditional-request state, and the source's health. problem: what is wrong
-        with the run's items (extract.run_problem), "" when nothing is."""
+        with the run's items (extract.run_problem), "" when nothing is. code: why
+        a failed run failed (REASONS). The health keeps only reason codes: the
+        error, which may quote the site, stays in last_error for source_status."""
         now = self.now()
         state = self.source_state(name)
         with self._db:
@@ -441,7 +503,7 @@ class Store:
                     (now, failures, error, kept, name),
                 )
                 if failures >= UNHEALTHY_FAILURES:
-                    reason = f"{failures} failed runs in a row; the last: {error}"
+                    reason = reason_code(code) or "other"
                 elif state.unhealthy_since is not None:
                     reason = state.unhealthy_reason
             elif not_modified:
@@ -460,9 +522,9 @@ class Store:
                 self._store_items(name, items, watch, now)
                 previous = state.counts[-HISTORY_RUNS:]
                 if not items and previous and statistics.median(previous) >= UNHEALTHY_EMPTY_MEDIAN:
-                    reason = f"no items, where runs usually find about {int(statistics.median(previous))}"
-                elif items:
-                    reason = problem
+                    reason = "no_items"
+                elif items and problem:
+                    reason = "extract_failed"
             if reason:
                 self._db.execute(
                     "UPDATE source_state SET unhealthy_since = COALESCE(unhealthy_since, ?), unhealthy_reason = ? "
@@ -606,6 +668,7 @@ class Store:
             last_empty=row["last_empty"],
             set_up_in=row["set_up_in"],
             from_now_at=row["from_now_at"],
+            awaiting=bool(row["awaiting"]),
         )
 
     def monitors(self, agent_id: str | None = None) -> list[Monitor]:
@@ -628,10 +691,12 @@ class Store:
     def count_monitors(self) -> int:
         return self._db.execute("SELECT COUNT(*) FROM monitors").fetchone()[0]
 
-    def put_monitor(self, m: Monitor, delivered_upto: int | None = None) -> Monitor:
+    def put_monitor(self, m: Monitor, delivered_upto: int | None = None, awaiting: bool = False) -> Monitor:
         """Creates or replaces the agent's monitor of that name. A replaced one
         keeps what it has delivered, and comes back from a pause. delivered_upto,
-        when given, is where its next report starts (from_now)."""
+        when given, is where its next report starts (from_now). awaiting: it
+        waits for the person's confirmation (the caller decides; only
+        confirm_monitor clears it)."""
         now = self.now()
         values = (
             json.dumps(m.sources),
@@ -667,9 +732,61 @@ class Store:
                     "UPDATE monitors SET delivered_upto = ?, from_now_at = ? WHERE id = ?",
                     (delivered_upto, delivered_upto, monitor_id),
                 )
+            if awaiting:
+                self._db.execute("UPDATE monitors SET awaiting = 1 WHERE id = ?", (monitor_id,))
         stored = self.monitor(monitor_id)
         assert stored is not None
         return stored
+
+    def confirm_monitor(self, monitor_id: str, sites: Sequence[str]) -> None:
+        """The person confirmed it: it reports from now on, and its sources' sites count as confirmed."""
+        with self._db:
+            self._db.execute("UPDATE monitors SET awaiting = 0, updated = ? WHERE id = ?", (self.now(), monitor_id))
+            self._confirm_sites(sites)
+
+    # -- sites the person confirmed ---------------------------------------------------
+    def confirmed_sites(self) -> set[str]:
+        return {r[0] for r in self._db.execute("SELECT site FROM confirmed_sites")}
+
+    def _confirm_sites(self, sites: Sequence[str]) -> None:
+        now = self.now()
+        self._db.executemany(
+            "INSERT OR IGNORE INTO confirmed_sites (site, at) VALUES (?, ?)", [(s, now) for s in sites if s]
+        )
+
+    # -- source moves waiting for the person -------------------------------------------
+    def hold_spec(self, name: str, spec: dict[str, Any]) -> None:
+        """Keeps a new spec for the person to confirm, replacing one held before."""
+        with self._db:
+            self._db.execute(
+                "INSERT INTO held_specs (name, spec, at) VALUES (?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET spec = excluded.spec, at = excluded.at",
+                (name, json.dumps(spec, sort_keys=True), self.now()),
+            )
+
+    def held_spec(self, name: str) -> dict[str, Any] | None:
+        row = self._db.execute("SELECT spec FROM held_specs WHERE name = ?", (name,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def held_specs(self) -> dict[str, dict[str, Any]]:
+        rows = self._db.execute("SELECT name, spec FROM held_specs ORDER BY at, name")
+        return {r["name"]: json.loads(r["spec"]) for r in rows}
+
+    def drop_held(self, name: str) -> bool:
+        with self._db:
+            return self._db.execute("DELETE FROM held_specs WHERE name = ?", (name,)).rowcount == 1
+
+    def apply_held(self, name: str, sites: Sequence[str]) -> dict[str, Any] | None:
+        """The person confirmed a held move: its spec replaces the source's (reset,
+        as any new spec) and its sites count as confirmed. None if none was held."""
+        spec = self.held_spec(name)
+        if spec is None:
+            return None
+        self.put_source(name, spec, reset=True)
+        with self._db:
+            self._db.execute("DELETE FROM held_specs WHERE name = ?", (name,))
+            self._confirm_sites(sites)
+        return spec
 
     def set_monitor_conversation(self, monitor_id: str, conversation: str) -> None:
         """Where a monitor's reports go, as the person chose on the page; a monitor

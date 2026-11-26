@@ -6,6 +6,7 @@ import sys
 
 import uvicorn
 from lollo_common.auth import Authenticator
+from lollo_common.notify import Notifier
 
 from . import logs
 from .app import create_app
@@ -19,10 +20,13 @@ def main() -> None:
     logs.setup()
     try:
         settings = Settings.from_env()
-    except ConfigError as e:
+        # Notices of monitors and moves to confirm go through lollo-notifications,
+        # with this service's own token (NOTIFY_TOKEN).
+        notifier = Notifier.from_env("news-radar")
+    except (ConfigError, ValueError) as e:
         print(f"news-radar: {e}", file=sys.stderr)
         sys.exit(2)
-    service = Service(Store(settings.db_path), Fetcher(), settings)
+    service = Service(Store(settings.db_path), Fetcher(), settings, notifier)
     app = create_app(service, Authenticator(settings), settings.executor_token)
     uvicorn.run(
         app,

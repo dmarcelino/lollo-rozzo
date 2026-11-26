@@ -25,10 +25,15 @@ RUN npm ci --omit=dev --no-audit --no-fund \
  && test -x "$chrome" \
  && ! ldd "$chrome" | grep 'not found' \
  && npm cache clean --force && rm -rf /tmp/* /root/.npm
-# Managed policies: the only path Playwright's Chromium build reads.
-COPY policies.json /etc/opt/chrome_for_testing/policies/managed/lollo.json
-COPY launcher.mjs healthcheck.mjs entrypoint.sh ./
-RUN chmod 644 /etc/opt/chrome_for_testing/policies/managed/lollo.json launcher.mjs healthcheck.mjs \
+# Managed policies: the only path Playwright's Chromium build reads. The root is
+# read-only, so lollo.json there links to the file the launcher writes on the
+# /tmp tmpfs at every start: policies.json plus the stack's denied hosts
+# (policy.mjs). A missing link target means no policies, so the launcher
+# refuses to start Chromium when it can't write it.
+COPY policies.json launcher.mjs policy.mjs healthcheck.mjs entrypoint.sh ./
+RUN mkdir -p /etc/opt/chrome_for_testing/policies/managed \
+ && ln -s /tmp/policies/lollo.json /etc/opt/chrome_for_testing/policies/managed/lollo.json \
+ && chmod 644 policies.json launcher.mjs policy.mjs healthcheck.mjs \
  && chmod 755 entrypoint.sh \
  && groupadd --system --gid 10003 browser \
  && useradd --system --uid 10003 --gid 10003 --no-create-home --shell /usr/sbin/nologin browser

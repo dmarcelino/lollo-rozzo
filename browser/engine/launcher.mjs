@@ -8,6 +8,7 @@
 // did not start for another reason or exited, 0 stopped by SIGTERM/SIGINT.
 // Never logs the secret or the endpoint.
 import { chromium } from 'playwright-core';
+import { writePolicies } from './policy.mjs';
 
 const NAME = 'lollo-browser-engine';
 const SECRET_VAR = 'BROWSER_ENGINE_SECRET';
@@ -40,6 +41,13 @@ if (!/^[A-Za-z0-9_-]{32,}$/.test(secret)) {
 const proxy = process.env.BROWSER_PROXY ?? '';
 if (!/^http:\/\/[A-Za-z0-9.-]+:[0-9]{1,5}$/.test(proxy)) {
   die(2, 'BROWSER_PROXY must be http://<host>:<port> (pipelock)');
+}
+// The managed policies with the stack's denied hosts: Chromium never starts
+// without them (its password manager and autofill would be on too).
+try {
+  writePolicies(process.env);
+} catch (error) {
+  die(2, `refusing to start: ${error?.message ?? error}`);
 }
 
 let server;

@@ -15,8 +15,13 @@ fetch_proxy:
     # (its Node follows HTTPS_PROXY), and every agent and subagent of the stack
     # shares one model provider's budget.
     max_requests_per_minute: 1200
-    # blocklist is left out on purpose: omitting it keeps the shipped list
-    # (pastebin, transfer.sh, ...), while setting it replaces it.
+    # Setting a blocklist replaces pipelock's shipped one (pastebin,
+    # transfer.sh, ...), so the entrypoint writes it in place of the line below:
+    # the shipped entries (shipped-blocklist, which tests/run-pipelock.sh holds
+    # to `pipelock generate config --preset balanced`), then every stack's hosts
+    # and the Access team domain (LOLLO_DENY_HOSTS). Read as is, the line is a
+    # comment and pipelock keeps its shipped list.
+    # @lollo-blocklist@
 
 # Prompt injection in what pipelock reads itself: pages fetched through /fetch
 # (for HTTPS through the forward proxy it never sees the response). Balanced

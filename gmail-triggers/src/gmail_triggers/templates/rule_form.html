@@ -34,10 +34,25 @@
     <p class="hint">Any of the ticked labels. Gmail filters that label mail as it arrives count; labels added later by hand don't.</p>
   </fieldset>
 
-  <label class="field"><span>Only from <span class="hint">(optional)</span></span>
+  <label class="field"><span>Only from</span>
     <textarea name="senders" rows="3" class="short" placeholder="hal@example.com" autocomplete="off" spellcheck="false">{{ senders_text }}</textarea>
-    <span class="hint">One address per line. Leave empty for mail from anyone.</span>
+    <span class="hint">One address per line: only their mail sets this off. Or leave it empty and turn on the switch below.</span>
   </label>
+
+  <div class="menu-list">
+    <label class="menu-row">
+      <input type="checkbox" name="anyone"{% if rule.anyone %} checked{% endif %}>
+      <span class="menu-row-text">
+        <span class="menu-row-title">Anyone may set this off</span>
+        <span class="menu-row-desc">Any sender whose mail reaches these labels starts a task, with nobody watching. You get a notification for each sender this trigger has not seen before, and only {{ new_senders_per_day }} new senders a day start tasks; the rest are set aside.</span>
+      </span>
+    </label>
+  </div>
+  {% if rule.anyone %}
+  <div class="banner warn" role="note">
+    <p><strong>Anyone may set this trigger off.</strong> Any sender whose mail reaches its labels can start a task. List the senders you expect, if you can.{% if rule.set_aside %} {{ rule.set_aside }} email{{ "s" if rule.set_aside != 1 }} from new senders {{ "were" if rule.set_aside != 1 else "was" }} set aside so far.{% endif %}</p>
+  </div>
+  {% endif %}
 
   <div class="menu-list">
     <label class="menu-row">

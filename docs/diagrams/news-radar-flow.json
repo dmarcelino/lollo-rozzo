@@ -140,7 +140,7 @@
       "from": "agent",
       "to": "you",
       "y": 320,
-      "label": "the times in words, a preview",
+      "label": "the times in words, a preview, the link to confirm it",
       "variant": "return"
     },
     {

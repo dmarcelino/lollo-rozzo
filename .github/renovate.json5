@@ -16,9 +16,9 @@
   },
   packageRules: [
     // Patch, minor and digest updates merge on their own once CI passes (GitHub
-    // auto-merge, with the CI jobs required on main), after three days (Lettuce
-    // one, below), so a release that is pulled or compromised early never
-    // merges by itself.
+    // auto-merge, with ci-passed required on main), after three days, so a
+    // release that is pulled or compromised early never merges by itself. Not
+    // Lettuce (below), and not the others that rules below hold for a person.
     {
       matchUpdateTypes: ['patch', 'minor', 'digest'],
       automerge: true,
@@ -34,8 +34,8 @@
       automerge: false,
       prBodyNotes: ['The registry gives no release date, so this update could not be held: it waits for a person.'],
     },
-    // These have upgrade steps CI does not run: their patch updates merge on
-    // their own, their minor and major ones wait for a person.
+    // These have upgrade steps CI does not run: their patch updates get PRs of
+    // their own, apart from their minor and major ones.
     {
       matchDepNames: ['dmarchevsky/lettuce', 'coder/code-server', 'gotenberg/gotenberg'],
       separateMinorPatch: true,
@@ -45,18 +45,12 @@
       matchDepNames: ['dmarchevsky/lettuce'],
       minimumReleaseAge: '1 day',
     },
+    // Lettuce defines the isolation every stack relies on: no update of it, patch
+    // tags included, merges without a person reading upstream's Compose changes.
     {
       matchDepNames: ['dmarchevsky/lettuce'],
-      matchUpdateTypes: ['minor', 'major'],
       automerge: false,
-      prBodyNotes: ['Before merging, walk the Lettuce upgrade checklist: CONTRIBUTING.md, "Upgrading `LETTUCE_REF`".'],
-    },
-    // A Lettuce patch tag that moves letta-code moves the app-server too.
-    {
-      matchDepNames: ['dmarchevsky/lettuce'],
-      matchJsonata: ["$substringAfter(currentValue, '-letta_') != $substringAfter(newValue, '-letta_')"],
-      automerge: false,
-      prBodyNotes: ['This tag moves letta-code (the app-server). Before merging, walk the Lettuce upgrade checklist: CONTRIBUTING.md, "Upgrading `LETTUCE_REF`".'],
+      prBodyNotes: ['Lettuce never merges on its own. Before merging, read the diff of upstream\'s `docker/compose.yml` between the two tags (a new service, mount, capability or privilege), and walk the Lettuce upgrade checklist: CONTRIBUTING.md, "Upgrading `LETTUCE_REF`". If the tag moves letta-code (the part after `-letta_`), it moves the app-server too.'],
     },
     {
       matchDepNames: ['coder/code-server'],

@@ -28,8 +28,11 @@ git fetch origin --tags
 git status --porcelain            # must be empty
 git rev-parse --abbrev-ref HEAD   # must be main
 git rev-parse HEAD origin/main    # must be equal
+scripts/check-github-settings.sh  # must say the settings match
 ```
-Stop and say why if any of them fails. Do not stash, reset or rebase to make them pass.
+Stop and say why if any of them fails. The last one compares the repository's rulesets and
+immutable releases with `release/github-settings.json`; a difference means a release could be
+moved or merged past CI, so report it and let the user fix the settings first. Do not stash, reset or rebase to make them pass.
 
 ## 2. Work out the tag
 - X.Y.Z is `VERSION`, unless the argument names another.

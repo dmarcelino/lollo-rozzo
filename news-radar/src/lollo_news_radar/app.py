@@ -21,10 +21,12 @@ from urllib.parse import urlsplit
 import anyio
 from lollo_common.auth import COOP, FORM, PAGE, Authenticator, AuthError, admit
 from lollo_common.executor import request_routes
+from lollo_common.limits import BodyLimit
 from lollo_common.lollo import stylesheet
 from jinja2 import Environment, PackageLoader, select_autoescape
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -33,8 +35,9 @@ from . import icons
 from .config import HEARTBEAT_STALE_SECONDS, INTERNAL_NAME, LOST_AFTER_SECONDS, MAX_CLAIM, NAME, PREFIX
 from .cron import Schedule
 from .mcp_tools import build_server
-from .service import Service, ToolError, reports_per_day
-from .store import MONITOR_ID, ExecutorQueue, Monitor
+from .service import Changed, Service, ToolError, reports_per_day
+from .sites import spec_sites
+from .store import MONITOR_ID, ExecutorQueue, Monitor, reason_text
 
 log = logging.getLogger("lollo_news_radar.app")
 
@@ -58,6 +61,9 @@ NOTICES = {
     "conversation": "Where its reports go is changed.",
     "place-added": "Place saved.",
     "place-deleted": "Place deleted.",
+    "confirmed": "Monitor confirmed: it reports from now on.",
+    "move-confirmed": "The source's new site is confirmed: it reads it from now on.",
+    "move-discarded": "The source's move is discarded: it keeps reading the site it had.",
 }
 # A place's key in its delete URL: compacted letters and digits.
 PLACE_KEY = re.compile(r"\w{1,80}")
@@ -78,10 +84,19 @@ STATUS_TEXT = {
 # How often the loops look for work.
 FETCH_TICK = 15.0
 SCHEDULE_TICK = 20.0
+# How soon a notice a tool queued reaches lollo-notifications.
+NOTICE_TICK = 2.0
 
 
 class FormError(Exception):
     pass
+
+
+# Confirm approves only what the page showed (news-radar/monitors).
+CHANGED = (
+    "An agent changed this since the page showed it, so nothing was confirmed. "
+    "Go back, check what it reads now, then confirm again."
+)
 
 
 def where_reports_go(m: Monitor) -> str:
@@ -218,15 +233,46 @@ def create_app(
                     "every": raw.get("every", ""),
                     "place": raw.get("place", ""),
                     "healthy": st.healthy if st else True,
-                    "reason": st.unhealthy_reason if st else "",
+                    "reason": reason_text(st.unhealthy_reason) if st else "",
                     "last_ok": st.last_ok if st else None,
                     "used_by": users.get(name, []),
                     "unused": not users.get(name),
                 }
             )
+        # What waits for the person comes first: monitors to confirm, with each
+        # source's site (new ones marked), and moves of a source to another site.
+        specs = store.source_specs()
+        confirmed = store.confirmed_sites()
+        # Each with a fingerprint of what is shown, which Confirm posts back: what
+        # changed since is not confirmed.
+        awaiting = [
+            {
+                "monitor": m,
+                "agent": names.get(m.agent_id, m.agent_id),
+                "sources": [
+                    {"name": s, "site": site, "new": site not in confirmed} for s, site in service.confirm_view(m)
+                ],
+                "shown": service.monitor_fingerprint(m),
+            }
+            for m in store.monitors()
+            if m.awaiting
+        ]
+        moves = [
+            {
+                "name": name,
+                "before": ", ".join(sorted(spec_sites(specs.get(name, {})))),
+                "after": ", ".join(sorted(spec_sites(held))),
+                "url": str(held.get("url", "")),
+                "used_by": users.get(name, []),
+                "shown": service.move_fingerprint(name),
+            }
+            for name, held in store.held_specs().items()
+        ]
         return render(
             "index.html",
             email,
+            awaiting=awaiting,
+            moves=moves,
             groups=sorted(((names.get(a, a), ms) for a, ms in groups.items()), key=lambda g: g[0].lower()),
             last_reports=store.last_reports(),
             sources=sources,
@@ -235,6 +281,37 @@ def create_app(
             timezone=service.settings.timezone,
             notice=NOTICES.get(request.query_params.get("done", "")),
         )
+
+    async def confirm_monitor(request: Request, email: str) -> Response:
+        mid = request.path_params["mid"]
+        m = store.monitor(mid) if MONITOR_ID.fullmatch(mid) else None
+        if m is None:
+            raise FormError("This monitor doesn't exist (any more).")
+        try:
+            service.confirm_monitor(m.id, shown=str((await request.form()).get("shown", "")))
+        except Changed:
+            raise FormError(CHANGED) from None
+        log.info("monitor confirmed on the page")
+        return back("/?done=confirmed")
+
+    async def confirm_move(request: Request, email: str) -> Response:
+        name = request.path_params["name"]
+        try:
+            if not NAME.fullmatch(name) or not service.confirm_move(
+                name, shown=str((await request.form()).get("shown", ""))
+            ):
+                raise FormError("This change of site doesn't exist (any more).")
+        except Changed:
+            raise FormError(CHANGED) from None
+        log.info("source move confirmed on the page")
+        return back("/?done=move-confirmed")
+
+    async def discard_move(request: Request, email: str) -> Response:
+        name = request.path_params["name"]
+        if not NAME.fullmatch(name) or not store.drop_held(name):
+            raise FormError("This change of site doesn't exist (any more).")
+        log.info("source move discarded on the page")
+        return back("/?done=move-discarded")
 
     async def delete_monitor(request: Request, email: str) -> Response:
         mid = request.path_params["mid"]
@@ -318,7 +395,10 @@ def create_app(
 
     ui = [
         Route("/", page(index)),
+        Route("/m/{mid}/confirm", page(confirm_monitor, post=True), methods=["POST"]),
         Route("/m/{mid}/delete", page(delete_monitor, post=True), methods=["POST"]),
+        Route("/s/{name}/move/confirm", page(confirm_move, post=True), methods=["POST"]),
+        Route("/s/{name}/move/discard", page(discard_move, post=True), methods=["POST"]),
         Route("/m/{mid}/conversation", page(set_conversation, post=True), methods=["POST"]),
         Route("/s/{name}/delete", page(delete_source, post=True), methods=["POST"]),
         Route("/p", page(add_place, post=True), methods=["POST"]),
@@ -361,12 +441,22 @@ def create_app(
                 log.exception("schedule loop")
             await anyio.sleep(SCHEDULE_TICK)
 
+    async def notice_loop() -> None:
+        # The tools only queue notices; this hands them to lollo-notifications.
+        while True:
+            try:
+                await service.send_notices()
+            except Exception:  # noqa: BLE001
+                log.exception("notice loop")
+            await anyio.sleep(NOTICE_TICK)
+
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         async with mcp_app.router.lifespan_context(mcp_app), anyio.create_task_group() as tg:
             if run_loops:
                 tg.start_soon(fetch_loop)
                 tg.start_soon(schedule_loop)
+                tg.start_soon(notice_loop)
             try:
                 yield
             finally:
@@ -381,4 +471,6 @@ def create_app(
             Mount("/", app=mcp_app),
         ],
         lifespan=lifespan,
+        # Bodies are capped before anything reads them, MCP calls included (lollo_common.limits).
+        middleware=[Middleware(BodyLimit)],
     )

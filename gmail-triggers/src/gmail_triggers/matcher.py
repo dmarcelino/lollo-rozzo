@@ -41,6 +41,8 @@ class RuleView:
     label_ids: frozenset[str]
     senders: frozenset[str]
     verified_only: bool
+    # Any sender may set it off: the person turned the switch on.
+    anyone: bool = False
 
 
 def sender_address(from_header: str) -> str:
@@ -98,6 +100,10 @@ def is_ignored(message: Message, own_address: str) -> bool:
 
 def rule_matches(rule: RuleView, message: Message) -> bool:
     if not rule.label_ids & message.label_ids:
+        return False
+    # No senders and no "anyone" switch: the form never saves such a rule, and
+    # one found anyway (an edited database) matches nothing.
+    if not rule.senders and not rule.anyone:
         return False
     if rule.senders and message.sender not in rule.senders:
         return False

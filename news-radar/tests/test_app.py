@@ -144,6 +144,15 @@ def test_healthz(internal):
     assert internal.get("/healthz").text == "ok"
 
 
+def test_mcp_and_the_executor_api_refuse_a_large_body(internal):
+    big = b"{" + b" " * (2 * 1024 * 1024) + b"}"
+    headers = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
+    assert internal.post("/mcp", content=big, headers=headers).status_code == 413
+    assert internal.post("/executor/v1/results", content=big, headers={**AUTH, **headers}).status_code == 413
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    assert internal.post("/mcp", json=body, headers=headers).status_code == 200
+
+
 @pytest.mark.anyio
 async def test_the_person_chooses_where_reports_go(client, service, web, store):
     await setup_monitor(service, web)

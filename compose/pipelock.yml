@@ -21,6 +21,11 @@ services:
     image: ${LOLLO_IMAGE_PIPELOCK:-lollo-pipelock:local}
     environment:
       TZ: ${TZ:-UTC}
+      # Every stack's Lettuce and lollo hosts and the Access team domain, which
+      # the entrypoint adds to the shipped blocklist: the browser's engine, whose
+      # only way out this is, can never complete the person's Access sign-in.
+      # lolloctl's (deny_hosts), never stack.env's; check_browser checks it.
+      LOLLO_DENY_HOSTS: ${LOLLO_DENY_HOSTS:-}
     volumes:
       - pipelock-data:/data
     read_only: true

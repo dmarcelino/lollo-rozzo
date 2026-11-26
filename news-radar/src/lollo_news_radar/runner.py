@@ -46,6 +46,9 @@ SAMPLE = 600
 class RunResult:
     items: list[Item] = field(default_factory=list)
     error: str = ""
+    # Why it failed, as one of the fixed reason codes (store.REASONS): what a
+    # report may say, where `error` may quote the site.
+    code: str = ""
     not_modified: bool = False
     etag: str = ""
     last_modified: str = ""
@@ -59,6 +62,8 @@ class RunResult:
     largest_block: dict[str, Any] = field(default_factory=dict)
     # An rss source's feed read past robots.txt: Page.robots_exempt's "disallowed" or "unreadable".
     robots_exempt: str = ""
+    # Links to follow left alone: on a site the run may not read (run_source's site_ok).
+    off_site: int = 0
 
     @property
     def ok(self) -> bool:
@@ -85,7 +90,9 @@ def sample_of(page: Page) -> str:
     return one_line(page.text(), SAMPLE)
 
 
-async def _index_entries(spec: Spec, index: Page, fetcher: Fetcher, max_wait: float | None) -> list[tuple[str, str]]:
+async def _index_entries(
+    spec: Spec, index: Page, fetcher: Fetcher, max_wait: float | None, site_ok: Callable[[str], bool] | None
+) -> list[tuple[str, str]]:
     """A sitemap index's newest files of each of the spec's families, read and
     combined. Each family's newest must be read (its error, a pause included, is the
     run's: a file broken for good must show); an older one that can't be is left out."""
@@ -94,7 +101,7 @@ async def _index_entries(spec: Spec, index: Page, fetcher: Fetcher, max_wait: fl
         lists = []
         for rank, url in enumerate(files):
             try:
-                page = await fetcher.get(url, accept=ACCEPT["sitemap"], max_wait=max_wait)
+                page = await fetcher.get(url, accept=ACCEPT["sitemap"], max_wait=max_wait, site_ok=site_ok)
                 lists.append(sitemap_entries(spec, page))
             except (FetchError, ExtractError):
                 if rank == 0:
@@ -114,10 +121,15 @@ async def run_source(
     max_follow: int | None = None,
     max_wait: float | None = None,
     look_for_blocks: bool = False,
+    site_ok: Callable[[str], bool] | None = None,
 ) -> RunResult:
     """Never raises for what a site does: the result's error says why the run failed.
     look_for_blocks (source_test): keep the first page's top repeated block, to
-    compare with the items found."""
+    compare with the items found. site_ok: what every URL the run asks for must
+    pass, its pages, a sitemap's files, the links it follows and every redirect
+    (news-radar/monitors: a run reads only sites the person confirmed); a page or
+    sitemap file that fails it fails the run (unconfirmed_site), a link to follow
+    that fails it is left alone (off_site)."""
     result = RunResult()
     accept = ACCEPT[spec.kind]
     # Conditional requests only make sense for a source that is a single request.
@@ -141,10 +153,12 @@ async def run_source(
                 max_wait=max_wait,
                 # Only the feed itself, as a feed reader reads it: never what it links to.
                 feed=spec.kind == "rss",
+                site_ok=site_ok,
             )
         except FetchError as e:
             if i == 0:
                 result.error = str(e)
+                result.code = e.code
                 result.retry_after = e.retry_after
                 if e.page is not None:
                     result.sample = sample_of(e.page)
@@ -170,7 +184,7 @@ async def run_source(
             # A followed sitemap's items come from its pages; its own entries are only links,
             # read here once so that a page that is not a sitemap fails the run.
             if spec.kind == "sitemap" and spec.extract.get("sitemaps"):
-                entries = await _index_entries(spec, page, fetcher, max_wait)
+                entries = await _index_entries(spec, page, fetcher, max_wait, site_ok)
                 if spec.follow:
                     found, sitemap_links = [], [url for url, _ in entries]
                 else:
@@ -182,6 +196,7 @@ async def run_source(
         except (ExtractError, FetchError) as e:  # FetchError: an index's sitemap file
             if i == 0:
                 result.error = str(e)
+                result.code = e.code if isinstance(e, FetchError) else "extract_failed"
                 result.retry_after = getattr(e, "retry_after", 0)
                 return result
             break
@@ -198,12 +213,14 @@ async def run_source(
                 listed = sitemap_links[: spec.follow["max"]]
             else:
                 listed = follow_links(spec, first)
-            links = [u for u in listed if not known_url(u)][:most]
+            allowed = [u for u in listed if site_ok is None or site_ok(u)]
+            result.off_site = len(listed) - len(allowed)
+            links = [u for u in allowed if not known_url(u)][:most]
         except ExtractError:
             links = []
         for link in links:
             try:
-                page = await fetcher.get(link, accept=ACCEPT["html"], max_wait=max_wait)
+                page = await fetcher.get(link, accept=ACCEPT["html"], max_wait=max_wait, site_ok=site_ok)
                 root = html_document(page)
             except (FetchError, etree.ParserError, ValueError):
                 result.follow_errors += 1

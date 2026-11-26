@@ -25,6 +25,11 @@ How pipelock is built and wired, for developers: [pipelock/README.md](../pipeloc
   a stack where it would.
 - **Destination checks** (balanced mode, `pipelock/pipelock.yaml`):
   - a short built-in blocklist of paste and file-drop sites (pastebin, transfer.sh, ...);
+  - your stacks' own addresses: the Lettuce and lollo host of every stack on this host, and your
+    Cloudflare Access sign-in domain (`<team>.cloudflareaccess.com`). Nothing in the stack needs
+    them, and refused here the browser can never sign in to your own pages as you (see "The
+    browser's engine"). A URL that only names one of them in a query, such as a search for it,
+    is refused too;
   - private, internal and cloud-metadata addresses (SSRF): the LAN, the host, `169.254.169.254`.
     This covers letta-code's model calls too: a model server elsewhere on your network is
     refused unless you list it in `PIPELOCK_DIRECT` (see "A model server on your network");
@@ -56,6 +61,13 @@ boundary on where requests go. It is still only a destination check: it does not
 HTTPS, it lets through any site not on its short blocklist, and it does not make what a page
 shows the agent safe ([docs/browser.md](browser.md) has the browser's own security model). The
 host's own public address counts as public, so a page can reach any port the host serves on it.
+
+One thing it does refuse for the browser, by any route (a link, a redirect, a frame, a page's
+script): your stacks' own Lettuce and lollo pages and your Access sign-in page. A browser task
+that holds a Google session could otherwise sign in to your pages through Access, and then
+approve its own vault requests as you. `lolloctl check` refuses a stack with the browser whose
+pipelock lacks them. A stack you add reaches the other stacks' lists at their next
+`lolloctl up`.
 
 Never give the pipelock of a stack that can run the browser `trusted_domains` (they skip the
 private-address check): pages could then reach those hosts.

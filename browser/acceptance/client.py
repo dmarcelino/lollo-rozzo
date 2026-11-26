@@ -368,13 +368,46 @@ def case_unreachable() -> None:
     call("end_task", task=task)
 
 
+DENIED_NAVIGATIONS = [
+    "https://alfred-lollo.stack.test/acc-denied-nav",
+    "https://ALFRED-LOLLO.stack.test./acc-denied-dot",
+    "https://alfred%2Dlollo.stack.test/acc-denied-pct",
+    "https://shop.acme-shop.test/redirect?hops=2&to=https%3A%2F%2Falfred-lollo.stack.test%2Facc-denied-302",
+]
+
+
+def case_denied() -> None:
+    """The stack's own host (LOLLO_DENY_HOSTS) by any route; the runner checks
+    the fixture got no request for it."""
+    task = call("start_task", purpose="acceptance: the stack's own host")["task"]
+    tab = call("open_tab", task=task, url="https://shop.acme-shop.test/acc-denied-control")["tab"]
+    check("denied: control: a fixture site loads", "fixture shop.acme-shop.test" in wait_text(
+        task, tab, "fixture shop.acme-shop.test"), "the control page did not load")
+    loaded = []
+    for url in DENIED_NAVIGATIONS:
+        try:
+            r = call("navigate", task=task, tab=tab, url=url)
+            text = snapshot(task, tab)
+            if "fixture alfred-lollo.stack.test" in text:
+                loaded.append(url)
+            info(f"navigate {url}: {r.get('url')}: {' '.join(text.split())[:120]}")
+        except ToolError as e:
+            info(f"navigate {url}: {str(e)[:120]}")
+    check("denied: no navigation to the stack's own host loaded it", not loaded, str(loaded))
+    page = call("open_tab", task=task, url="https://shop.acme-shop.test/pages/denied.html")["tab"]
+    snap = wait_text(task, page, "probes done", 30)
+    check("denied: the page with a frame, fetches and a service worker ran", "probes done" in snap, snap[:400])
+    call("end_task", task=task)
+
+
 def main() -> None:
     reply = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                "clientInfo": {"name": "acceptance", "version": "1"}})
     check("mcp: the agent's client reaches /mcp from the stack network", "result" in reply, str(reply))
     tools = {t["name"] for t in rpc("tools/list", {})["result"]["tools"]}
     info(f"tools: {', '.join(sorted(tools))}")
-    for case in (case_isolation, case_secrets, case_lookalike, case_load, case_webrtc_quic, case_unreachable):
+    for case in (case_isolation, case_secrets, case_lookalike, case_load, case_webrtc_quic, case_unreachable,
+                 case_denied):
         try:
             case()
         except Exception as e:  # a crash in one case fails it, the others still run

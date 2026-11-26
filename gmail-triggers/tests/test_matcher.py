@@ -18,8 +18,15 @@ def msg(mid="m1", labels=("INBOX",), sender="Hal <hal@example.com>", subject="Hi
     return parse_message({"id": mid, "labelIds": list(labels), "headers": headers})
 
 
-def rule(rid="r1", labels=("INBOX",), senders=(), verified=False) -> RuleView:
-    return RuleView(rid, frozenset(labels), frozenset(senders), verified)
+def rule(rid="r1", labels=("INBOX",), senders=(), verified=False, anyone=None) -> RuleView:
+    # A rule without senders is one anyone may set off, unless said otherwise.
+    return RuleView(rid, frozenset(labels), frozenset(senders), verified, not senders if anyone is None else anyone)
+
+
+def test_no_senders_without_the_anyone_switch_matches_nothing():
+    """The form never saves such a rule; one found in the database matches nothing."""
+    assert match([msg()], [rule(anyone=False)], EMAIL) == {}
+    assert match([msg()], [rule(anyone=True)], EMAIL) == {"r1": [msg()]}
 
 
 def test_labels_any_of():

@@ -21,8 +21,9 @@
 # code, like the build contexts; in release mode the lolloctl image carries it.
 # `lolloctl check` refuses a stack where either service loses its hardening,
 # the engine another network, its seccomp profile or its sandbox, the
-# `browser` network a member or `internal`, or another service mounts
-# browser-data (check_browser, check_stack).
+# `browser` network a member or `internal`, another service mounts
+# browser-data, or pipelock or the engine lacks the stack's own hosts in
+# LOLLO_DENY_HOSTS (check_browser, check_stack).
 # Relative paths resolve against --project-directory (upstream/docker).
 services:
   lollo-browser-engine:
@@ -35,6 +36,8 @@ services:
       # lollo-browser and the engine get it.
       BROWSER_ENGINE_SECRET: ${BROWSER_ENGINE_SECRET:-}
       BROWSER_PROXY: http://lollo-pipelock:8888
+      # Blocked by Chromium's policy too, as well as by pipelock (pipelock.yml).
+      LOLLO_DENY_HOSTS: ${LOLLO_DENY_HOSTS:-}
       TZ: ${TZ:-UTC}
     networks:
       - browser
@@ -74,6 +77,8 @@ services:
       CF_ACCESS_ISSUER: ${CF_ACCESS_ISSUER:-}
       ALLOWED_USERS: ${ALLOWED_USERS:-}
       PUBLIC_ORIGIN: ${LOLLO_ORIGIN:-}
+      # Kept sign-ins never save nor load these hosts' cookies or storage.
+      LOLLO_DENY_HOSTS: ${LOLLO_DENY_HOSTS:-}
       TZ: ${TZ:-UTC}
     # default: the app-server (/mcp) and cloudflared (/browser/); browser: the engine.
     networks:
