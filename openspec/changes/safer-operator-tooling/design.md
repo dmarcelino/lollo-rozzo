@@ -68,18 +68,20 @@ The command is `docker run --rm --network none --read-only --cap-drop ALL --cap-
 - Add `git` to the lolloctl image. Rejected: it grows the image for one check, and the container approach also settles links.
 
 ### 6. What the scan looks at
-The script walks the workspace with `find -P` to depth 6. It prunes `node_modules`, `.venv` and `vendor`, and stops at 50,000 entries; past the limit the scan is incomplete, which is a finding. Depth matters because agents keep several repositories in one workspace, and git and Claude Code run in subdirectories.
+The script walks the workspace with `find -P` to depth 6. It prunes `node_modules`, `.venv`, `venv`, `vendor`, `target`, `build`, `dist`, `.next`, `__pycache__`, `.cache`, `.tox`, `.gradle`, `.mypy_cache` and `.git`, and stops at 50,000 entries; past the limit the scan is incomplete, which is a finding. Depth matters because agents keep several repositories in one workspace, and git and Claude Code run in subdirectories.
 
 Repositories are searched for apart from that walk, at any depth and in the pruned folders too, since git reads the configuration of whichever repository it is used in. That search only lists names, so a time limit (60 seconds) bounds it instead of the entry cap; a search that does not finish in time, or more than 50,000 repositories, leaves the scan incomplete.
 
 The toolbox mounts the whole workspaces directory at `/work`, which every agent can write. The scan reports `.git`, `.gitattributes`, `.gitmodules`, `.claude/`, `.mcp.json`, `.envrc` and `.npmrc` there, and the toolbox sets `GIT_CEILING_DIRECTORIES=/work`, so git never takes `/work` for a repository from a workspace that is not one.
+
+The allow-list takes what ordinary git use writes: a clone, fetch, pull and push, submodules (`submodule.*.url`, `submodule.*.active`, and `core.worktree` in a submodule's own git directory only), linked worktrees, husky (`core.hooksPath`, which the toolbox overrides), `gh` forks (`remote.*.gh-resolved`) and partial or sparse clones. A `.git` file naming its repository's `.git/modules/...` or `.git/worktrees/...` directory, inside the workspace with no link on the way, is read with that repository, as is a worktree's `commondir` naming it; Git LFS's `lfs` drivers in `.gitattributes` pass. A `find` that loses a folder during the search (a build) is not a failure.
 
 For each `.git` it finds:
 - **A file** (`gitdir:`): a finding.
 - **A directory:**
   - Keys in `config`, and in `config.worktree` if present, outside the allow-list. The allow-list covers repository format and core flags (`repositoryformatversion`, `filemode`, `bare`, `logallrefupdates`, `ignorecase`, `precomposeunicode`, `symlinks`, `autocrlf`, `eol`); `remote.*.{url,pushurl,fetch,tagopt,prune}`; `branch.*.{remote,merge,rebase,pushremote}`; `user.{name,email}`; `pull.*`; `push.default`; `push.autosetupremote`; `init.defaultbranch`; `fetch.prune`; `extensions.{objectformat,worktreeconfig}`; and `lfs.repositoryformatversion`.
   - Any remote URL whose transport is `ext::` or `fd::`.
-  - Files in `hooks/` not ending in `.sample`.
+  - Hooks are not read: the toolbox forces `core.hooksPath` (decision 7), so none runs there, and listing them would refuse every workspace that uses pre-commit, husky or Git LFS.
   - Any `filter=`, `diff=` or `merge=` driver in `info/attributes`.
 - **At the repository root:** `.gitattributes` lines that assign a `filter`, `diff` or `merge` driver. Built-in values (`binary`, `text`, `union`, a bare `diff` or `-diff`) are allowed. Also `.gitmodules` entries with `update`.
 

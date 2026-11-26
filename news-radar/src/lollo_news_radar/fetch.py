@@ -393,21 +393,21 @@ class Fetcher:
         fails without a request until robots.txt is read again (a 429 or 5xx is
         asked again). A host whose robots.txt could not be asked for at all is
         not asked for the feed either, and a pause robots.txt's 429 or 503 asks
-        for holds the feed too. site_ok: every URL asked for, the first and each
-        redirect's, must pass it, or the fetch fails (unconfirmed_site) before
-        any request to that URL's site, its robots.txt included."""
+        for holds the feed too. site_ok: the URL asked for must pass it, or the
+        fetch fails (unconfirmed_site) before any request to its site, robots.txt
+        included. Where that site redirects is its own choice, as are the links
+        on its pages: those are only held to the fetcher's public-address rules."""
         check_url(url)
+        if site_ok is not None and not site_ok(url):
+            # A source reads only from sites the person confirmed (and its own site
+            # while no active monitor reads it).
+            raise FetchError(
+                f"is on {site_of(url) or 'a URL'}, a site the person has not confirmed", code="unconfirmed_site"
+            )
         refused: FetchError | None = None
         exempt = ""
         refused_hops: list[str] = []
         for _ in range(MAX_REDIRECTS + 1):
-            if site_ok is not None and not site_ok(url):
-                # A run reads only the sites the person confirmed (and the source's own
-                # site while no active monitor reads it): a redirect elsewhere ends here,
-                # before any request to that site.
-                raise FetchError(
-                    f"leads to {site_of(url) or 'a URL'}, a site the person has not confirmed", code="unconfirmed_site"
-                )
             if any(h in (urlsplit(url).hostname or "") for h in WAITING_ROOM_HOSTS):
                 raise FetchError("sent to a waiting room", code="challenge")
             wait_limit = self._max_wait if max_wait is None else min(max_wait, self._max_wait)

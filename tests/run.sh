@@ -3966,7 +3966,6 @@ test_toolbox_scan_script_finds_what_runs_code() {
     "a/b/nested/.git/config: a remote URL with the ext:: transport" \
     "a/b/nested/.git/config: core.editor" \
     "a/b/nested/.git/config: core.fsmonitor" \
-    "a/b/nested/.git/hooks/post-checkout: a hook" \
     "gitfile/.git: a git file naming another directory, whose configuration was not read" \
     "linkrepo/.git/config: a symbolic link, not read" \
     "node_modules/x/.git/config: credential.helper" \
@@ -4004,6 +4003,47 @@ test_toolbox_scan_script_reads_every_repository_and_the_directory_above() {
   eq "$RC" 4
   tr '\0' '\n' <"$T/raw" | grep -qx ".: the search for repositories did not finish in 0.0001 seconds, so the scan is incomplete" ||
     fail "a timed-out search was not reported: $(tr '\0' '\n' <"$T/raw")"
+}
+
+# What ordinary git use writes passes: a submodule, a linked worktree, Git
+# LFS, husky, a gh fork, a partial clone, a pre-commit hook (the toolbox
+# forces core.hooksPath, so no hook runs there) and a big build folder.
+test_toolbox_scan_script_passes_ordinary_repositories() {
+  local w=$T/work/agent-1
+  local -a g=(env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c user.name=hal -c user.email=hal@example.com
+    -c init.defaultBranch=main -c protocol.file.allow=always)
+  mkdir -p "$w" "$T/lib"
+  "${g[@]}" -C "$T/lib" init -q
+  "${g[@]}" -C "$T/lib" commit -q --allow-empty -m lib
+  "${g[@]}" -C "$w" init -q main
+  "${g[@]}" -C "$w/main" commit -q --allow-empty -m one
+  "${g[@]}" -C "$w/main" submodule --quiet add "$T/lib" lib
+  "${g[@]}" -C "$w/main" worktree add -q "$w/wt"
+  "${g[@]}" -C "$w/main" config remote.origin.url https://example.com/r.git
+  "${g[@]}" -C "$w/main" config remote.origin.gh-resolved base
+  "${g[@]}" -C "$w/main" config remote.origin.promisor true
+  "${g[@]}" -C "$w/main" config remote.origin.partialclonefilter blob:none
+  "${g[@]}" -C "$w/main" config core.hooksPath .husky
+  "${g[@]}" -C "$w/main" config core.sparseCheckout false
+  printf '*.psd filter=lfs diff=lfs merge=lfs -text\n' >"$w/main/.gitattributes"
+  printf '#!/bin/sh\nexec pre-commit\n' >"$w/main/.git/hooks/pre-commit"
+  mkdir -p "$w/main/target/debug"
+  touch "$w/main/target/debug/"{1..30}
+  RC=0
+  bash -s -- "$w" 6 20 <<<"$(scan_script)" >"$T/raw" || RC=$?
+  ok_rc
+  eq "$(tr '\0' '\n' <"$T/raw")" ""
+  # A repository of the workspace naming a work tree elsewhere still counts.
+  "${g[@]}" -C "$w/main" config core.worktree /root
+  RC=0
+  bash -s -- "$w" 6 20 <<<"$(scan_script)" >"$T/raw" || RC=$?
+  eq "$(tr '\0' '\n' <"$T/raw")" "main/.git/config: core.worktree"
+  # And so does a git file naming a directory outside a repository it holds.
+  "${g[@]}" -C "$w/main" config --unset core.worktree
+  echo "gitdir: $T/lib/.git" >"$w/wt/.git"
+  RC=0
+  bash -s -- "$w" 6 20 <<<"$(scan_script)" >"$T/raw" || RC=$?
+  eq "$(tr '\0' '\n' <"$T/raw")" "wt/.git: a git file naming another directory, whose configuration was not read"
 }
 
 test_toolbox_scan_script_calls_a_big_workspace_incomplete() {
@@ -4900,6 +4940,9 @@ test_audit_reports_an_accepted_container_file_written_again() {
   audit_ok
   # Only accepted entries are read; a directory is accepted by its name.
   log_has "docker cp app-server-cid:/usr/bin/git-helper -"
+  # The same bytes copied again on a restart: still the accepted file.
+  touch -d '2001-01-01 00:00' "$T/container/usr/bin/git-helper"
+  audit_ok
   printf 'two\n' >"$T/container/usr/bin/git-helper"
   touch "$T/container/usr/local/lib/tool/new"
   audit_finds "container: A /usr/bin/git-helper (changed since it was accepted"

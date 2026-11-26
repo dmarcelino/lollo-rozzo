@@ -44,7 +44,7 @@ An agent that needs to understand a value itself, not only place it, can ask wit
   ```bash
   lolloctl profiles <current list>,lollo-vault      # e.g. cloudflared,search,lollo-vault
   ```
-  This routes `https://<lollo>/vault/` (and the lollo's home page, linking to the lollo features that are on) to the vault on every stack, on the stack's lollo address and its own Access application, then builds and starts it. The vault sends its notifications through the stack's notifications service (`lollo-notifications`, which runs whenever the vault or the browser does), with a token of its own that `up` makes (`NOTIFY_TOKEN_VAULT` in `stack.env`). Older stacks still have the vault's own push keys, `VAULT_VAPID_*`, which nothing uses any more. Dropping `lollo-vault` from the list removes the route and the container, and leaves the data where it is.
+  This routes `https://<lollo>/vault/` (and the lollo's home page, linking to the lollo features that are on) to the vault on every stack, on the stack's lollo address and its own Access application, then builds and starts it. The vault sends its notifications through the stack's notifications service (`lollo-notifications`, which runs whenever one of its senders does: the vault, the browser, Gmail triggers or News Radar), with a token of its own that `up` makes (`NOTIFY_TOKEN_VAULT` in `stack.env`). Older stacks still have the vault's own push keys, `VAULT_VAPID_*`, which nothing uses any more. Dropping `lollo-vault` from the list removes the route and the container, and leaves the data where it is.
 - **Register it with the agents:**
   ```bash
   lolloctl mcp all      # adds the vault (and, with lollo-doc-tools, office and pdf) to each Settings -> MCP

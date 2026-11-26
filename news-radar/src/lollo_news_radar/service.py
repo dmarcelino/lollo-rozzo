@@ -175,8 +175,8 @@ class Service:
         """What a run of `spec` may read: the sites the person confirmed, and the
         spec's own site when `own_site` (a test, or a source no active monitor
         reads: its items reach no report until the person confirms a monitor
-        reading it, and so its site). Never a site only its links or redirects
-        lead to (news-radar/monitors)."""
+        reading it, and so its site). Checked on the URLs the spec names; where
+        those sites lead (redirects, links) is theirs to choose (news-radar/monitors)."""
         allowed = self.store.confirmed_sites() | (spec_sites(spec.raw) if own_site else set())
         return lambda url: site_of(url) in allowed
 
@@ -305,11 +305,6 @@ class Service:
         if spec.group_by:
             values = [group_value({**i.fields, "extra": i.extra}, spec.group_by) for i in items]
             out["groups_in_sample"] = len({v for v in values if v}) + values.count("")
-        if result.off_site:
-            out["off_site_links"] = (
-                f"{result.off_site} links to follow are on sites the person has not confirmed: not read, now or "
-                "on a schedule. Use a source on that site instead, or one listing those pages on this one"
-            )
         out.update(
             passed=not problems,
             items_found=len(items),

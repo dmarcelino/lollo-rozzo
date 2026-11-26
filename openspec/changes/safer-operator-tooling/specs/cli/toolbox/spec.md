@@ -70,12 +70,12 @@ Before starting, `toolbox` SHALL look for configuration that runs code on ordina
 - **WHEN** the workspace's `.git/config` sets `core.fsmonitor`
 - **THEN** `toolbox` lists `.git/config: core.fsmonitor`, refuses to start, and names `--trust-workspace`
 
-#### Scenario: A hook that is not a sample
-- **WHEN** a repository two levels under the workspace has `.git/hooks/post-checkout`
-- **THEN** `toolbox` lists it and refuses to start
+#### Scenario: Ordinary repositories pass
+- **WHEN** the workspace holds a repository with a submodule, a linked worktree, Git LFS attributes and hooks, husky's `core.hooksPath`, a `gh` fork's remote and a pre-commit hook
+- **THEN** `toolbox` starts, and git there runs none of those hooks
 
 #### Scenario: A filter attribute
-- **WHEN** a `.gitattributes` in the workspace assigns a `filter`, `diff` or `merge` driver
+- **WHEN** a `.gitattributes` in the workspace assigns a `filter`, `diff` or `merge` driver other than Git LFS's
 - **THEN** `toolbox` lists the file and refuses to start
 
 #### Scenario: Project configuration for tools
@@ -83,7 +83,7 @@ Before starting, `toolbox` SHALL look for configuration that runs code on ordina
 - **THEN** `toolbox` lists each one and refuses to start
 
 #### Scenario: Only allow-listed git keys
-- **WHEN** `.git/config` holds only keys such as `core.bare`, `remote.origin.url`, `remote.origin.fetch`, `branch.main.remote` and `user.email`, and there are only sample hooks
+- **WHEN** `.git/config` holds only keys such as `core.bare`, `remote.origin.url`, `remote.origin.fetch`, `branch.main.remote` and `user.email`
 - **THEN** `toolbox` starts
 
 #### Scenario: The operator trusts the workspace

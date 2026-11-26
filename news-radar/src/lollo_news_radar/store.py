@@ -521,10 +521,17 @@ class Store:
                 )
                 self._store_items(name, items, watch, now)
                 previous = state.counts[-HISTORY_RUNS:]
+                detail = ""
                 if not items and previous and statistics.median(previous) >= UNHEALTHY_EMPTY_MEDIAN:
                     reason = "no_items"
+                    detail = f"no items, where runs usually find about {int(statistics.median(previous))}"
                 elif items and problem:
                     reason = "extract_failed"
+                    detail = problem
+                # What went wrong, in the service's own words, for source_status
+                # (an agent's repair turn), never for reports or alerts.
+                if detail:
+                    self._db.execute("UPDATE source_state SET last_error=? WHERE name=?", (detail, name))
             if reason:
                 self._db.execute(
                     "UPDATE source_state SET unhealthy_since = COALESCE(unhealthy_since, ?), unhealthy_reason = ? "

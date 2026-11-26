@@ -1833,7 +1833,12 @@ TOOLBOX_SCAN_ENTRIES=50000
 # reviewed change.
 # shellcheck disable=SC2016 # expanded by bash in the container
 TOOLBOX_SCAN='set -uf
-root=$1 depth=$2 cap=$3 secs=${4:-60}
+root=$1 depth=$2 cap=$3 secs=${4:-60} insub=""
+# Folders the depth-limited walk skips: dependencies, builds, caches and git
+# directories, which hold many files and no configuration a tool reads from
+# there. Repositories are searched for in them too (below).
+pruned=(\( -name node_modules -o -name .venv -o -name venv -o -name vendor -o -name target -o -name build -o -name dist
+  -o -name .next -o -name __pycache__ -o -name .cache -o -name .tox -o -name .gradle -o -name .mypy_cache -o -name .git \) -prune)
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null HOME=/nonexistent
 # git looks for a repository from the working directory even with --file, and
 # one the workspace planted there must not decide how a file is read.
@@ -1847,6 +1852,13 @@ allowed() {
     core.repositoryformatversion | core.filemode | core.bare | core.logallrefupdates | core.ignorecase | \
       core.precomposeunicode | core.symlinks | core.autocrlf | core.eol) return 0 ;;
     remote.*.url | remote.*.pushurl | remote.*.fetch | remote.*.tagopt | remote.*.prune) return 0 ;;
+    remote.*.gh-resolved | remote.*.promisor | remote.*.partialclonefilter | extensions.partialclone) return 0 ;;
+    core.sparsecheckout | core.sparsecheckoutcone | index.sparse | submodule.*.url | submodule.*.active) return 0 ;;
+    # The toolbox forces core.hooksPath, so husky and the like setting it is harmless.
+    core.hookspath) return 0 ;;
+    # Every submodule git directory names its work tree; a repository of the
+    # workspace naming one (/root, say) is a finding.
+    core.worktree) [[ -n $insub ]] && return 0 ;;
     branch.*.remote | branch.*.merge | branch.*.rebase | branch.*.pushremote) return 0 ;;
     user.name | user.email | pull.* | push.default | push.autosetupremote | init.defaultbranch | fetch.prune) return 0 ;;
     extensions.objectformat | extensions.worktreeconfig | lfs.repositoryformatversion) return 0 ;;
@@ -1898,9 +1910,10 @@ attrs() {
         continue
       fi
       case $w in
-        filter=*) say "$(rel "$f"): $w" ;;
+        # Git LFS names its own drivers, which only the operator configures.
+        filter=*) [[ ${w#*=} == lfs ]] || say "$(rel "$f"): $w" ;;
         diff=* | merge=*)
-          case ${w#*=} in binary | text | union) ;; *) say "$(rel "$f"): $w" ;; esac
+          case ${w#*=} in binary | text | union | lfs) ;; *) say "$(rel "$f"): $w" ;; esac
           ;;
       esac
     done
@@ -1917,8 +1930,31 @@ modules() {
     case $k in submodule.*.update) say "$(rel "$f"): $k" ;; esac
   done <<<"$keys"
 }
+# inside DIR PATH -> prints PATH, absolute or relative to DIR as git writes a
+# gitdir or commondir, made absolute without reading any link; fails unless it
+# lies in the workspace with no symbolic link on the way
+inside() {
+  local p=$2 q=$root part
+  local -a parts
+  [[ $p == /* ]] || p=$1/$p
+  p=$(realpath -s -m -- "$p") || return 1
+  [[ $p == "$root"/* ]] || return 1
+  IFS=/ read -r -a parts <<<"${p#"$root"/}"
+  for part in "${parts[@]}"; do
+    q=$q/$part
+    [[ ! -L $q ]] || return 1
+  done
+  printf "%s" "$p"
+}
+# gitdir DIR -> the configuration a git directory holds. Hooks are not read:
+# the toolbox forces core.hooksPath, so none of them runs there.
+gitdir() {
+  gitconfig "$1/config"
+  gitconfig "$1/config.worktree"
+  attrs "$1/info/attributes"
+}
 repo() {
-  local g=$1 r=${1%/.git} h
+  local g=$1 r=${1%/.git} d line t
   [[ $r == "$root" ]] || project "$r"
   modules "$r/.gitmodules"
   attrs "$r/.gitattributes"
@@ -1926,28 +1962,44 @@ repo() {
     say "$(rel "$g"): a symbolic link, not read"
     return 0
   fi
-  if [[ ! -d $g ]]; then
+  if [[ -f $g ]]; then
+    # A submodule or a linked worktree: its git directory sits in the
+    # repository holding it, under .git/modules or .git/worktrees, which the
+    # scan of that repository reads (below).
+    line=""
+    IFS= read -r line <"$g" || :
+    if [[ $line == "gitdir: "* ]] && t=$(inside "$r" "${line#gitdir: }") &&
+      [[ ($t == */.git/modules/* || $t == */.git/worktrees/*) && -d $t ]]; then
+      return 0
+    fi
     say "$(rel "$g"): a git file naming another directory, whose configuration was not read"
     return 0
   fi
-  gitconfig "$g/config"
-  gitconfig "$g/config.worktree"
+  [[ -d $g ]] || return 0
+  gitdir "$g"
   [[ ! -e $g/commondir && ! -L $g/commondir ]] ||
     say "$(rel "$g/commondir"): takes its configuration from another directory, not read"
-  if [[ -L $g/hooks ]]; then
-    say "$(rel "$g/hooks"): a symbolic link, not read"
-  elif [[ -d $g/hooks ]]; then
-    while IFS= read -r -d "" h; do
-      [[ $h == *.sample ]] || say "$(rel "$h"): a hook"
-    done < <(find -P "$g/hooks" -mindepth 1 ! -type d -print0)
-  fi
-  attrs "$g/info/attributes"
+  # Submodules and linked worktrees: their git directories, each with a HEAD.
+  # A worktree takes the rest of its configuration from this one (commondir).
+  while IFS= read -r -d "" d; do
+    d=${d%/HEAD}
+    insub=1
+    gitdir "$d"
+    insub=""
+    if [[ -e $d/commondir || -L $d/commondir ]]; then
+      line=""
+      [[ -L $d/commondir ]] || IFS= read -r line <"$d/commondir" || :
+      if ! t=$(inside "$d" "$line") || [[ $t != "$g" ]]; then
+        say "$(rel "$d/commondir"): takes its configuration from another directory, not read"
+      fi
+    fi
+  done < <(find -P "$g/modules" "$g/worktrees" -name HEAD -type f -print0 2>/dev/null)
 }
 if [[ -L $root || ! -d $root ]]; then
   say ".: not a directory"
   exit 3
 fi
-n=$(find -P "$root" -maxdepth "$depth" \( -name node_modules -o -name .venv -o -name vendor \) -prune -o -print |
+n=$(find -P "$root" -maxdepth "$depth" "${pruned[@]}" -o -print |
   head -n "$((cap + 1))" | wc -l)
 if ((n > cap)); then
   say ".: more than $cap entries, so the scan is incomplete"
@@ -1982,15 +2034,22 @@ done < <(
   timeout "$secs" find -P "$root" -name .git -prune -print0
   printf "?rc=%s\0" "$?"
 )
-if [[ $found != 0 ]]; then
-  say ".: the search for repositories did not finish in $secs seconds, so the scan is incomplete"
-  exit 4
-fi
+# 1 is find reading on past a folder that went away (a build, say).
+case $found in
+  0 | 1) ;;
+  124 | 137)
+    say ".: the search for repositories did not finish in $secs seconds, so the scan is incomplete"
+    exit 4
+    ;;
+  *)
+    say ".: the search for repositories failed (exit $found), so the scan is incomplete"
+    exit 4
+    ;;
+esac
 # .gitattributes files, but those at a repository root: repo read them above.
 while IFS= read -r -d "" p; do
   [[ -e ${p%/*}/.git || -L ${p%/*}/.git ]] || attrs "$p"
-done < <(find -P "$root" -maxdepth "$depth" \( -name node_modules -o -name .venv -o -name vendor \) -prune \
-  -o -name .git -prune -o -name .gitattributes -print0)'
+done < <(find -P "$root" -maxdepth "$depth" "${pruned[@]}" -o -name .gitattributes -print0)'
 
 # toolbox_scan NAME -> looks at the agent's workspace, in a throwaway container
 # of the app-server's image (cmd_toolbox's image, mask, wsdir and id), and sets
@@ -2242,19 +2301,29 @@ audit_tree_hash() {
 
 # audit_content CID KIND PATH -> the hash an accepted container change is held
 # to: for an added or changed file or link, of its kind, path and the daemon's
-# copy of it (`docker cp`, never exec: bytes, mode, owner, mtime, link target),
-# so an accepted file written again is reported again; for a directory or a
+# copy of it (`docker cp`, never exec: bytes, mode, owner, size, link target,
+# but not its time, since the entrypoint copies the cron files again on every
+# start), so an accepted file written anew is reported again; for a directory or a
 # deleted path, of kind and path alone (a directory's entries are changes of
 # their own). A path the copy cannot read hashes as unreadable, never as an
 # accepted file.
 audit_content() {
-  local kind=$2 path=$3 first="" sum=unreadable
+  local kind=$2 path=$3 first="" sum=unreadable tmp
   if [[ $kind != D ]]; then
     # The first entry of the copy says what PATH is (tar -tv starts with its mode).
     first=$(host_docker cp "$1:$path" - 2>/dev/null | head -c 65536 | tar -tvf - 2>/dev/null | head -n 1) || :
     case $first in
       d*) sum="" ;;
-      -* | l* | h*) sum=$(host_docker cp "$1:$path" - 2>/dev/null | sha256sum | cut -c1-64) || sum=unreadable ;;
+      -* | l* | h*)
+        tmp=$(mktemp) || die "audit: could not make a temporary file"
+        if host_docker cp "$1:$path" - >"$tmp" 2>/dev/null; then
+          sum=$({
+            tar -tvf "$tmp" | awk 'NR == 1 { $4 = ""; $5 = ""; print }'
+            tar -xOf "$tmp" | sha256sum
+          } | sha256sum | cut -c1-64) || sum=unreadable
+        fi
+        rm -f "$tmp"
+        ;;
     esac
   else
     sum=""

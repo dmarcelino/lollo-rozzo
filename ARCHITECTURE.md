@@ -10,7 +10,7 @@ An interactive version, [lollo-rozzo-overview.html](docs/diagrams/lollo-rozzo-ov
 | Host | Access application | Tunnel routes it to |
 |---|---|---|
 | `<name>.<domain>` | Lettuce's (`CF_ACCESS_AUD`) | `app-server:8080`, the BFF's port in the app-server's network namespace |
-| `<name>-lollo.<domain>` | the lollo's (`CF_LOLLO_AUD`) | `^/vault(/\|$)` to `lollo-vault:8000`, `^/gmail-triggers(/\|$)` to `lollo-gmail-triggers:8000`, `^/news-radar(/\|$)` to `lollo-news-radar:8000`, `^/code-server(/\|$)` to `lollo-code-server:8000`, `^/browser(/\|$)` to `lollo-browser:8000` (each only with its profile), `^/notifications(/\|$)` to `lollo-notifications:8000` (with `lollo-vault` or `lollo-browser`), `^/(assets/[^/]+)?$` to `landing:8000` (with any of them); anything else gets a 404 |
+| `<name>-lollo.<domain>` | the lollo's (`CF_LOLLO_AUD`) | `^/vault(/\|$)` to `lollo-vault:8000`, `^/gmail-triggers(/\|$)` to `lollo-gmail-triggers:8000`, `^/news-radar(/\|$)` to `lollo-news-radar:8000`, `^/code-server(/\|$)` to `lollo-code-server:8000`, `^/browser(/\|$)` to `lollo-browser:8000` (each only with its profile), `^/notifications(/\|$)` to `lollo-notifications:8000` (with `lollo-vault`, `lollo-browser`, `lollo-gmail-triggers` or `lollo-news-radar`), `^/(assets/[^/]+)?$` to `landing:8000` (with any of them); anything else gets a 404 |
 
 Both applications share the stack's Access policy, so `lolloctl users` changes who may sign in to both. The lollo's services accept only the lollo's tokens, never Lettuce's, which agents could catch inside the app-server's namespace. The routes are written by `cf_tunnel_configure` ([lib/cloudflare.sh](lib/cloudflare.sh)) from `PROFILE_ROUTES`, on `add` and on every `profiles` run. `/executor/v1/` and `/healthz` are never routed.
 

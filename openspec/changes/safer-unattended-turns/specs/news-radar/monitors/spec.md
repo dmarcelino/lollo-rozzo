@@ -57,16 +57,23 @@ An active monitor SHALL report only items from sources whose sites (registrable 
 - **WHEN** an agent adds another source on `example.com` to that monitor
 - **THEN** the monitor stays active
 
-### Requirement: A run reads only confirmed sites
-Every request a scheduled run makes SHALL be to a site the person confirmed: its pages, a sitemap's files, the item pages it follows and every redirect, checked before any request to that site. A source that no active monitor reads MAY also read its own site, for the agent's previews. A page, sitemap file or redirect to another site SHALL fail the run with the reason code `unconfirmed_site`; a link to follow on another site SHALL be left alone.
+### Requirement: A run reads from confirmed sites
+Every URL a source's spec names (its `url` and its pages) SHALL be on a site the person confirmed, checked before any request to that site; a source no active monitor reads MAY also read its own site, for previews. A URL elsewhere SHALL fail the run with the reason code `unconfirmed_site`.
 
-#### Scenario: Followed links lead elsewhere
-- **WHEN** a source an active monitor uses lists, on its confirmed site, links to `evil.example`, which the person never confirmed
-- **THEN** no request goes to `evil.example`, and nothing from it reaches a report
-
-#### Scenario: Redirect to another site
-- **WHEN** that source's URL starts redirecting to `evil.example`
+#### Scenario: A spec names another site
+- **WHEN** the spec of a source an active monitor uses names `evil.example`, which the person never confirmed, without passing through a held move
 - **THEN** the run fails with the reason code `unconfirmed_site`, and no request goes to `evil.example`
+
+### Requirement: A confirmed site's redirects and links stay readable
+Where a confirmed site leads (its redirects, a sitemap index's files, the links a run follows from its pages) is that site's choice, and SHALL stay readable within the fetcher's public-address rules.
+
+#### Scenario: A feed behind a redirect
+- **WHEN** a confirmed source's URL redirects to a feed host on another site
+- **THEN** the run reads the feed there, as before
+
+#### Scenario: Articles on other sites
+- **WHEN** a confirmed listing links to its articles on another site and the source follows its links
+- **THEN** the run reads those articles
 
 
 ### Requirement: Awaiting monitors read nothing on a schedule

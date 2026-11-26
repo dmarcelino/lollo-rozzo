@@ -101,6 +101,8 @@ async def test_empty_after_full_runs_is_unhealthy(service, web, clock, store):
     await service.fetch_source("city-agenda")
     st = store.source_state("city-agenda")
     assert not st.healthy and st.unhealthy_reason == "no_items"
+    # The service's own words for a repair turn, in source_status only.
+    assert service.source_status("city-agenda")["last_error"] == "no items, where runs usually find about 8"
 
 
 async def test_monitor_put_checks_and_defaults(service, web):
@@ -717,6 +719,7 @@ async def test_a_listing_of_past_events_fails_its_test_and_makes_its_source_unhe
     await service.fetch_source("city-agenda")
     st = store.source_state("city-agenda")
     assert not st.healthy and st.unhealthy_reason == "extract_failed"
+    assert "every event is in the past" in service.source_status("city-agenda")["last_error"]
 
 
 async def test_event_sources_need_their_dates(service, web):

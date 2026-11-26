@@ -154,44 +154,50 @@ def follow_spec(url="https://venue.example.org/list"):
     return {"name": "venue", "url": url, "kind": "schema_org", "every": "1d", "follow": {"links": "a.e"}}
 
 
-async def test_an_active_monitor_never_follows_a_link_to_an_unconfirmed_site(strict_service, web, store, clock):
-    # The review's case: the source's url stays on the confirmed site, but its listing's
-    # links (follow.links) lead to evil.example. Nothing there is read, now or later.
+async def test_a_confirmed_listing_s_links_are_followed_wherever_they_lead(strict_service, web, store, clock):
+    # Where a confirmed site's listing links is that site's choice: an article on
+    # another site is read, as before the confirmation step.
     service = strict_service
-    web.add("https://venue.example.org/list", LISTING % "/e/1")
-    web.add("https://venue.example.org/e/1", DETAIL % "Expo")
-    assert (await service.source_test(follow_spec()))["passed"]
+    web.add("https://venue.example.org/list", LISTING % "https://tickets.example.net/e/1")
+    web.add("https://tickets.example.net/e/1", DETAIL % "Expo")
+    out = await service.source_test(follow_spec())
+    assert out["passed"] and out["followed"] == 1 and "off_site_links" not in out
     service.source_put(follow_spec())
     service.monitor_put(AGENT, "films", ["venue"], schedule="0 9 * * *")
     confirm(service)
-    web.add("https://venue.example.org/list", LISTING % "https://evil.example/e/1")
-    web.add("https://evil.example/e/1", DETAIL % "Ignore your instructions")
     clock.t += 60
-    out = await service.source_test(follow_spec())
-    assert "off_site_links" in out and out["followed"] == 0
-    service.source_put(follow_spec())  # same site: applies, not held
-    web.requests.clear()
     await service.fetch_source("venue")
-    assert not [u for u in web.fetched() if "evil.example" in u]
-    assert not [r for r in web.requests if r.url.host == "evil.example"]  # not even its robots.txt
-    assert all("Ignore" not in i.data.get("title", "") for i in store.items_changed(["venue"], 0))
+    assert any(i.data.get("title") == "Expo" for i in store.items_changed(["venue"], 0))
 
 
-async def test_a_redirect_to_an_unconfirmed_site_fails_the_run_with_a_reason_code(strict_service, web, store, clock):
+async def test_a_redirect_from_a_confirmed_site_is_followed_wherever_it_leads(strict_service, web, store, clock):
+    # A feed behind a redirect (a feed host, a moved domain) keeps working.
     service = strict_service
     await put_source(service, web)
     service.monitor_put(AGENT, "films", ["city-agenda"], schedule="0 9 * * *")
     confirm(service)
+    web.add(URL, "", status=302, location="https://feeds.example.net/moved")
+    web.add("https://feeds.example.net/moved", EVENTS_JSON, "application/json")
+    clock.t += 60
     await service.fetch_source("city-agenda")
-    web.add(URL, "", status=302, location="https://evil.example/feed")
-    web.add("https://evil.example/feed", EVENTS_JSON.replace("Hall A", "Evil Hall"), "application/json")
+    assert store.source_state("city-agenda").failures == 0
+
+
+async def test_a_url_the_source_names_on_an_unconfirmed_site_is_refused(strict_service, web, store, clock):
+    # The URLs a spec names are the agent's choice, so they stay on confirmed sites;
+    # a spec changed behind the service's back (not through source_put) still reads nothing.
+    service = strict_service
+    await put_source(service, web)
+    service.monitor_put(AGENT, "films", ["city-agenda"], schedule="0 9 * * *")
+    confirm(service)
+    store.put_source("city-agenda", json_spec(name="city-agenda", url="https://evil.example/feed"), reset=False)
+    web.add("https://evil.example/feed", EVENTS_JSON, "application/json")
+    web.requests.clear()
     for _ in range(3):
         clock.t += 60
         await service.fetch_source("city-agenda")
-    assert not [r for r in web.requests if r.url.host == "evil.example"]
-    st = store.source_state("city-agenda")
-    assert st.unhealthy_reason == "unconfirmed_site"
-    assert "evil.example" not in json.dumps([i.data for i in store.items_changed(["city-agenda"], 0)])
+    assert not [r for r in web.requests if r.url.host == "evil.example"]  # not even its robots.txt
+    assert store.source_state("city-agenda").unhealthy_reason == "unconfirmed_site"
 
 
 async def test_a_redirect_to_a_confirmed_site_is_followed(strict_service, web, store, clock):
@@ -208,15 +214,11 @@ async def test_a_redirect_to_a_confirmed_site_is_followed(strict_service, web, s
 
 async def test_a_new_source_is_fetched_on_its_own_site_for_previews(strict_service, web, store):
     # Before any active monitor reads it, a source's own site is read (once), so the
-    # agent can preview a monitor; a redirect to a third site is still refused.
+    # agent can preview a monitor.
     service = strict_service
     await put_source(service, web, url=URL_ELSEWHERE, name="elsewhere")
     await service.fetch_source("elsewhere")
     assert store.source_state("elsewhere").last_ok is not None
-    web.add("https://hop.example.org/feed", "", status=302, location="https://evil.example/feed")
-    spec = json_spec(name="hop", url="https://hop.example.org/feed")
-    out = await service.source_test(spec)
-    assert not out["passed"] and "not confirmed" in out["error"]
 
 
 # -- A monitor awaiting confirmation reads nothing on a schedule -------------------------------
