@@ -264,7 +264,8 @@ none "unreachable: the fixture got no probe meant for a stack or private address
 # percent-encoding or trailing dot, nothing reached it; the control did.
 none "denied: the stack's own host got no request (navigation, 302, iframe, service worker, fetch, %-encoded, trailing dot)" \
   "$(docker logs "$id-web" 2>&1 | grep '^HIT [a-z]* alfred-lollo\.stack\.test' || true)"
-if docker logs "$id-web" 2>&1 | grep -q '^HIT https shop\.acme-shop\.test GET /acc-denied-control'; then
+# grep without -q reads to the end, so docker logs never gets a broken pipe (pipefail).
+if docker logs "$id-web" 2>&1 | grep '^HIT https shop\.acme-shop\.test GET /acc-denied-control' >/dev/null; then
   ok "denied: control: a host beside it on the fixture loads"
 else fail "denied: control: the fixture got no /acc-denied-control"; fi
 info_dns=$(docker logs "$id-dns" 2>&1 | grep '^DNS rb.test' | head -4 | tr '\n' ' ')

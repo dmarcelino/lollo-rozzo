@@ -88,8 +88,9 @@ check "the written config denies the stack's hosts" "$(scan https://other.denied
 check "the shipped blocklist is kept" "$(scan https://x.pastebin.com/raw/abc)" 'blocklist' 'url blocked'
 # The shipped entries we carry are the ones this pipelock ships: setting a
 # blocklist replaces its own, so an upgrade that changed them would drop some.
+# awk reads to the end: stopping early would break pipelock's pipe (pipefail).
 shipped=$(docker run --rm --network none --entrypoint pipelock "$image" generate config --preset balanced |
-  awk '/^ *blocklist:/ { on = 1; next } on && /^ *- / { gsub(/^ *- *"?|"$/, ""); print; next } on { exit }')
+  awk '!done && /^ *blocklist:/ { on = 1; next } on && /^ *- / { gsub(/^ *- *"?|"$/, ""); print; next } on { on = 0; done = 1 }')
 if [[ $shipped == "$(cat "$ROOT/pipelock/shipped-blocklist")" ]]; then same=same; else same="differs: $shipped"; fi
 check "shipped-blocklist matches pipelock's preset" "$same" '^same$'
 # A malformed list stops pipelock before it serves anything.
