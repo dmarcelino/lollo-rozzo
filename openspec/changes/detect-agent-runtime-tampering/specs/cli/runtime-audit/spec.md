@@ -49,11 +49,11 @@ The audit SHALL report each global skill that is neither lollo's, upstream's nor
 - **THEN** the report lists it as a lollo-named entry pointing elsewhere
 
 #### Scenario: Upstream's skills are not reported
-- **WHEN** a global skill has the name of a skill upstream Lettuce ships
+- **WHEN** a global skill has the name of a skill upstream Lettuce ships, or is the `mcp-servers` skill its BFF writes from Settings -> MCP
 - **THEN** the report does not list it as unknown
 
 ### Requirement: The container's own changes are summarised
-When the app-server's container exists, the audit SHALL summarise the container's changes against its image as reported by Docker. It SHALL name each change under a fixed list of sensitive paths (cron, the dynamic loader's preload, shell start-up files, system binary directories and letta-code's install) other than lollo's own.
+When the app-server's container exists, the audit SHALL summarise the container's changes against its image as reported by Docker. It SHALL name each change under a fixed list of sensitive paths (cron, the dynamic loader's preload, shell start-up files, system binary directories and letta-code's install) other than lollo's own and Docker's own.
 
 #### Scenario: A preload file is named
 - **WHEN** the app-server's container has an added `/etc/ld.so.preload`
@@ -62,6 +62,10 @@ When the app-server's container exists, the audit SHALL summarise the container'
 #### Scenario: Lollo's own container files are not reported
 - **WHEN** the only changes under sensitive paths are lollo's executor cron file and its token directory
 - **THEN** the report shows no sensitive changes
+
+#### Scenario: Docker's init is not reported
+- **WHEN** the container runs with init and the only sensitive change is `/usr/sbin/docker-init` added, where Docker mounts its init read-only
+- **THEN** the report shows no sensitive changes, and the same change in a container run without init is reported
 
 ### Requirement: The operator can accept an entry, bound to its content
 `lolloctl audit <name> --accept <entry>` SHALL record the entry with its current content hash in a file under the stack's directory and outside its state directory. An accepted entry SHALL be reported again once its content changes.

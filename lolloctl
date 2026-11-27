@@ -2189,6 +2189,13 @@ AUDIT_SENSITIVE=(/etc/cron.d/ /etc/ld.so.preload /etc/profile.d/ /etc/bash.bashr
   /usr/bin/ /usr/sbin/ /usr/local/bin/ /usr/local/lib/)
 # What lollo itself adds there: the executor's cron file (install_executor).
 AUDIT_DIFF_OURS=("/etc/cron.d/$EXECUTOR_JOB")
+# Docker's own: in a container run with init (upstream's app-server is), the
+# daemon bind-mounts its docker-init here read-only, and `docker diff` lists the
+# mount point as added on every container.
+AUDIT_DOCKER_INIT=/usr/sbin/docker-init
+# Upstream's skill the BFF writes itself, from Settings -> MCP (MCP_SKILL_NAME,
+# bff/src/mcp/skill.ts), next to docker/agent-skills: upstream's too.
+AUDIT_BFF_SKILLS=(mcp-servers)
 # How many of the sensitive changes the report lists before "and N more".
 AUDIT_DIFF_SHOWN=50
 
@@ -2352,7 +2359,7 @@ audit_find() {
 # A_ERROR) when it could not. Explicit returns throughout: callers run it where
 # errexit is off.
 audit_collect() {
-  local name=$1 verbose=${2:-} f state h out k a b s rel want got n cid line kind path shown=0 more=0 cron mcp
+  local name=$1 verbose=${2:-} f state h out k a b s rel want got n cid line kind path shown=0 more=0 cron mcp init
   local -a lollo=() upstream=()
   local -A wanted=()
   A_NAME=$name A_ERROR="" A_CID="" A_FINDINGS=() A_NOTES=()
@@ -2376,6 +2383,7 @@ audit_collect() {
     done <"$(audit_file "$name")"
   fi
   mapfile -t lollo < <(shipped_skills)
+  upstream=("${AUDIT_BFF_SKILLS[@]}")
   for s in "$(upstream_dir)"/docker/agent-skills/*/; do
     if [[ -d $s ]]; then
       s=${s%/}
@@ -2531,12 +2539,14 @@ audit_collect() {
     A_NOTES+=("container: could not read the app-server container's changes (docker diff)")
   else
     A_CID=$cid
+    init=$(host_docker inspect --format '{{.HostConfig.Init}}' "$cid" 2>/dev/null) || init=""
     n=0
     while read -r kind path; do
       [[ -n $path ]] || continue
       n=$((n + 1))
       [[ -z $verbose ]] || A_NOTES+=("container: $kind $(printable "$path")")
       [[ " ${AUDIT_DIFF_OURS[*]} " != *" $path "* ]] || continue
+      [[ $init != true || $kind != A || $path != "$AUDIT_DOCKER_INIT" ]] || continue
       want=""
       for a in "${AUDIT_SENSITIVE[@]}"; do
         if [[ $a == */ ]]; then

@@ -72,6 +72,8 @@ case $args in
     ;;
   # lolloctl reading its own container's mounts (check_mounts): mounts.json.
   " inspect --format {{json .Mounts}} "*) cat "$STUB_ROOT/mounts.json" 2>/dev/null || exit 1 ;;
+  # Whether the app-server's container runs with init (the audit): STUB_INIT, else true.
+  " inspect --format {{.HostConfig.Init}} "*) echo "${STUB_INIT:-true}" ;;
   # Filling a tools volume: a container of the image, never started, copied out.
   " create "*)
     [[ ${STUB_CREATE_RC:-0} == 0 ]] || exit "$STUB_CREATE_RC"

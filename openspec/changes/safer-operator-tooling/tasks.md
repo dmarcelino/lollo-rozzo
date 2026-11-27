@@ -32,4 +32,4 @@
 ## 5. Integration checks
 
 - [x] 5.1 Run `tests/run.sh` and every listed `shellcheck -x` target from CLAUDE.md's Commands, and confirm all pass.
-- [ ] 5.2 On a throwaway local stack with placeholder names (`alfred`, agent `lucius`), plant `core.fsmonitor` in the workspace and confirm `lolloctl toolbox alfred lucius` refuses. Remove it and confirm that `lolloctl toolbox --gh alfred lucius git status` runs with the token, and that without `--gh` there is no `GH_TOKEN` in `env`.
+- [x] 5.2 On a throwaway local stack with placeholder names (`alfred`, agent `lucius`), plant `core.fsmonitor` in the workspace and confirm `lolloctl toolbox alfred lucius` refuses. Remove it and confirm that `lolloctl toolbox --gh alfred lucius git status` runs with the token, and that without `--gh` there is no `GH_TOKEN` in `env`.

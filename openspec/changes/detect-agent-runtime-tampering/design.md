@@ -45,13 +45,14 @@ The image already has `sh`, `find` and `sha256sum` (coreutils comes with `debian
 `compose NAME ps -q app-server` finds the container, and `host_docker diff <id>` lists its changes. lolloctl reports:
 - the number of changes;
 - each change under a fixed `AUDIT_SENSITIVE` list (`/etc/cron.d`, `/etc/ld.so.preload`, `/etc/profile.d`, `/etc/bash.bashrc`, `/etc/environment`, `/usr/bin`, `/usr/sbin`, `/usr/local/bin`, `/usr/local/lib`, and letta-code's install directory);
-- minus lollo's expected entries: `/etc/cron.d/lollo-rozzo-executor` and `/etc/lollo-rozzo` with its token.
+- minus lollo's expected entries: `/etc/cron.d/lollo-rozzo-executor` and `/etc/lollo-rozzo` with its token;
+- minus Docker's own: in a container run with init (`HostConfig.Init`, which upstream's app-server sets), `/usr/sbin/docker-init` added, the mount point of Docker's init, bind-mounted read-only. A live test found it on every stack.
 
 `--verbose` prints the whole diff. With no container, this section is skipped with a note. The audit runs before `up` recreates anything, because a recreate throws this evidence away.
 
 ### 3. What counts as expected
 - **Lollo's skills:** each directory in `agent-skills/`. Every file is compared by content (the install runs `tar --no-same-owner`, so owners and modes are not compared). Added, changed and missing files are all reported.
-- **Upstream's skills:** `upstream_dir/docker/agent-skills/*`, by name only (the BFF rewrites them on every connect).
+- **Upstream's skills:** `upstream_dir/docker/agent-skills/*`, by name only (the BFF rewrites them on every connect), and `mcp-servers`, which the BFF writes from Settings -> MCP (`AUDIT_BFF_SKILLS`). A live test found that one on every stack with an MCP server.
 - **The executor:** `landing/executor/run.mjs` against `lollo/executor/bin/run.mjs`, and `executor_cron NAME` against `system-cron/lollo-rozzo-executor`, when `executor_wanted`. When the executor is not wanted, its files being present are reported.
 - **MCP:** the entries `mcp-servers.mjs`'s groups own (the exact HTTP URLs and the `/opt/lollo-doc-tools/` commands). Two kinds are reported:
   - an entry named `vault`, `news-radar`, `browser`, `office` or `pdf` that points elsewhere;
