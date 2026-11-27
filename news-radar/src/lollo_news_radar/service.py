@@ -5,12 +5,16 @@ schedule that fires into a report for the executor."""
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 import logging
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 import anyio
 from lollo_common.executor import AGENT_ID, CONVERSATION_ID
+from lollo_common.notify import NoNotifier
 from lollo_common.text import encodable, one_line
 
 from . import places as place_map
@@ -28,6 +32,7 @@ from .config import (
     MAX_TERM,
     MAX_TERMS,
     NAME,
+    PREFIX,
     TEST_VALID_SECONDS,
     TOOL_SECONDS,
     TOOL_WAIT,
@@ -49,6 +54,7 @@ from .extract import fill_rates, run_problem, window_warning
 from .fetch import Fetcher
 from .inspect import inspect
 from .runner import RunResult, run_source
+from .sites import site_of, sites_of, spec_sites
 from .spec import Spec, SpecError, parse_spec
 from .store import QUEUED, Monitor, Report, Store, StoredItem, new_report_id
 
@@ -136,11 +142,65 @@ def reports_per_day(store: Store, settings: Settings, m: Monitor) -> int:
     return max_fires_per_day([Schedule.parse(s) for s, _ in groups], today)
 
 
+class Sender(Protocol):
+    """What the service needs of lollo_common.notify.Notifier."""
+
+    async def send(self, payload: object) -> bool: ...
+
+
 class Service:
-    def __init__(self, store: Store, fetcher: Fetcher, settings: Settings):
+    def __init__(self, store: Store, fetcher: Fetcher, settings: Settings, notifier: Sender | None = None):
         self.store = store
         self.fetcher = fetcher
         self.settings = settings
+        # Notices to the person (a monitor or a move to confirm), through
+        # lollo-notifications with this service's own token. Tools only queue
+        # them here; send_notices hands them over, so a slow or absent
+        # notifications service never holds up a tool call.
+        self.notifier: Sender = notifier or NoNotifier()
+        self.outbox: list[dict[str, str]] = []
+
+    async def send_notices(self) -> None:
+        """Hands every queued notice to the notifications service. One it refuses
+        or can't take is logged (lollo_common.notify) and dropped: the monitor
+        or the move still waits for the person, who sees it on the page."""
+        while self.outbox:
+            await self.notifier.send(self.outbox.pop(0))
+
+    @property
+    def confirm_url(self) -> str:
+        return f"{self.settings.public_origin}{PREFIX}/"
+
+    def _site_check(self, spec: Spec, own_site: bool) -> Callable[[str], bool]:
+        """What a run of `spec` may read: the sites the person confirmed, and the
+        spec's own site when `own_site` (a test, or a source no active monitor
+        reads: its items reach no report until the person confirms a monitor
+        reading it, and so its site). Checked on the URLs the spec names; where
+        those sites lead (redirects, links) is theirs to choose (news-radar/monitors)."""
+        allowed = self.store.confirmed_sites() | (spec_sites(spec.raw) if own_site else set())
+        return lambda url: site_of(url) in allowed
+
+    def confirm_view(self, monitor: Monitor) -> list[tuple[str, str]]:
+        """What the page shows the person about a monitor to confirm: each source
+        with the site it reads ("" when it has none, or is gone)."""
+        specs = self.store.source_specs()
+        return [(s, site) for s in monitor.sources for site in sorted(spec_sites(specs.get(s, {}))) or [""]]
+
+    def monitor_fingerprint(self, monitor: Monitor) -> str:
+        """Of what the page showed (confirm_view): Confirm posts it back, and a
+        monitor or source changed since is not confirmed."""
+        return _fingerprint(self.confirm_view(monitor))
+
+    def move_fingerprint(self, name: str) -> str:
+        """Of the held move the page showed: its spec, as an agent saving again replaces it."""
+        held = self.store.held_spec(name)
+        return _fingerprint(held) if held is not None else ""
+
+    def _unconfirmed(self, sources: list[str]) -> list[str]:
+        """The sites these sources read that the person has not confirmed."""
+        specs = self.store.source_specs()
+        wanted = sites_of(specs[s] for s in sources if s in specs)
+        return sorted(wanted - self.store.confirmed_sites())
 
     # -- settings -------------------------------------------------------------------
     def settings_info(self) -> dict[str, Any]:
@@ -218,6 +278,9 @@ class Service:
                 max_follow=TEST_FOLLOW,
                 max_wait=TOOL_WAIT,
                 look_for_blocks=True,
+                # The site the agent is trying, and the person's confirmed ones: what a
+                # scheduled run of it may read once a confirmed monitor uses it.
+                site_ok=self._site_check(spec, own_site=True),
             )
             return self._test_result(spec, result, out)
         out.update(passed=False, error=f"took too long (over {int(TOOL_SECONDS)} s); try fewer pages or follows")
@@ -289,11 +352,64 @@ class Service:
         current = self._stored_spec(spec.name)
         if current is None and self.store.count_sources() >= self.settings.max_sources:
             raise ToolError(f"this stack has {self.settings.max_sources} sources, the most allowed; delete one")
+        # A move to a site the person has not confirmed, while an active monitor
+        # reads this source, waits for them: the source keeps its current spec.
+        new_sites = sorted(spec_sites(spec.raw) - self.store.confirmed_sites())
+        active = [m for m in self.store.source_users(spec.name) if not m.awaiting]
+        if current is not None and new_sites and active:
+            first = self.store.held_spec(spec.name) is None
+            self.store.hold_spec(spec.name, spec.raw)
+            if first:
+                self.outbox.append(
+                    {
+                        "title": "Confirm a source's new site",
+                        "body": f"An agent wants source {one_line(spec.name, 60)} to read "
+                        f"{', '.join(new_sites)}. Confirm or discard it on the page.",
+                        "url": f"{PREFIX}/",
+                        "tag": f"news-radar-move-{spec.name}"[:64],
+                    }
+                )
+            log.info("source %s: a move to another site is held for the person", spec.name)
+            return {
+                "held": spec.name,
+                "new_sites": new_sites,
+                "confirm_at": self.confirm_url,
+                "next": "the source keeps its current spec: this change reads a site the person has not confirmed. "
+                f"Give them this link to confirm or discard it: {self.confirm_url}. Don't save it again meanwhile",
+            }
         # Any change but its interval reads the items differently: forget the run state, so
         # that it is fetched again (an unused source too) and no 304 keeps the old items.
         reset = current is None or current.fingerprint != spec.fingerprint
         self.store.put_source(spec.name, spec.raw, reset)
+        # A save that applies replaces a move held before.
+        self.store.drop_held(spec.name)
         return {"saved": spec.name, "spec": spec.raw, "first_fetch": "within a minute"}
+
+    def confirm_move(self, name: str, shown: str | None = None) -> bool:
+        """The person confirmed a held move (the page): it applies, and its site
+        counts as confirmed. shown: move_fingerprint of what the page showed; a
+        move saved again since is not confirmed (Changed)."""
+        spec = self.store.held_spec(name)
+        if spec is None:
+            return False
+        if shown is not None and shown != _fingerprint(spec):
+            raise Changed(name)
+        self.store.apply_held(name, sorted(spec_sites(spec)))
+        return True
+
+    def confirm_monitor(self, monitor_id: str, shown: str | None = None) -> bool:
+        """The person confirmed a monitor (the page): it reports from now on, and
+        its sources' sites count as confirmed. shown: monitor_fingerprint of what
+        the page showed; a monitor whose sources or their sites changed since is
+        not confirmed (Changed), so the person approves only what they saw."""
+        m = self.store.monitor(monitor_id)
+        if m is None:
+            return False
+        if shown is not None and shown != self.monitor_fingerprint(m):
+            raise Changed(m.id)
+        specs = self.store.source_specs()
+        self.store.confirm_monitor(m.id, sorted(sites_of(specs[s] for s in m.sources if s in specs)))
+        return True
 
     def source_list(self) -> dict[str, Any]:
         states = self.store.source_states()
@@ -301,6 +417,7 @@ class Service:
         for m in self.store.monitors():
             for s in m.sources:
                 users.setdefault(s, []).append(m.name)
+        held = self.store.held_specs()
         out = []
         for name, raw in self.store.source_specs().items():
             st = states.get(name)
@@ -315,17 +432,26 @@ class Service:
                     "used_by": users.get(name, []),
                     # Fetched once after source_put, then only while a monitor uses it.
                     "unused": not users.get(name),
+                    **({"held_move": self._held_view(held[name])} if name in held else {}),
                 }
             )
         return {"sources": out}
+
+    def _held_view(self, spec: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "url": spec.get("url", ""),
+            "waits_for": f"the person to confirm or discard it at {self.confirm_url}; don't save it again meanwhile",
+        }
 
     def source_status(self, name: Any) -> dict[str, Any]:
         if not isinstance(name, str) or self.store.source_spec(name) is None:
             raise ToolError("no source of that name")
         st = self.store.source_state(name)
+        held = self.store.held_spec(name)
         return {
             "name": name,
             "spec": self.store.source_spec(name),
+            **({"held_move": self._held_view(held)} if held is not None else {}),
             "healthy": st.healthy,
             "unhealthy_reason": st.unhealthy_reason,
             "last_run": self._iso(st.last_run),
@@ -522,7 +648,26 @@ class Service:
                 f"these sources were last fetched too long ago: {', '.join(stale)}. They are fetched again within "
                 "a minute; save again then, or from_now would let what they listed since through as new"
             )
-        stored = self.store.put_monitor(monitor, delivered_upto=now if from_now else None)
+        # A new monitor, or an active one now reading a site the person has not
+        # confirmed, waits for them; one already waiting keeps waiting. Only the
+        # page's Confirm ends the wait.
+        unconfirmed = self._unconfirmed(monitor.sources)
+        entering = current is None or (not current.awaiting and bool(unconfirmed))
+        stored = self.store.put_monitor(
+            monitor, delivered_upto=now if from_now else None, awaiting=entering or bool(current and current.awaiting)
+        )
+        if entering:
+            names = {a.id: a.name for a in self.store.agents() or []}
+            self.outbox.append(
+                {
+                    "title": f"Confirm monitor {one_line(stored.name, 60)}",
+                    "body": f"Agent {one_line(names.get(stored.agent_id, stored.agent_id), 60)} set it up"
+                    + (f", reading {', '.join(unconfirmed)}" if unconfirmed else "")
+                    + ". It reports only once you confirm it on the page.",
+                    "url": f"{PREFIX}/#m-{stored.id}",
+                    "tag": f"news-radar-confirm-{stored.id}",
+                }
+            )
         out = {
             "saved": stored.name,
             "schedule": stored.schedule,
@@ -532,6 +677,15 @@ class Service:
             "next": "show the person monitor_preview, and tell them the schedule and where reports go, in words; "
             "they can change where reports go on the News Radar page",
         }
+        if stored.awaiting:
+            out["awaiting_confirmation"] = True
+            out["confirm_at"] = self.confirm_url
+            if unconfirmed:
+                out["unconfirmed_sites"] = unconfirmed
+            out["next"] = (
+                "it makes no report until the person confirms it: give them this link in your answer, "
+                f"{self.confirm_url}, and say it reports only once they press Confirm there. Then "
+            ) + out["next"]
         warnings = filter_warnings(
             *self._draft_view(stored, now), stored, self.store.source_specs(), place_map.PlaceMap.load(self.store)
         )
@@ -726,9 +880,11 @@ class Service:
         soon: set[str] = set()
         for m in self.store.monitors():
             schedule = self._schedule(m)
-            if not m.paused and schedule and schedule.fires_within(local, FETCH_AHEAD_SECONDS):
+            if not m.paused and not m.awaiting and schedule and schedule.fires_within(local, FETCH_AHEAD_SECONDS):
                 soon.update(m.sources)
-        used = {s for m in self.store.monitors() for s in m.sources}
+        # Only active monitors keep a source fetched: one awaiting the person reads
+        # nothing on a schedule until they confirm it (news-radar/monitors).
+        used = {s for m in self.store.monitors() if not m.awaiting for s in m.sources}
         due = []
         for name in self.store.source_specs():
             spec = self._stored_spec(name)
@@ -754,6 +910,9 @@ class Service:
             etag=st.etag,
             last_modified=st.last_modified,
             known_url=lambda url: self.store.known_url(name, url, self.store.now() - FOLLOW_REFRESH_SECONDS),
+            # The confirmed sites only, once an active monitor reads it (its own site is
+            # then one); before that, its own site too, for the previews.
+            site_ok=self._site_check(spec, own_site=not any(not m.awaiting for m in self.store.source_users(name))),
         )
         if self.store.source_spec(name) is None:
             return  # deleted while it ran
@@ -763,6 +922,7 @@ class Service:
             watch=spec.watch,
             problem=run_problem(result.items, spec, self._today()),
             error=result.error,
+            code=result.code,
             not_modified=result.not_modified,
             etag=result.etag,
             last_modified=result.last_modified,
@@ -785,7 +945,7 @@ class Service:
         groups: dict[tuple[str, str, str], list[Monitor]] = {}
         for m in self.store.monitors():
             schedule = self._schedule(m)
-            if not m.paused and schedule and schedule.matches(minute):
+            if not m.paused and not m.awaiting and schedule and schedule.matches(minute):
                 groups.setdefault((m.agent_id, m.schedule, m.conversation), []).append(m)
         queued = []
         now = self.store.now()
@@ -858,6 +1018,14 @@ class Service:
 
     def _iso(self, ts: int | None) -> str:
         return datetime.fromtimestamp(ts, self.settings.tz).isoformat(timespec="minutes") if ts else ""
+
+
+class Changed(Exception):
+    """A confirmation of something that changed since the page showed it."""
+
+
+def _fingerprint(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
 
 
 def minutes_between(last: datetime | None, now: datetime, cap: int = 60) -> list[datetime]:

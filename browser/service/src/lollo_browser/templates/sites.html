@@ -2,6 +2,24 @@
 {% block title %}Sites{% endblock %}
 {% block content %}
 <h1>Sites</h1>
+{% if confirm_idp %}
+<section class="banner warn stack" role="alert">
+  <p><strong>Keeping {{ confirm_idp.site }} signed in also signs agents in to every site that offers "Sign in with
+    Google".</strong> Every agent of this stack could then sign in to those sites as you, without asking you or the
+    vault. Nothing is saved until you confirm.</p>
+  <form method="post" action="{{ base }}/sites" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="site" value="{{ confirm_idp.site }}">
+    <input type="hidden" name="keep_signed_in" value="on">
+    {% if confirm_idp.may_checkout %}<input type="hidden" name="may_checkout" value="on">{% endif %}
+    {% if confirm_idp.add %}<input type="hidden" name="add" value="1">{% endif %}
+    <label><input type="checkbox" name="confirm_identity_provider" required> I understand: keep {{ confirm_idp.site }}
+      signed in for every agent</label>
+    <div class="form-actions"><button class="button">Keep signed in</button>
+      <a class="button ghost" href="{{ base }}/sites">Cancel</a></div>
+  </form>
+</section>
+{% endif %}
 <p>Every task starts signed out of every site, except the sites you keep signed in here. Agents can't change
   these settings.</p>
 <p class="muted small">A site you keep signed in can be used by every agent of this stack without asking you or the

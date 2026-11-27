@@ -10,7 +10,7 @@ An interactive version, [lollo-rozzo-overview.html](docs/diagrams/lollo-rozzo-ov
 | Host | Access application | Tunnel routes it to |
 |---|---|---|
 | `<name>.<domain>` | Lettuce's (`CF_ACCESS_AUD`) | `app-server:8080`, the BFF's port in the app-server's network namespace |
-| `<name>-lollo.<domain>` | the lollo's (`CF_LOLLO_AUD`) | `^/vault(/\|$)` to `lollo-vault:8000`, `^/gmail-triggers(/\|$)` to `lollo-gmail-triggers:8000`, `^/news-radar(/\|$)` to `lollo-news-radar:8000`, `^/code-server(/\|$)` to `lollo-code-server:8000`, `^/browser(/\|$)` to `lollo-browser:8000` (each only with its profile), `^/notifications(/\|$)` to `lollo-notifications:8000` (with `lollo-vault` or `lollo-browser`), `^/(assets/[^/]+)?$` to `landing:8000` (with any of them); anything else gets a 404 |
+| `<name>-lollo.<domain>` | the lollo's (`CF_LOLLO_AUD`) | `^/vault(/\|$)` to `lollo-vault:8000`, `^/gmail-triggers(/\|$)` to `lollo-gmail-triggers:8000`, `^/news-radar(/\|$)` to `lollo-news-radar:8000`, `^/code-server(/\|$)` to `lollo-code-server:8000`, `^/browser(/\|$)` to `lollo-browser:8000` (each only with its profile), `^/notifications(/\|$)` to `lollo-notifications:8000` (with `lollo-vault`, `lollo-browser`, `lollo-gmail-triggers` or `lollo-news-radar`), `^/(assets/[^/]+)?$` to `landing:8000` (with any of them); anything else gets a 404 |
 
 Both applications share the stack's Access policy, so `lolloctl users` changes who may sign in to both. The lollo's services accept only the lollo's tokens, never Lettuce's, which agents could catch inside the app-server's namespace. The routes are written by `cf_tunnel_configure` ([lib/cloudflare.sh](lib/cloudflare.sh)) from `PROFILE_ROUTES`, on `add` and on every `profiles` run. `/executor/v1/` and `/healthz` are never routed.
 
@@ -33,16 +33,16 @@ Both applications share the stack's Access policy, so `lolloctl users` changes w
 | `lollo-code-server-exec` (the shell) | [code-server/exec/](code-server/README.md) | `lollo-code-server` | `code-exec`, `code-egress` | `workspaces`, `tools`, `code-exec-keys` read-only |
 | `lollo-browser` | [browser/service/](browser/README.md) | `lollo-browser` (needs `lollo-pipelock`) | `default`, `browser` | `browser-data` |
 | `lollo-browser-engine` | [browser/engine/](browser/README.md) | `lollo-browser` | `browser` | none (tmpfs `/tmp` only); our seccomp profile |
-| `lollo-notifications` | [notifications/](notifications/README.md) | `lollo-vault` or `lollo-browser` (none of its own) | `default` | `notifications-data` |
+| `lollo-notifications` | [notifications/](notifications/README.md) | `lollo-vault`, `lollo-browser`, `lollo-gmail-triggers` or `lollo-news-radar` (none of its own) | `default` | `notifications-data` |
 | `gotenberg` (project `lollo_shared`, one per host) | [compose/shared/](compose/README.md) | `lollo-doc-tools` | its own internal network and each stack's `lollo-doc-tools-<name>` | none |
 
-`state/` is `stacks/<name>/state/` on the host. Every service runs with `no-new-privileges` and a memory cap ([compose/hardening.yml](compose/hardening.yml)); every container in the app-server's namespace drops `NET_RAW`; the lollo's services, the code editor, pipelock and the browser's engine are read-only with every capability dropped (the engine keeps Chromium's sandbox with a seccomp profile of ours, `browser/engine/seccomp.json`, instead of a capability). The code editor's shell is the exception: it is as strong as an agent, so it keeps Docker's default capabilities but `NET_RAW` and a writable root. [compose/README.md](compose/README.md) describes each overlay, and `lolloctl check` refuses a stack that departs from this table ([CONTRIBUTING.md](CONTRIBUTING.md#what-check_stack-enforces)).
+`state/` is `stacks/<name>/state/` on the host. Every service runs with `no-new-privileges` and a memory cap ([compose/hardening.yml](compose/hardening.yml)); every container in the app-server's namespace, and every upstream helper on the stack network (`cloudflared`, `searxng`, `ddg-mcp`, `google-mcp`), drops `NET_RAW`; the lollo's services, the code editor, pipelock and the browser's engine are read-only with every capability dropped (the engine keeps Chromium's sandbox with a seccomp profile of ours, `browser/engine/seccomp.json`, instead of a capability). The code editor's shell is the exception: it is as strong as an agent, so it keeps Docker's default capabilities but `NET_RAW` and a writable root. [compose/README.md](compose/README.md) describes each overlay, and `lolloctl check` refuses a stack that departs from this table ([CONTRIBUTING.md](CONTRIBUTING.md#what-check_stack-enforces)).
 
 ## Networks
 | Network | Internal | Members | Made by |
 |---|---|---|---|
 | `default` (one per stack) | no | every stack service but the editor, the shell and the browser's engine | Compose |
-| `browser` | yes | the browser's engine, `lollo-browser` and `lollo-pipelock`: the engine's only way out is pipelock; pipelock joins it whatever the profiles | Compose |
+| `browser` | yes | the browser's engine, `lollo-browser` and `lollo-pipelock`: the engine's only way out is pipelock, which refuses every stack's Lettuce and lollo hosts and the Access team domain (`LOLLO_DENY_HOSTS`); pipelock joins it whatever the profiles | Compose |
 | `code-exec` | yes | the editor and the shell | Compose |
 | `code-egress` | no | the shell: its only way out | Compose |
 | `lollo-doc-tools-<name>` | yes | the app-server and Gotenberg (alias `gotenberg`) | lolloctl (`sync_doc_tools`) |
@@ -78,7 +78,7 @@ Named volumes of a stack are deleted with it by `lolloctl remove` (`compose down
 | Agents | Gotenberg | the PDF MCP, started per call from the doc-tools volume |
 | The lollo executor (cron in the app-server) | `landing`, `lollo-gmail-triggers`, `lollo-news-radar` | `/executor/v1/` with `LOLLO_EXECUTOR_TOKEN`: the agent list, and the requests of Gmail triggers and News Radar, which it runs as `letta cron add --once` ([landing/executor/README.md](landing/executor/README.md)) |
 | `lollo-gmail-triggers` | Gmail | read-only, with the token Settings -> Google stores |
-| `lollo-vault`, `lollo-browser` | `lollo-notifications` | `/notify/v1/send` with each sender's own token (`NOTIFY_TOKEN`), held only by it and the service, never by the app-server; the service then sends Web Push with the lollo's VAPID key ([notifications/README.md](notifications/README.md#rules)) |
+| `lollo-vault`, `lollo-browser`, `lollo-gmail-triggers`, `lollo-news-radar` | `lollo-notifications` | `/notify/v1/send` with each sender's own token (`NOTIFY_TOKEN`), held only by it and the service, never by the app-server; the service then sends Web Push with the lollo's VAPID key ([notifications/README.md](notifications/README.md#rules)) |
 | `lollo-browser` | the browser's engine | Playwright's WebSocket at a path made from `BROWSER_ENGINE_SECRET`, and the display (VNC), which it relays to the person's page at `/browser/` |
 | The browser's engine | `lollo-pipelock` | every request Chromium makes, loopback included: its only way out, so pipelock refuses private addresses for it ([pipelock/README.md](pipelock/README.md#rules)) |
 | `lollo-news-radar` | public websites | the sources agents set up: public addresses only, robots.txt honoured (a feed's own URL excepted), not through pipelock |
@@ -95,7 +95,7 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 | [`release/`](release/README.md), `VERSION`, `REBUILD` | releases: the published images' list (`release/images`), their content tags, the lolloctl image and its wrapper; the version, and the date that rebuilds every image |
 | `.github/workflows/` | `ci.yml`, every check, on each branch push; `publish.yml`, after `ci.yml` passes, a release on each `v*` tag on `main` or a `hotfix/*` branch, and a dev build (a `lolloctl` image tag) for each pull request; `renovate.yml`, Renovate on its schedule ([CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates)) |
 | `.github/renovate.json5` | what Renovate updates and what merges on its own |
-| `compose/hardening.yml` | `no-new-privileges`, memory caps for every service, a pid cap on the app-server, no `NET_RAW` where agents run, letta-code self-update off |
+| `compose/hardening.yml` | `no-new-privileges`, memory caps for every service, a pid cap on the app-server, no `NET_RAW` where agents run nor in the upstream helpers on the stack network, letta-code self-update off |
 | `compose/multi.yml` | drops all published ports, so stacks never collide |
 | `compose/vault.yml`, [`vault/`](vault/README.md) | the optional vault (`lollo-vault` profile) and its source |
 | `compose/gmail-triggers.yml`, [`gmail-triggers/`](gmail-triggers/README.md) | optional Gmail triggers (`lollo-gmail-triggers` profile) and their source |
@@ -103,7 +103,7 @@ Each stack runs as Compose project `lollo-<name>` with `--env-file stacks/<name>
 | `compose/pipelock.yml`, `compose/pipelock-proxy.yml`, [`pipelock/`](pipelock/README.md) | the optional egress proxy (`lollo-pipelock` profile), its proxy settings and its image |
 | `compose/code-server.yml`, [`code-server/`](code-server/README.md) | the optional code editor (`lollo-code-server` profile): its gate, the editor's image and the shell's image |
 | `compose/browser.yml`, [`browser/`](browser/README.md) | the optional agents' browser (`lollo-browser` profile): the engine (Chromium and its display) and `lollo-browser` (the agents' tools and the person's page), their internal network and volume |
-| `compose/notifications.yml`, [`notifications/`](notifications/README.md) | the lollo's notifications service (on with `lollo-vault` or `lollo-browser`): the one sender of Web Push for them, and the page at `/notifications/` |
+| `compose/notifications.yml`, [`notifications/`](notifications/README.md) | the lollo's notifications service (on with `lollo-vault`, `lollo-browser`, `lollo-gmail-triggers` or `lollo-news-radar`): the one sender of Web Push for them, and the page at `/notifications/` |
 | `compose/landing.yml`, [`landing/`](landing/README.md) | the lollo's landing page (on with `lollo-vault`, `lollo-gmail-triggers`, `lollo-news-radar`, `lollo-code-server` or `lollo-browser`) and the lollo executor ([landing/executor/](landing/executor/README.md)), which runs the requests of Gmail triggers and News Radar and sends the landing page the agent list |
 | `compose/doc-tools.yml`, `compose/shared/gotenberg.yml`, [`doc-tools/`](doc-tools/README.md) | the optional Office and PDF tools (`lollo-doc-tools` profile): the app-server's mount and network, the host's shared Gotenberg, and the tools' image and PDF server |
 | [`lollo-common/`](lollo-common/README.md) | code the lollo services share (sign-in checks, the executor API's checks, page styles, icons) |

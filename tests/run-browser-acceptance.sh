@@ -22,8 +22,12 @@
 # tcpdump shares the engine's network namespace for the whole run, and a
 # listener shares pipelock's to catch anything sent straight to its address.
 #
+# Pipelock, the engine and lollo-browser get a LOLLO_DENY_HOSTS that names a
+# fixture site standing for the stack's own lollo host.
+#
 # Checks: no page request reaches a stack service, a private, loopback or
-# link-local address, the engine's own ports or a rebinding name; WebRTC and
+# link-local address, the engine's own ports, a rebinding name or the stack's
+# own host (by any route: redirect, frame, service worker); WebRTC and
 # QUIC send nothing by UDP; typed secrets and one-time codes appear in no tool
 # result, log line or audit entry, and screenshots mask their fields; the site
 # check refuses look-alikes; tasks share no cookies or storage; the engine
@@ -113,8 +117,13 @@ run bff --network "$id-default" --network-alias bff --network-alias app-server -
   "$HELPER" python /acc/fixture.py witness bff 80,443,3000,8080 3478
 VAULT_IP=$(ip_of "$id-vault" "$id-default")
 BFF_IP=$(ip_of "$id-bff" "$id-default")
+# alfred-lollo.stack.test stands for the stack's own lollo host: served by the
+# fixture like any site, and denied (LOLLO_DENY_HOSTS), so nothing may reach it.
 names=(shop.acme-shop.test login.acme-shop.test login.acme-sh0p.test acme-shop.test.evil.test
-  cdn.static-cdn.test img.static-cdn.test)
+  cdn.static-cdn.test img.static-cdn.test alfred-lollo.stack.test)
+# What lolloctl's deny_hosts gives the stack: its two hosts and the Access team domain.
+LOLLO_DENY_HOSTS=alfred-lollo.stack.test,alfred.stack.test,team.cloudflareaccess.com
+export LOLLO_DENY_HOSTS
 aliases=()
 for n in "${names[@]}"; do aliases+=(--network-alias "$n"); done
 run web --network "$id-net" "${aliases[@]}" -e VAULT_IP="$VAULT_IP" -e BFF_IP="$BFF_IP" \
@@ -127,7 +136,7 @@ DNS_IP=$(ip_of "$id-dns" "$id-default")
 # network and `browser`, under the name lollo-pipelock; here also `net`.
 containers+=("$id-pipelock")
 docker create --name "$id-pipelock" --network "$id-default" --network-alias lollo-pipelock --dns "$DNS_IP" \
-  -v "$id-pipelock:/data" "$PIPELOCK" >/dev/null
+  -e LOLLO_DENY_HOSTS -v "$id-pipelock:/data" "$PIPELOCK" >/dev/null
 docker network connect --alias lollo-pipelock "$id-browser" "$id-pipelock"
 docker network connect "$id-net" "$id-pipelock"
 docker start "$id-pipelock" >/dev/null
@@ -140,7 +149,7 @@ containers+=("$id-engine")
 docker create --name "$id-engine" --network "$id-browser" --network-alias lollo-browser-engine \
   --read-only --tmpfs /tmp --shm-size 512m --cap-drop ALL --security-opt no-new-privileges:true \
   --security-opt "seccomp=$ROOT/browser/engine/seccomp.json" --memory 2g --pids-limit 512 \
-  -e BROWSER_ENGINE_SECRET -e BROWSER_PROXY=http://lollo-pipelock:8888 -e TZ=UTC \
+  -e BROWSER_ENGINE_SECRET -e BROWSER_PROXY=http://lollo-pipelock:8888 -e LOLLO_DENY_HOSTS -e TZ=UTC \
   --mount "type=volume,src=$id-certs,dst=$POLICY_DIR/acceptance-ca.json,volume-subpath=policy.json,readonly" \
   "$ENGINE" >/dev/null
 docker start "$id-engine" >/dev/null
@@ -169,7 +178,7 @@ docker create --name "$id-service" --network "$id-default" --network-alias lollo
   -e BROWSER_ENGINE_URL=ws://lollo-browser-engine:3000 -e BROWSER_ENGINE_SECRET \
   -e BROWSER_VNC=lollo-browser-engine:5900 -e NOTIFY_TOKEN \
   -e CF_ACCESS_TEAM_DOMAIN=team1 -e CF_ACCESS_AUD=aud2 -e ALLOWED_USERS=alfred@gmail.com \
-  -e PUBLIC_ORIGIN=https://alfred-lollo.example.com -e TZ=UTC \
+  -e PUBLIC_ORIGIN=https://alfred-lollo.example.com -e LOLLO_DENY_HOSTS -e TZ=UTC \
   "$SERVICE" >/dev/null
 docker network connect --alias lollo-browser "$id-browser" "$id-service"
 docker start "$id-service" >/dev/null
@@ -251,6 +260,14 @@ none "unreachable: nothing reached pipelock's own address but its proxy port (UD
 # fixture under that name is the public phase, not a leak.
 none "unreachable: the fixture got no probe meant for a stack or private address" \
   "$(docker logs "$id-web" 2>&1 | grep 'acc-probe' | grep -v '^HIT http rb\.test ' || true)"
+# The stack's own host: by navigation, redirect, frame, service worker, script,
+# percent-encoding or trailing dot, nothing reached it; the control did.
+none "denied: the stack's own host got no request (navigation, 302, iframe, service worker, fetch, %-encoded, trailing dot)" \
+  "$(docker logs "$id-web" 2>&1 | grep '^HIT [a-z]* alfred-lollo\.stack\.test' || true)"
+# grep without -q reads to the end, so docker logs never gets a broken pipe (pipefail).
+if docker logs "$id-web" 2>&1 | grep '^HIT https shop\.acme-shop\.test GET /acc-denied-control' >/dev/null; then
+  ok "denied: control: a host beside it on the fixture loads"
+else fail "denied: control: the fixture got no /acc-denied-control"; fi
 info_dns=$(docker logs "$id-dns" 2>&1 | grep '^DNS rb.test' | head -4 | tr '\n' ' ')
 echo "info  rebinding DNS answers: $info_dns"
 # pcap NAME FILTER: the engine's captured packets matching FILTER, as text.

@@ -97,7 +97,10 @@ def build_server(service: Service) -> MCPServer:
 
     @server.tool(
         description="Save a source (create or replace) from a spec that passed source_test in the last 15 "
-        "minutes. Or, with name and revert (1 = the previous spec), bring back one of its last 5 specs.",
+        "minutes. Or, with name and revert (1 = the previous spec), bring back one of its last 5 specs. A change "
+        "that moves a source an active monitor uses to a site the person has not confirmed is held: the source "
+        "keeps its current spec until the person confirms the move on the News Radar page (the answer gives the "
+        "link to pass on).",
         annotations=ToolAnnotations(title="Save a source", read_only_hint=False, open_world_hint=False),
     )
     async def source_put(
@@ -163,7 +166,10 @@ def build_server(service: Service) -> MCPServer:
         "A saved monitor is replaced whole: send back every field this tool takes, as monitor_list gives them, "
         "changing only what was asked; a field left out goes back to its default. conversation and set_up_in are the "
         "exception: a saved monitor keeps them, so leave both out unless the person asks where reports go. Saving also "
-        "unpauses a paused monitor. sources: source names. schedule: numeric 5-field cron in the stack's timezone (not "
+        "unpauses a paused monitor. A new monitor, or one given a source on a site the person has not confirmed, "
+        "awaits confirmation: it reports only once the person confirms it on the News Radar page, so give them the "
+        "confirm_at link the answer holds; saving again never confirms it. "
+        "sources: source names. schedule: numeric 5-field cron in the stack's timezone (not "
         "UTC), several joined with ';' (e.g. '0 9 * * 1-5' for 9:00 Monday to Friday); leave it out for the admin's "
         "default. conversation, where reports go: here (the set_up_in conversation), new (a new conversation each "
         "report), default (your main one) or a conversation id; leave it out to keep where a saved monitor reports "

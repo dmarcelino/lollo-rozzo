@@ -30,10 +30,12 @@ import anyio.abc
 import httpx
 import jwt
 from lollo_common.auth import COOP, JWT_HEADER, Authenticator, AuthError
+from lollo_common.limits import BodyLimit
 from lollo_common.lollo import stylesheet
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
@@ -353,4 +355,8 @@ def create_app(
             Route(PREFIX + "/{rest:path}", editor, methods=METHODS),
             WebSocketRoute(PREFIX + "/{rest:path}", editor_socket),
         ],
+        # Bodies are capped before anything reads them (lollo_common.limits), but
+        # the editor's: the gate signs the person in before it touches a body, then
+        # streams it to the editor, so uploads there keep working at any size.
+        middleware=[Middleware(BodyLimit, routes={PREFIX: None})],
     )

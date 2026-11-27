@@ -38,7 +38,7 @@ from . import icons, vnc
 from .audit import AuditLog
 from .config import PREFIX, TICKET_TTL_SECONDS, PageSettings
 from .handoffs import HandoffError, Handoffs
-from .sessions import Sessions, SiteError
+from .sessions import Sessions, SiteError, is_identity_provider
 from .tasks import BrowserError, BrowserService
 
 log = logging.getLogger("lollo_browser.page")
@@ -341,6 +341,16 @@ def page_routes(
         # listed it would turn off what the row has, and forget its sign-in.
         if form.get("add") and (before.keep_signed_in or before.may_checkout or before.saved_at is not None):
             return error(f"{before.site} is already listed: change it in its own row on the Sites page.", 400, email)
+        # Keeping the identity provider's site signs agents in to every site that
+        # uses it: the person confirms it first, and nothing is saved until then.
+        if (
+            keep
+            and not before.keep_signed_in
+            and is_identity_provider(before.site)
+            and form.get("confirm_identity_provider") != "on"
+        ):
+            confirm = {"site": before.site, "may_checkout": checkout_ok, "add": bool(form.get("add"))}
+            return render("sites.html", email, sites=sessions.sites(), confirm_idp=confirm)
         sessions.set_may_checkout(site, checkout_ok)
         after = sessions.set_keep_signed_in(site, keep)
         audit.record(

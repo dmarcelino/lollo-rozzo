@@ -129,6 +129,20 @@ test('file://, view-source: and devtools:// are blocked', async () => {
   await page.close();
 });
 
+test("the stack's denied hosts are blocked by policy, their siblings are not", async () => {
+  // run.sh gives the engine LOLLO_DENY_HOSTS=alfred-lollo.example.com,...
+  const policies = JSON.parse(fs.readFileSync(POLICY_FILE, 'utf8'));
+  assert.ok(policies.URLBlocklist.includes('.alfred-lollo.example.com'), JSON.stringify(policies.URLBlocklist));
+  assert.ok(policies.URLBlocklist.includes('file://*'), 'the image policies are kept');
+  const page = await context.newPage();
+  for (const url of ['https://alfred-lollo.example.com/vault/', 'https://ALFRED-LOLLO.example.com./', 'https://team.cloudflareaccess.com/cdn-cgi/access/login']) {
+    await assert.rejects(page.goto(url), /ERR_BLOCKED_BY_ADMINISTRATOR/, url);
+  }
+  // A sibling on the same domain goes to the (unreachable) proxy instead.
+  await assert.rejects(page.goto('https://www.example.com/'), /ERR_PROXY_CONNECTION_FAILED/);
+  await page.close();
+});
+
 test('every request goes to the proxy, loopback included', async () => {
   const page = await context.newPage();
   // Direct, this would answer "Running": the engine's own Playwright port.

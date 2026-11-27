@@ -17,10 +17,12 @@ from typing import Any
 
 import anyio
 from lollo_common.auth import COOP, FORM, PAGE, Authenticator, AuthError, admit
+from lollo_common.limits import BodyLimit
 from lollo_common.lollo import stylesheet
 from jinja2 import Environment, PackageLoader, select_autoescape
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request as HttpRequest
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -514,4 +516,9 @@ def create_app(service: Service, authenticator: Authenticator) -> Starlette:
             Mount("/", app=mcp_app),
         ],
         lifespan=lifespan,
+        # Bodies are capped before anything reads them, /redeem and MCP calls
+        # included (lollo_common.limits). The import's own check (page's max_body)
+        # answers first, with its message, for a declared size up to twice its
+        # limit; this cap is the backstop beyond that.
+        middleware=[Middleware(BodyLimit, routes={PREFIX + "/secrets/import": 2 * MAX_IMPORT_BYTES})],
     )

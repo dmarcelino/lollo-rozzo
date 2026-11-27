@@ -33,6 +33,9 @@ services:
       ALLOWED_USERS: ${ALLOWED_USERS:-}
       PUBLIC_ORIGIN: ${LOLLO_ORIGIN:-}
       LOLLO_EXECUTOR_TOKEN: ${LOLLO_EXECUTOR_TOKEN:-}
+      # Its own token for the notifications service's send API (monitors and source moves that wait for the person),
+      # which only it and that service get (compose/notifications.yml).
+      NOTIFY_TOKEN: ${NOTIFY_TOKEN_NEWS_RADAR:-}
       TZ: ${TZ:-UTC}
       # The admin's settings, copied from config.env by `up`; empty means the default.
       NEWS_RADAR_DEFAULT_TIMES: ${NEWS_RADAR_DEFAULT_TIMES:-}

@@ -120,7 +120,7 @@ def make_jwt(key: Any, **over: Any) -> str:
         "exp": now + 3600,
     }
     claims.update(over)
-    return jwt.encode(claims, key, algorithm="RS256")
+    return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "test-key"})
 
 
 class Page:
@@ -384,6 +384,32 @@ def test_sites_settings_and_kept_sign_ins(page):
     assert page.post("/browser/sites", {"site": "co.uk", "keep_signed_in": "on"}).status_code == 400
     events = [e["event"] for e in page.audit()]
     assert events.count("setting_changed") >= 3 and "signin_forgotten" in events
+
+
+def test_keeping_the_identity_provider_asks_first(page):
+    sessions = page.service.sessions
+    # Without the confirm box: the warning, and nothing saved.
+    r = page.post("/browser/sites", {"site": "accounts.google.com", "keep_signed_in": "on", "add": "1"})
+    assert r.status_code == 200
+    assert "Sign in with" in r.text and 'name="confirm_identity_provider"' in r.text
+    assert not sessions.setting("google.com").keep_signed_in
+    assert sessions.sites() == []
+    # With it, kept.
+    r = page.post(
+        "/browser/sites", {"site": "google.com", "keep_signed_in": "on", "add": "1", "confirm_identity_provider": "on"}
+    )
+    assert r.status_code == 303
+    assert sessions.setting("google.com").keep_signed_in
+    # Already kept: changing its other setting asks nothing again.
+    r = page.post("/browser/sites", {"site": "google.com", "keep_signed_in": "on", "may_checkout": "on"})
+    assert r.status_code == 303 and sessions.may_checkout("https://google.com/")
+
+
+def test_keeping_another_site_shows_no_identity_provider_warning(page):
+    r = page.post("/browser/sites", {"site": "shop.test", "keep_signed_in": "on"})
+    assert r.status_code == 303
+    assert "Sign in with" not in page.get("/browser/sites").text
+    assert page.service.sessions.setting("shop.test").keep_signed_in
 
 
 def test_audit_page_filters_and_never_shows_a_secret(page, sites):

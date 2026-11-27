@@ -59,7 +59,7 @@ def main() -> None:
     network.detect()
     service = BrowserService(
         RemoteEngine(settings.engine_url, settings.engine_secret),
-        Sessions(settings.data_dir),
+        Sessions(settings.data_dir, deny_hosts=settings.deny_hosts),
         AuditLog(settings.data_dir),
         Handoffs(),
         settings.limits,

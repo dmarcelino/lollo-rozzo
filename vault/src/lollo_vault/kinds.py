@@ -15,6 +15,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -196,6 +197,35 @@ def may_share_without_asking(kind: str, key: str) -> bool:
 def _tail(value: str, n: int = 4) -> str:
     compact = re.sub(r"\s+", "", value)
     return compact[-n:] if len(compact) > n else ""
+
+
+# The identity provider's site: the only one lolloctl configures for the stack's
+# Cloudflare Access is Google. Its login signs in to every site that offers
+# "Sign in with Google", so the approval page says so (vault-identity-logins).
+IDENTITY_PROVIDER_SITES = ("google.com",)
+
+
+def _host(uri: str) -> str:
+    uri = uri.strip()
+    if not uri:
+        return ""
+    try:
+        host = urlsplit(uri if "://" in uri else "//" + uri).hostname or ""
+    except ValueError:
+        return ""
+    return host.lower().rstrip(".")
+
+
+def identity_provider_login(kind: str, fields: Iterable[Any]) -> bool:
+    """True for a login whose websites include the identity provider's site or
+    a subdomain of it (accounts.google.com)."""
+    if kind != "login":
+        return False
+    uris = next((f.value for f in fields if f.key == "uris"), "")
+    for host in map(_host, uris.splitlines()):
+        if any(host == site or host.endswith("." + site) for site in IDENTITY_PROVIDER_SITES):
+            return True
+    return False
 
 
 def preview(kind: str, fields: list[Any]) -> str:

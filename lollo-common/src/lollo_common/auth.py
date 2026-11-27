@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
+import threading
+import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -63,15 +66,76 @@ class AuthError(Exception):
 KeyResolver = Callable[[str], Any]
 
 
+# Access signs with RS256 and names its key; anything else never reaches a key lookup.
+ALGORITHM = "RS256"
+KEY_ID = re.compile(r"[\x21-\x7e]{1,128}")
+# How often an unknown key id may make the team's key set be fetched again.
+REFETCH_INTERVAL = 60.0
+# How soon after a failed fetch the next one may run: a sidecar starting during
+# a network blip should not wait a whole interval.
+RETRY_INTERVAL = 5.0
+
+
+def check_header(token: str) -> str:
+    """The token's key id, once its unverified header says RS256 and names a
+    printable key id of at most 128 characters; a PyJWTError otherwise."""
+    header = jwt.get_unverified_header(token)
+    if header.get("alg") != ALGORITHM:
+        raise jwt.InvalidAlgorithmError("the sign-in token is not signed with RS256")
+    kid = header.get("kid")
+    if not isinstance(kid, str) or not KEY_ID.fullmatch(kid):
+        raise jwt.InvalidTokenError("the sign-in token names no usable key")
+    return kid
+
+
+class AccessKeys:
+    """The team's Access signing keys, by key id. A key id it does not know makes
+    it fetch the key set again, but at most once per REFETCH_INTERVAL: a burst of
+    tokens with made-up key ids costs one fetch, not one each. A key id still
+    unknown fails closed, as an invalid sign-in. An unreachable key set raises
+    PyJWKClientError (503), and keeps raising it until a fetch succeeds; after a
+    failure the next fetch may run RETRY_INTERVAL later."""
+
+    def __init__(
+        self,
+        url: str,
+        client: jwt.PyJWKClient | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        interval: float = REFETCH_INTERVAL,
+        retry: float = RETRY_INTERVAL,
+    ):
+        self._client = client or jwt.PyJWKClient(url, cache_keys=False, cache_jwk_set=False)
+        self._clock = clock
+        self._interval = interval
+        self._retry = retry
+        self._keys: dict[str, Any] = {}
+        self._next: float | None = None  # when a fetch may run again
+        self._failed = False
+        self._lock = threading.Lock()
+
+    def __call__(self, token: str) -> Any:
+        kid = check_header(token)
+        with self._lock:
+            key = self._keys.get(kid)
+            if key is None and (self._next is None or self._clock() >= self._next):
+                try:
+                    jwk_set = self._client.get_jwk_set(refresh=True)
+                except jwt.PyJWKClientError:
+                    self._failed, self._next = True, self._clock() + self._retry
+                    raise
+                self._failed, self._next = False, self._clock() + self._interval
+                self._keys = {k.key_id: k.key for k in jwk_set.keys if k.key_id}
+                key = self._keys.get(kid)
+            failed = self._failed
+        if key is None:
+            if failed:
+                raise jwt.PyJWKClientError("the team's key set could not be fetched")
+            raise jwt.InvalidTokenError("the sign-in token names an unknown key")
+        return key
+
+
 def jwks_resolver(team_domain: str) -> KeyResolver:
-    client = jwt.PyJWKClient(
-        f"https://{team_domain}.cloudflareaccess.com/cdn-cgi/access/certs", cache_keys=True, lifespan=3600
-    )
-
-    def resolve(token: str) -> Any:
-        return client.get_signing_key_from_jwt(token).key
-
-    return resolve
+    return AccessKeys(f"https://{team_domain}.cloudflareaccess.com/cdn-cgi/access/certs")
 
 
 class Authenticator:
@@ -86,6 +150,10 @@ class Authenticator:
         token = headers.get(JWT_HEADER)
         if not token:
             raise AuthError("sign in through the stack's address; direct access is not allowed")
+        try:
+            check_header(token)
+        except jwt.PyJWTError as e:
+            raise AuthError("invalid sign-in token") from e
         try:
             key = await anyio.to_thread.run_sync(self._resolve, token)
         except jwt.PyJWKClientError as e:

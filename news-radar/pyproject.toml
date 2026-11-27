@@ -25,6 +25,11 @@ dependencies = [
   "icalendar==7.3.2",
   "dateparser==1.5.1",
   "tzdata==2026.6",
+  # What "a site" is (a registrable domain), for the sites the person confirms:
+  # the Public Suffix List snapshot bundled with the release, never fetched.
+  # The browser's pins (browser/service/pyproject.toml), so both agree.
+  "tldextract==5.4.0",
+  "idna==3.20",
 ]
 
 [project.optional-dependencies]

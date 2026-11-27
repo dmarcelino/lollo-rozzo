@@ -38,6 +38,9 @@ services:
       ALLOWED_USERS: ${ALLOWED_USERS:-}
       PUBLIC_ORIGIN: ${LOLLO_ORIGIN:-}
       LOLLO_EXECUTOR_TOKEN: ${LOLLO_EXECUTOR_TOKEN:-}
+      # Its own token for the notifications service's send API (new senders on a rule anyone may set off),
+      # which only it and that service get (compose/notifications.yml).
+      NOTIFY_TOKEN: ${NOTIFY_TOKEN_GMAIL_TRIGGERS:-}
       TZ: ${TZ:-UTC}
     # Root (with no capabilities) so it owns the state directory Docker creates.
     user: "0"

@@ -29,9 +29,11 @@ from urllib.parse import quote
 
 from lollo_common.auth import COOP, PAGE, Authenticator, AuthError, admit
 from lollo_common.executor import EXECUTOR_PREFIX, NO_STORE, done, guard, read_agents
+from lollo_common.limits import BodyLimit
 from lollo_common.lollo import stylesheet
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
@@ -61,9 +63,9 @@ LABELS = {
     "lollo-browser": ("Browser", "Watch, take over and limit what your agents do on the web"),
 }
 
-# The profiles whose pages send notifications: with either on, lollo-notifications
-# runs and the page links to it (compose/notifications.yml has the same two).
-SENDERS = ("lollo-vault", "lollo-browser")
+# The profiles whose services send notifications: with any on, lollo-notifications
+# runs and the page links to it (compose/notifications.yml has the same list).
+SENDERS = ("lollo-vault", "lollo-browser", "lollo-gmail-triggers", "lollo-news-radar")
 NOTIFICATIONS = "/notifications/"
 
 # The one Home Screen app for the whole lollo host: its id, scope and start page are
@@ -203,4 +205,6 @@ def create_app(settings: Settings, authenticator: Authenticator, agents: AgentLi
             # Fetched with the Access cookie (crossorigin="use-credentials" on every lollo page's link).
             Route("/assets/manifest.webmanifest", page(manifest, asset=True)),
         ],
+        # Bodies are capped before anything reads them (lollo_common.limits).
+        middleware=[Middleware(BodyLimit)],
     )

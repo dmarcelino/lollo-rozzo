@@ -28,6 +28,8 @@ def add_rule(env, **over) -> Rule:
         max_per_hour=6,
     )
     fields.update(over)
+    # A rule saved without senders is one anyone may set off.
+    fields.setdefault("anyone", not fields["senders"])
     rule = Rule(**fields)
     rule.id = env.store.save_rule(rule)
     return rule

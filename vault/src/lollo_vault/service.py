@@ -37,7 +37,7 @@ from .config import (
     REQUEST_TTL_SECONDS,
     RESULT_TTL_SECONDS,
 )
-from .kinds import may_share_without_asking, preview
+from .kinds import identity_provider_login, may_share_without_asking, preview
 from .logs import SECRET_FILTER
 from .vault import AUTO, Locked, Secret, Vault, VaultError
 
@@ -158,6 +158,9 @@ class Request:
     shared: tuple[str, ...] = ()
     values: dict[str, str] | None = field(default=None, repr=False)
     lost_to_lock: bool = False  # approved, but the vault locked before the agent collected
+    # A login for the identity provider (Google): the approval page warns that it
+    # signs in to every site that uses it. Only the person's pages show it.
+    identity_provider: bool = False
 
 
 @dataclass
@@ -647,6 +650,7 @@ class Service:
             delivery=delivery,
             reason=reason if delivery == TEXT else "",
             alias=alias,
+            identity_provider=identity_provider_login(secret.kind, secret.fields),
         )
         self._requests[req.id] = req
         log.info("pending id=%s secret=%s fields=%s", req.id, secret.id, ",".join(keys))

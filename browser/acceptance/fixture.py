@@ -30,7 +30,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 PAGES = Path(__file__).with_name("pages")
 NAMES = [
@@ -40,7 +40,16 @@ NAMES = [
     "acme-shop.test.evil.test",
     "cdn.static-cdn.test",
     "img.static-cdn.test",
+    # The stack's own lollo host, which LOLLO_DENY_HOSTS names: served like any
+    # site, so only the deny keeps a task from it.
+    "alfred-lollo.stack.test",
 ]
+DENIED = "alfred-lollo.stack.test"
+# A service worker that, as it installs, fetches the denied host.
+DENIED_SW = f"""self.addEventListener('install', (e) => e.waitUntil(
+  fetch('https://{DENIED}/acc-denied-sw', {{mode: 'no-cors'}}).catch(() => {{}})));
+self.addEventListener('activate', () => fetch('https://{DENIED}/acc-denied-sw-activate', {{mode: 'no-cors'}})
+  .catch(() => {{}}));"""
 _log_lock = threading.Lock()
 
 
@@ -131,6 +140,14 @@ class Web(http.server.BaseHTTPRequestHandler):
         elif path == "/show":
             cookie = self.headers.get("cookie") or "(none)"
             self.send(200, SHOW_PAGE.format(cookie=cookie.replace("<", "&lt;")))
+        elif path == "/redirect":
+            # A 302 to `to`, through a second 302 when `hops` is 2.
+            to, hops = q.get("to", ["/"])[0], int(q.get("hops", ["1"])[0])
+            if hops > 1:
+                to = f"/redirect?hops={hops - 1}&to={quote(to, safe='')}"
+            self.send(302, "", location=to)
+        elif path == "/denied-sw.js":
+            self.send(200, DENIED_SW, "text/javascript")
         elif path == "/load":
             self.send(200, load_page(int(q.get("n", ["40"])[0]), q.get("tag", ["x"])[0]))
         elif path.startswith("/img/"):

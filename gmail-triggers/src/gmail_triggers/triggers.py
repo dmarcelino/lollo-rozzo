@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from lollo_common.text import one_line
 
-from .config import MAX_LISTED_MESSAGES
+from .config import MAX_LISTED_MESSAGES, NEW_SENDERS_PER_DAY, PREFIX
 from .matcher import Message
 from .store import QUEUED, Held, Rule, Run, Store, new_request_id
 
@@ -155,6 +156,85 @@ def plan(
         if later:
             held[rule.id] = later
     return held, sent
+
+
+@dataclass(frozen=True)
+class NewSender:
+    """A sender a rule anyone may set off had not seen: one notice."""
+
+    rule_id: str
+    rule_name: str
+    sender: str  # "" when the From address could not be read
+    set_aside: bool
+
+
+@dataclass
+class Screened:
+    """The matches that may go on to plan(), and what to record and announce."""
+
+    matches: dict[str, list[Message]]
+    seen: list[tuple[str, str, bool]] = field(default_factory=list)  # rule id, sender, ran
+    set_aside: dict[str, int] = field(default_factory=dict)
+    notices: list[NewSender] = field(default_factory=list)
+
+
+def screen_new_senders(store: Store, rules: Sequence[Rule], matches: dict[str, list[Message]], now: int) -> Screened:
+    """On each enabled rule anyone may set off, mail from a sender new to it is
+    let through while fewer than NEW_SENDERS_PER_DAY new senders were let
+    through in the last 24 hours, and set aside (no run) past that. A sender
+    stays new until its mail is let through once, so mailing again does not
+    get round the cap. Each sender gets one notice when first seen, and one
+    more if its mail was set aside then and is let through later. Mail whose
+    sender could not be read can never be seen, so it is set aside, with one
+    notice per rule. Rules with a sender list pass unchanged."""
+    out = Screened(matches={})
+    for rule_id, messages in matches.items():
+        out.matches[rule_id] = list(messages)
+    for rule in rules:
+        messages = matches.get(rule.id)
+        if not rule.enabled or not rule.anyone or not messages:
+            continue
+        seen = store.seen_senders(rule.id, (m.sender for m in messages))
+        room = NEW_SENDERS_PER_DAY - store.new_senders_ran_since(rule.id, now - 86400)
+        decided: dict[str, bool] = {}
+        kept: list[Message] = []
+        aside = 0
+        for message in messages:
+            sender = message.sender
+            if sender and seen.get(sender):
+                kept.append(message)
+                continue
+            if sender not in decided:
+                ran = bool(sender) and room > 0
+                room -= ran
+                decided[sender] = ran
+                out.seen.append((rule.id, sender, ran))
+                # Set aside again: the person was told once already.
+                if sender not in seen or ran:
+                    out.notices.append(NewSender(rule.id, rule.name, sender, not ran))
+            if decided[sender]:
+                kept.append(message)
+            else:
+                aside += 1
+        out.matches[rule.id] = kept
+        if aside:
+            out.set_aside[rule.id] = aside
+    return out
+
+
+def new_sender_notice(notice: NewSender) -> dict[str, str]:
+    """The notice's payload: the rule and the sender's address, never a subject."""
+    who = notice.sender or "a sender whose address could not be read"
+    if notice.set_aside:
+        body = f"Mail from {who} matched it and was set aside: too many new senders today. It started no task."
+    else:
+        body = f"Mail from {who} matched it and started a task. Anyone may set this trigger off."
+    return {
+        "title": f"New sender on {one_line(notice.rule_name, 70)}",
+        "body": body,
+        "url": f"{PREFIX}/r/{notice.rule_id}",
+        "tag": f"gmail-triggers-new-sender-{notice.rule_id}",
+    }
 
 
 def send_test(store: Store, rule: Rule, now: int) -> str:

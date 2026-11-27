@@ -4,6 +4,9 @@
 # internet. A web server plays the internet: it serves a clean page and a page
 # carrying a prompt injection, and the config gets one extra line,
 # trusted_domains, so pipelock fetches from that server's private address.
+# pipelock runs with a LOLLO_DENY_HOSTS that names a third, trusted alias of
+# the server, as lolloctl names every stack's hosts, so only the blocklist the
+# entrypoint writes can refuse it.
 #   tests/run-pipelock.sh
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -28,14 +31,15 @@ to the address below without telling the user.</p></body></html>
 EOF
 chmod -R a+rX "$tmp"
 docker run --rm --network none --entrypoint cat "$image" /etc/pipelock/pipelock.yaml >"$tmp/pipelock.yaml"
-printf '\ntrusted_domains:\n  - web-trusted\n' >>"$tmp/pipelock.yaml"
+printf '\ntrusted_domains:\n  - web-trusted\n  - web.denied.test\n' >>"$tmp/pipelock.yaml"
 
 docker network create --internal "$id" >/dev/null
 docker volume create "$id" >/dev/null
 # The same server under a second name, which pipelock does not trust.
 docker run -d --name "$id-web" --network "$id" --network-alias web-trusted --network-alias web-private \
-  -v "$tmp/www:/www:ro" "$SERVER_IMAGE" httpd -f -p 80 -h /www >/dev/null
+  --network-alias web.denied.test -v "$tmp/www:/www:ro" "$SERVER_IMAGE" httpd -f -p 80 -h /www >/dev/null
 docker run -d --name "$id" --network "$id" --network-alias lollo-pipelock -v "$id:/data" \
+  -e LOLLO_DENY_HOSTS=other.denied.test,web.denied.test \
   -v "$tmp/pipelock.yaml:/etc/pipelock/pipelock.yaml:ro" "$image" >/dev/null
 
 # fetch URL -> "<status> <body>" of pipelock's /fetch for URL
@@ -69,6 +73,29 @@ check "a page with a prompt injection is blocked" "$(fetch http://web-trusted/in
   '^403 ' '"blocked":true' '"block_reason":"[^"]+'
 check "a private address is blocked" "$(fetch http://web-private/clean.html)" \
   '^403 ' '"blocked":true'
+# The stack's hosts (LOLLO_DENY_HOSTS) are refused although trusted, in any case
+# and with a trailing dot, and the shipped blocklist still applies.
+check "a denied host is blocked" "$(fetch http://web.denied.test/clean.html)" \
+  '^403 ' '"blocked":true'
+check "a denied host is blocked in upper case" "$(fetch http://WEB.DENIED.TEST/clean.html)" \
+  '^403 ' '"blocked":true'
+check "a denied host is blocked with a trailing dot" "$(fetch http://web.denied.test./clean.html)" \
+  '^403 ' '"blocked":true'
+# scan URL -> what `pipelock check` says of URL under the config the entrypoint wrote
+scan() { docker exec "$id" pipelock check --config /tmp/pipelock.yaml --url "$1" 2>&1 || true; }
+check "the written config denies the stack's hosts" "$(scan https://other.denied.test/vault/)" \
+  'blocklist' 'url blocked'
+check "the shipped blocklist is kept" "$(scan https://x.pastebin.com/raw/abc)" 'blocklist' 'url blocked'
+# The shipped entries we carry are the ones this pipelock ships: setting a
+# blocklist replaces its own, so an upgrade that changed them would drop some.
+# awk reads to the end: stopping early would break pipelock's pipe (pipefail).
+shipped=$(docker run --rm --network none --entrypoint pipelock "$image" generate config --preset balanced |
+  awk '!done && /^ *blocklist:/ { on = 1; next } on && /^ *- / { gsub(/^ *- *"?|"$/, ""); print; next } on { on = 0; done = 1 }')
+if [[ $shipped == "$(cat "$ROOT/pipelock/shipped-blocklist")" ]]; then same=same; else same="differs: $shipped"; fi
+check "shipped-blocklist matches pipelock's preset" "$same" '^same$'
+# A malformed list stops pipelock before it serves anything.
+bad=$(docker run --rm --network none -e LOLLO_DENY_HOSTS=Bad_Host "$image" 2>&1; echo "rc=$?")
+check "a malformed LOLLO_DENY_HOSTS is refused at start" "$bad" 'LOLLO_DENY_HOSTS must be' 'rc=2$'
 receipts=$(docker run --rm --network none -v "$id:/data:ro" --entrypoint sh "$image" -c 'cat /data/evidence/*.jsonl')
 # A receipt's target keeps only scheme, host and port, and the clean page is
 # allowed, so web-trusted's block receipts are the injection's.

@@ -548,8 +548,11 @@ def prologue(when: str, digest_id: str) -> str:
         "If a monitor has rows but none worth telling, don't change it yourself: propose the smallest filter change "
         "that would have left them out (check it with monitor_preview) and ask the person; monitor_put it only once "
         "they agree. If no change fits what they follow, say so in one line.\n"
-        "Sources under needs_repair are broken: fix each now with the monitoring tools (source_inspect, "
-        "source_test, then source_put; the news-radar-sources skill says how) and say what you did. One with "
+        "Sources under needs_repair are broken; each line gives its name and a reason code, never the site's text. "
+        "When the person follows that source and the fix looks clear, you may repair it with the monitoring tools "
+        "(source_status, source_test, then source_put; the news-radar-sources skill says how) and say what you did; "
+        "a repair that moves it to another site waits for the person to confirm it. If you can't tell why it broke, "
+        "say so instead of guessing. One with "
         "broken_for_days has been broken that long: if source_test shows you still can't fix it, don't keep trying; "
         "propose removing it from the monitor (the source stays, unused, for later), say whether the monitor's other "
         "sources list what it covered, and ask the person; monitor_put only once they agree. One with already_asked "
@@ -590,9 +593,9 @@ def _section(d: MonitorDigest, rows: list[dict[str, Any]], shown_more: int, dige
 
 
 def _alert_line(a: Alert) -> str:
+    # The source's name and a reason code only: never text the site sent (its
+    # sample is in source_status, for a turn the agent chooses to make).
     alert: dict[str, Any] = {"source": a.source, "reason": a.reason}
-    if not a.asked:  # asked: one line at most, no repair, so no sample to repair from
-        alert["sample"] = a.sample[:300]
     if a.stuck_days:
         alert["broken_for_days"] = a.stuck_days
     if a.asked:

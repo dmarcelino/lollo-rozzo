@@ -90,6 +90,14 @@ def test_the_body_is_json_and_capped(hub):
     assert r.status_code == 400
 
 
+def test_a_large_body_is_refused_before_it_is_read_wherever_it_is_sent(hub):
+    big = b"{" + b" " * (2 * 1024 * 1024) + b"}"
+    # Without a token, so nothing but the cap could refuse it before the handler.
+    for path in (SEND, "/notifications/subscriptions", "/notifications/"):
+        assert hub.client.post(path, content=big, headers={"content-type": "application/json"}).status_code == 413
+    assert hub.send(vault_payload()).status_code == 202
+
+
 # -- A sender says only what is its own ------------------------------------------
 
 
@@ -381,12 +389,57 @@ def test_a_title_already_naming_another_sender_still_gets_its_own_label(hub):
 
 def test_any_other_sender_is_named_by_its_source(hub_for):
     token = "c3" * 32
-    hub = hub_for(tokens={"vault": VAULT_TOKEN, "gmail-triggers": token})
+    hub = hub_for(tokens={"vault": VAULT_TOKEN, "some-sender": token})
     device = hub.enroll(1)
-    payload = {"title": "New mail", "body": "x", "url": "/gmail-triggers/", "tag": "gmail-triggers-new"}
+    payload = {"title": "New mail", "body": "x", "url": "/some-sender/", "tag": "some-sender-new"}
     assert hub.send(payload, token=token).status_code == 202
     hub.stop()
-    assert hub.sender.sent(device)[0]["title"] == "Gmail-triggers: New mail"
+    assert hub.sender.sent(device)[0]["title"] == "Some-sender: New mail"
+
+
+GMAIL_TOKEN = "c3" * 32
+RADAR_TOKEN = "d4" * 32
+
+
+@pytest.mark.parametrize(
+    ("source", "token", "payload", "title"),
+    [
+        (
+            "gmail-triggers",
+            GMAIL_TOKEN,
+            {"title": "New sender", "body": "x", "url": "/gmail-triggers/r/1", "tag": "gmail-triggers-new-sender-1"},
+            "Gmail triggers: New sender",
+        ),
+        (
+            "news-radar",
+            RADAR_TOKEN,
+            {"title": "Confirm a monitor", "body": "x", "url": "/news-radar/", "tag": "news-radar-confirm-1"},
+            "News Radar: Confirm a monitor",
+        ),
+    ],
+)
+def test_gmail_triggers_and_news_radar_are_named(hub_for, source, token, payload, title):
+    hub = hub_for(tokens={"vault": VAULT_TOKEN, source: token})
+    device = hub.enroll(1)
+    assert hub.send(payload, token=token).status_code == 202
+    hub.stop()
+    assert hub.sender.sent(device)[0]["title"] == title
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"title": "Approve", "body": "x", "url": "/vault/r/abc", "tag": "news-radar-confirm-1"},
+        {"title": "Approve", "body": "x", "url": "/news-radar/", "tag": "vault-request"},
+        {"title": "Approve", "body": "x", "url": "/gmail-triggers/r/1", "tag": "news-radar-confirm-1"},
+    ],
+)
+def test_news_radar_posing_as_another_sender_is_refused(hub_for, payload):
+    hub = hub_for(tokens={"vault": VAULT_TOKEN, "news-radar": RADAR_TOKEN})
+    hub.enroll(1)
+    assert hub.send(payload, token=RADAR_TOKEN).status_code == 400
+    hub.stop()
+    assert hub.sender.calls == []
 
 
 def test_a_long_title_keeps_the_label_and_its_cap(hub):

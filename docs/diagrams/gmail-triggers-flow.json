@@ -119,7 +119,7 @@
       "from": "you",
       "to": "triggers",
       "y": 175,
-      "label": "rule: labels, senders, agent, what to do",
+      "label": "rule: labels, senders (or anyone), agent, what to do",
       "variant": "security",
       "note": "signed in; agents can't change rules"
     },

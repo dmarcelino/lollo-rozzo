@@ -220,19 +220,26 @@ def test_the_page_links_to_the_lollo_pages_that_are_on(landing_for):
 
 @pytest.mark.parametrize(
     "profiles",
-    ["lollo-vault", "lollo-browser", "lollo-vault,lollo-browser", "lollo-code-server,lollo-browser,lollo-news-radar"],
+    [
+        "lollo-vault",
+        "lollo-browser",
+        "lollo-gmail-triggers",
+        "lollo-news-radar",
+        "lollo-vault,lollo-browser",
+        "lollo-code-server,lollo-browser,lollo-news-radar",
+    ],
 )
 def test_with_a_sender_on_the_page_links_to_notifications(landing_for, profiles):
     page = landing_for(profiles).page().text
     assert page.count(NOTIFICATIONS) == 1
     assert ">Notifications</span>" in page and "this device" in page
     # After the lollo pages it serves.
-    for sender in ("/vault/", "/browser/"):
+    for sender in ("/vault/", "/gmail-triggers/", "/news-radar/", "/browser/"):
         if f'href="{sender}"' in page:
             assert page.index(f'href="{sender}"') < page.index(NOTIFICATIONS)
 
 
-@pytest.mark.parametrize("profiles", ["", "lollo-gmail-triggers", "lollo-news-radar,lollo-code-server"])
+@pytest.mark.parametrize("profiles", ["", "lollo-code-server"])
 def test_without_a_sender_there_is_no_notifications_link(landing_for, profiles):
     page = landing_for(profiles).page().text
     assert "/notifications/" not in page and ">Notifications</span>" not in page

@@ -67,7 +67,7 @@ function openWindow(url, { controlled = true } = {}) {
 
 test("a link under a known lollo prefix opens as it is", () => {
   const { context } = worker();
-  for (const link of ["/vault/r/abc", "/browser/h/42?x=1#top", "/notifications/"]) {
+  for (const link of ["/vault/r/abc", "/browser/h/42?x=1#top", "/gmail-triggers/r/1", "/news-radar/#m-3", "/notifications/"]) {
     assert.equal(context.tapTarget(link, ORIGIN), `${ORIGIN}${link}`);
   }
 });
@@ -77,7 +77,8 @@ test("any other link opens the landing page", () => {
   for (const link of [
     "/",
     "/code-server/",
-    "/gmail-triggers/",
+    "/gmail-triggers",
+    "/news-radarx/",
     "/vaultx/",
     "/vault",
     "/vault/../code-server/",
@@ -140,6 +141,8 @@ test("no other lollo page is taken over", async () => {
     [`${ORIGIN}/vault`, "/vault/r/abc"],
     [`${ORIGIN}/code-server/`, "/vault/r/abc"],
     [`${ORIGIN}/gmail-triggers/`, "/notifications/"],
+    [`${ORIGIN}/gmail-triggers/r/1`, "/news-radar/"],
+    [`${ORIGIN}/news-radar/`, "/vault/r/abc"],
     // A link outside the prefixes opens the landing page, never in a vault window.
     [`${ORIGIN}/vault/r/1`, "https://evil.example.com/vault/"],
     ["https://alfred.example.com/vault/", "/vault/r/abc"],

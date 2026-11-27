@@ -31,8 +31,8 @@
     {
       "id": "sender",
       "type": "backend",
-      "label": "Vault or browser",
-      "sublabel": "the senders"
+      "label": "A lollo page",
+      "sublabel": "vault, browser, Gmail triggers, News Radar"
     }
   ],
   "segments": [

@@ -11,8 +11,10 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
 import anyio
+from lollo_common.limits import BodyLimit
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
@@ -68,5 +70,8 @@ def create_app(
     app = Starlette(
         routes=[Route("/healthz", healthz), *page_routes, Mount("/", app=mcp_app)],
         lifespan=lifespan,
+        # Bodies are capped before anything reads them, MCP calls included
+        # (lollo_common.limits). The Guard in front reads headers only.
+        middleware=[Middleware(BodyLimit)],
     )
     return Guard(app, network)

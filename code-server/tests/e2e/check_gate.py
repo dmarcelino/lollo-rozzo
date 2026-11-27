@@ -50,7 +50,10 @@ def main() -> None:
     )
     now = int(time.time())
     token = jwt.encode(
-        {"aud": ["aud1"], "iss": settings.issuer, "email": EMAIL, "iat": now, "exp": now + 600}, key, algorithm="RS256"
+        {"aud": ["aud1"], "iss": settings.issuer, "email": EMAIL, "iat": now, "exp": now + 600},
+        key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
     )
     authenticator = Authenticator(settings, key_resolver=lambda t: key.public_key())
     app = create_app(settings, authenticator, editor_client(), unix_socket_connect())

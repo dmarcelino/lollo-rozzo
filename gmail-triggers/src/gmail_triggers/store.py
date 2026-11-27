@@ -35,7 +35,12 @@ CREATE TABLE IF NOT EXISTS rules (
   prompt TEXT NOT NULL,
   max_per_hour INTEGER NOT NULL,
   created INTEGER NOT NULL,
-  updated INTEGER NOT NULL
+  updated INTEGER NOT NULL,
+  -- 1: any sender may set it off (the person turned the switch on); its
+  -- senders list is then empty. Added by _migrate on older stores.
+  anyone INTEGER NOT NULL DEFAULT 0,
+  -- Mail from new senders over NEW_SENDERS_PER_DAY, set aside without a run.
+  set_aside INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS handled (message_id TEXT PRIMARY KEY, at INTEGER NOT NULL);
@@ -76,6 +81,21 @@ CREATE TABLE IF NOT EXISTS dismissed_gaps (gap_id INTEGER PRIMARY KEY, at INTEGE
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, pos INTEGER NOT NULL);
 """
 
+# The senders each "anyone" rule has seen (one notice each). ran_at: when its
+# mail was first let through to a run, which is what the NEW_SENDERS_PER_DAY
+# cap counts; 0 for a sender seeded from the run log at the upgrade (known, and
+# not counted); NULL while all its mail was set aside, so it is still new to
+# the cap and its next mail is let through only if there is room.
+RULE_SENDERS = """
+CREATE TABLE rule_senders (
+  rule_id TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  first_seen INTEGER NOT NULL,
+  ran_at INTEGER,
+  PRIMARY KEY (rule_id, sender)
+);
+"""
+
 # queued: waiting for the executor; claimed: handed to it, waiting for its result.
 QUEUED, CLAIMED, OK, FAILED, LOST = "queued", "claimed", "ok", "failed", "lost"
 # Gap kinds: Gmail's history expired; Google was unusable for a while; too many
@@ -98,9 +118,13 @@ class Rule:
     conversation: str = "new"
     max_per_hour: int = 6
     enabled: bool = True
+    # Any sender may set it off: the person's explicit choice, with no senders listed.
+    anyone: bool = False
     id: str = ""
     created: int = 0
     updated: int = 0
+    # Mail from new senders over the daily cap, set aside (read only).
+    set_aside: int = 0
 
     def label_display(self) -> list[str]:
         return [self.label_names.get(lid, lid) for lid in self.label_ids]
@@ -154,6 +178,40 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL" if path != ":memory:" else "PRAGMA journal_mode=MEMORY")
         self._db.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Brings a store from before "anyone" rules up to date, once, each step
+        in the transaction that adds its column or table: a rule saved with no
+        senders becomes an "anyone" rule (it kept matching any sender), and each
+        rule's senders in its run log count as seen, so the upgrade sends no
+        burst of new-sender notices."""
+        columns = {r["name"] for r in self._db.execute("PRAGMA table_info(rules)")}
+        # sqlite3 opens no transaction of its own before ALTER or CREATE: one
+        # explicit transaction keeps a column and its update together.
+        self._db.execute("BEGIN IMMEDIATE")
+        with self._db:
+            if "anyone" not in columns:
+                self._db.execute("ALTER TABLE rules ADD COLUMN anyone INTEGER NOT NULL DEFAULT 0")
+                self._db.execute("UPDATE rules SET anyone = 1 WHERE senders = '[]'")
+            if "set_aside" not in columns:
+                self._db.execute("ALTER TABLE rules ADD COLUMN set_aside INTEGER NOT NULL DEFAULT 0")
+            exists = self._db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'rule_senders'"
+            ).fetchone()
+            if exists is None:
+                self._db.execute(RULE_SENDERS)
+                seen: dict[tuple[str, str], int] = {}
+                for row in self._db.execute("SELECT rule_id, at, messages FROM runs WHERE test = 0"):
+                    for m in json.loads(row["messages"]):
+                        sender = m.get("sender") or ""
+                        if sender:
+                            key = (row["rule_id"], sender)
+                            seen[key] = min(seen.get(key, row["at"]), row["at"])
+                self._db.executemany(
+                    "INSERT INTO rule_senders (rule_id, sender, first_seen, ran_at) VALUES (?, ?, ?, 0)",
+                    [(r, s, at) for (r, s), at in seen.items()],
+                )
 
     def now(self) -> int:
         return int(self._clock())
@@ -174,8 +232,10 @@ class Store:
             conversation=row["conversation"],
             prompt=row["prompt"],
             max_per_hour=row["max_per_hour"],
+            anyone=bool(row["anyone"]),
             created=row["created"],
             updated=row["updated"],
+            set_aside=row["set_aside"],
         )
 
     def rules(self, enabled_only: bool = False) -> list[Rule]:
@@ -203,12 +263,14 @@ class Store:
             rule.conversation,
             rule.prompt,
             rule.max_per_hour,
+            int(rule.anyone),
         )
         with self._db:
             if rule.id:
                 self._db.execute(
                     "UPDATE rules SET name=?, enabled=?, label_ids=?, label_names=?, senders=?, verified_only=?, "
-                    "agent_id=?, agent_name=?, conversation=?, prompt=?, max_per_hour=?, updated=? WHERE id=?",
+                    "agent_id=?, agent_name=?, conversation=?, prompt=?, max_per_hour=?, anyone=?, updated=? "
+                    "WHERE id=?",
                     (*values, now, rule.id),
                 )
                 if not rule.enabled:
@@ -217,8 +279,8 @@ class Store:
             rule_id = uuid.uuid4().hex[:16]
             self._db.execute(
                 "INSERT INTO rules (name, enabled, label_ids, label_names, senders, verified_only, agent_id, "
-                "agent_name, conversation, prompt, max_per_hour, created, updated, id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "agent_name, conversation, prompt, max_per_hour, anyone, created, updated, id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (*values, now, now, rule_id),
             )
             return rule_id
@@ -232,7 +294,12 @@ class Store:
 
     def delete_rule(self, rule_id: str) -> None:
         with self._db:
-            for table, col in (("rules", "id"), ("pending", "rule_id"), ("runs", "rule_id")):
+            for table, col in (
+                ("rules", "id"),
+                ("pending", "rule_id"),
+                ("runs", "rule_id"),
+                ("rule_senders", "rule_id"),
+            ):
                 self._db.execute(f"DELETE FROM {table} WHERE {col} = ?", (rule_id,))
 
     def count_rules(self) -> int:
@@ -279,6 +346,36 @@ class Store:
 
     def pending_counts(self) -> dict[str, int]:
         return {r[0]: r[1] for r in self._db.execute("SELECT rule_id, COUNT(*) FROM pending GROUP BY rule_id")}
+
+    # -- senders seen by "anyone" rules ----------------------------------------
+    def seen_senders(self, rule_id: str, senders: Iterable[str]) -> dict[str, bool]:
+        """Those of `senders` the rule has seen before, each with whether its
+        mail has started a run (or it was seeded at the upgrade): False while
+        all its mail was set aside."""
+        wanted = list(dict.fromkeys(s for s in senders if s))
+        seen: dict[str, bool] = {}
+        for i in range(0, len(wanted), 500):
+            chunk = wanted[i : i + 500]
+            marks = ",".join("?" * len(chunk))
+            seen.update(
+                (r[0], r[1] is not None)
+                for r in self._db.execute(
+                    f"SELECT sender, ran_at FROM rule_senders WHERE rule_id = ? AND sender IN ({marks})",
+                    (rule_id, *chunk),
+                )
+            )
+        return seen
+
+    def known_senders(self, rule_id: str, senders: Iterable[str]) -> set[str]:
+        """Those of `senders` whose mail the rule lets through: seen, and run
+        (or seeded) once."""
+        return {s for s, ran in self.seen_senders(rule_id, senders).items() if ran}
+
+    def new_senders_ran_since(self, rule_id: str, since: int) -> int:
+        """How many senders new to the rule were let through to a run after `since`."""
+        return self._db.execute(
+            "SELECT COUNT(*) FROM rule_senders WHERE rule_id = ? AND ran_at > ?", (rule_id, since)
+        ).fetchone()[0]
 
     # -- runs -----------------------------------------------------------------
     @staticmethod
@@ -449,13 +546,27 @@ class Store:
         held: dict[str, Sequence[Held]],
         sent: Sequence[Run],
         skipped: int = 0,
+        seen: Sequence[tuple[str, str, bool]] = (),
+        set_aside: dict[str, int] | None = None,
     ) -> None:
         """Marks messages handled, moves the history position, takes the sent
         matches out of the queue, holds matches over the limit, queues the runs
-        for the executor and records messages left unchecked, in one
-        transaction: after a crash, either all of it happened or none of it."""
+        for the executor, records messages left unchecked, the senders new to
+        "anyone" rules (`seen`: rule id, sender, whether it ran) and the mail set
+        aside per rule, in one transaction: after a crash, either all of it
+        happened or none of it."""
         now = self.now()
         with self._db:
+            # A sender set aside before keeps its first_seen, and gets its
+            # ran_at the first time its mail is let through.
+            self._db.executemany(
+                "INSERT INTO rule_senders (rule_id, sender, first_seen, ran_at) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (rule_id, sender) DO UPDATE SET ran_at = excluded.ran_at"
+                " WHERE rule_senders.ran_at IS NULL",
+                [(rule_id, sender, now, now if ran else None) for rule_id, sender, ran in seen if sender],
+            )
+            for rule_id, n in (set_aside or {}).items():
+                self._db.execute("UPDATE rules SET set_aside = set_aside + ? WHERE id = ?", (n, rule_id))
             self._db.executemany(
                 "INSERT OR IGNORE INTO handled (message_id, at) VALUES (?, ?)", [(m, now) for m in handled]
             )
@@ -527,7 +638,5 @@ class Store:
         with self._db:
             if self._db.execute("SELECT 1 FROM gaps WHERE id = ?", (gap_id,)).fetchone() is None:
                 return False
-            self._db.execute(
-                "INSERT OR IGNORE INTO dismissed_gaps (gap_id, at) VALUES (?, ?)", (gap_id, self.now())
-            )
+            self._db.execute("INSERT OR IGNORE INTO dismissed_gaps (gap_id, at) VALUES (?, ?)", (gap_id, self.now()))
         return True

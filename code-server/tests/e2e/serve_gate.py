@@ -38,6 +38,7 @@ def main() -> None:
                 {"aud": ["aud1"], "iss": settings.issuer, "email": EMAIL, "iat": now, "exp": now + 3600},
                 key,
                 algorithm="RS256",
+                headers={"kid": "test-key"},
             )
             headers = [(k, v) for k, v in scope["headers"] if k != JWT_HEADER.encode()]
             scope = {**scope, "headers": [*headers, (JWT_HEADER.encode(), token.encode())]}

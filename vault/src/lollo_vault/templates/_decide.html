@@ -17,6 +17,12 @@
     <p>It says it needs them to:</p>
     <blockquote>{{ req.purpose }}</blockquote>
   </div>
+  {% if req.identity_provider %}
+  <div class="banner warn" role="note">
+    <p><strong>This is a Google login.</strong> It also signs in to every site that offers "Sign in with Google",
+      for whoever holds it. Share it only if the agent's task truly needs your Google account.</p>
+  </div>
+  {% endif %}
   {% if req.delivery == "text" %}
   <div class="banner warn" role="note">
     <p><strong>The agent wants to read these values.</strong> They stay in that conversation, which the AI provider also sees. Its reason:</p>

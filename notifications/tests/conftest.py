@@ -150,7 +150,7 @@ def make_jwt(key: Any, **over: Any) -> str:
     }
     claims.update(over)
     claims = {k: v for k, v in claims.items() if v is not None}
-    return jwt.encode(claims, key, algorithm="RS256")
+    return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "test-key"})
 
 
 class Hub:

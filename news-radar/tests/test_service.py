@@ -82,7 +82,8 @@ async def test_health(service, web, clock, store):
     for n in range(3):
         await service.fetch_source("city-agenda")
         assert store.source_state("city-agenda").healthy is (n < 2)
-    assert "3 failed runs" in store.source_state("city-agenda").unhealthy_reason
+    st = store.source_state("city-agenda")
+    assert st.unhealthy_reason == "http_status" and st.last_error == "HTTP 500"
     web.add(URL, EVENTS_JSON, "application/json")
     await service.fetch_source("city-agenda")
     assert store.source_state("city-agenda").healthy
@@ -99,7 +100,9 @@ async def test_empty_after_full_runs_is_unhealthy(service, web, clock, store):
     web.add(URL, '{"data": {"list": {"items": []}}}', "application/json")
     await service.fetch_source("city-agenda")
     st = store.source_state("city-agenda")
-    assert not st.healthy and "no items" in st.unhealthy_reason
+    assert not st.healthy and st.unhealthy_reason == "no_items"
+    # The service's own words for a repair turn, in source_status only.
+    assert service.source_status("city-agenda")["last_error"] == "no items, where runs usually find about 8"
 
 
 async def test_monitor_put_checks_and_defaults(service, web):
@@ -221,7 +224,7 @@ async def test_a_broken_source_is_reported_once_a_day(service, web, store, clock
     clock.t += 60
     [rid] = fire_at(service, "2027-01-15T10:00")
     [request] = store.claim(20)
-    assert "needs_repair" in request["prompt"] and "3 failed runs" in request["prompt"]
+    assert needs_repair(request["prompt"]) == [{"source": "city-agenda", "reason": "http_status"}]
     store.finish(rid, True, "t", "")
     clock.t += 3600
     assert fire_at(service, "2027-01-15T11:00") == []  # still broken, already told today
@@ -715,7 +718,8 @@ async def test_a_listing_of_past_events_fails_its_test_and_makes_its_source_unhe
     clock.t += 10 * 86400  # a date fixed in the URL: the listing stops moving
     await service.fetch_source("city-agenda")
     st = store.source_state("city-agenda")
-    assert not st.healthy and "every event is in the past" in st.unhealthy_reason
+    assert not st.healthy and st.unhealthy_reason == "extract_failed"
+    assert "every event is in the past" in service.source_status("city-agenda")["last_error"]
 
 
 async def test_event_sources_need_their_dates(service, web):
@@ -1453,9 +1457,13 @@ async def test_a_source_broken_for_days_is_asked_about_once(service, web, store,
         return request["prompt"]
 
     clock.t += 60
-    [first] = needs_repair(report())  # broken a few minutes: repair it
+    prompt = report()
+    [first] = needs_repair(prompt)  # broken a few minutes: repair it
     assert "broken_for_days" not in first and "already_asked" not in first
-    assert "DEPLOYMENT_DISABLED" in first["sample"]
+    # A reason code, never the site's text: the sample is in source_status.
+    assert first == {"source": "city-agenda", "reason": "http_status"}
+    assert "DEPLOYMENT_DISABLED" not in prompt
+    assert "DEPLOYMENT_DISABLED" in service.source_status("city-agenda")["sample"]
     clock.t += 3 * 86400
     await service.fetch_source("city-agenda")
     prompt = report()
@@ -1632,9 +1640,11 @@ def test_a_cut_prompt_counts_as_told_only_the_repairs_it_holds():
     from lollo_news_radar.digest import Alert, MonitorDigest, render
     from lollo_news_radar.store import Monitor
 
-    names = [f"source-{i}" for i in range(40)]
-    alerts = [Alert(n, "3 failed runs in a row; the last: HTTP 500", 0, "x" * 300, True) for n in names]
-    digest = MonitorDigest(Monitor(AGENT, "m", names, "0 9 * * *", id="m1"), [], 0, alerts)
+    # Alert lines carry no sample, so it takes long names and many of them to overflow.
+    names = [f"source-{i:03d}-" + "n" * 48 for i in range(150)]
+    alerts = [Alert(n, "http_status", 0, "x" * 300, True) for n in names]
+    # The monitor's own header names one source, so the alerts are what overflows.
+    digest = MonitorDigest(Monitor(AGENT, "m", ["s"], "0 9 * * *", id="m1"), [], 0, alerts)
     prompt, _, alerted = render([digest], "at 09:00", "d1")
     assert 0 < len(alerted) < len(names)
     assert all(f'"source": "{n}"' in prompt for n in alerted)

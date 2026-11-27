@@ -9,14 +9,23 @@ one-off letta-code task.
 from __future__ import annotations
 
 import logging
+from typing import Protocol
 
 import anyio
+from lollo_common.notify import NoNotifier
 
 from .config import CATCH_UP_SECONDS, LOST_AFTER_SECONDS, MAX_FETCH_PER_POLL, RESUME_AFTER_SECONDS
 from .google import Gmail, Google, GoogleUnavailable, HistoryExpired, Status
 from .matcher import IGNORED_LABELS, Message, RuleView, match, parse_message
 from .store import GAP_EXPIRED, GAP_PAUSED, PAUSE_CLEARED, Store
-from .triggers import plan
+from .triggers import NewSender, new_sender_notice, plan, screen_new_senders
+
+
+class Sender(Protocol):
+    """What the poller needs of lollo_common.notify.Notifier."""
+
+    async def send(self, payload: object) -> bool: ...
+
 
 log = logging.getLogger("gmail_triggers.poller")
 
@@ -33,10 +42,12 @@ CHOSEN = frozenset({Status.DISABLED, Status.NOT_CONNECTED, Status.GMAIL_NOT_GRAN
 
 
 class Poller:
-    def __init__(self, store: Store, google: Google, poll_seconds: int):
+    def __init__(self, store: Store, google: Google, poll_seconds: int, notifier: Sender | None = None):
         self.store = store
         self.google = google
         self.poll_seconds = poll_seconds
+        # New-sender notices go through lollo-notifications (NOTIFY_TOKEN).
+        self.notifier: Sender = notifier or NoNotifier()
 
     async def run(self) -> None:
         while True:
@@ -119,8 +130,9 @@ class Poller:
 
         # Read again: a rule may have been turned off or deleted during the fetches.
         rules = store.rules(enabled_only=True)
-        views = [RuleView(r.id, frozenset(r.label_ids), frozenset(r.senders), r.verified_only) for r in rules]
-        held, sent = plan(store, rules, match(messages, views, gmail.email), now)
+        views = [RuleView(r.id, frozenset(r.label_ids), frozenset(r.senders), r.verified_only, r.anyone) for r in rules]
+        screened = screen_new_senders(store, rules, match(messages, views, gmail.email), now)
+        held, sent = plan(store, rules, screened.matches, now)
         unchecked = set(skipped)
         store.record_poll(
             handled=[m for m in new_ids if m not in unchecked],
@@ -128,4 +140,15 @@ class Poller:
             held=held,
             sent=sent,
             skipped=len(skipped),
+            seen=screened.seen,
+            set_aside=screened.set_aside,
         )
+        # After the commit: a slow or absent notifications service never holds
+        # up a poll, and a notice never decides whether a run is queued.
+        for notice in screened.notices:
+            await self._notify(notice)
+
+    async def _notify(self, notice: NewSender) -> None:
+        sent = await self.notifier.send(new_sender_notice(notice))
+        # The rule id and the outcome only: never the sender's address.
+        log.info("new-sender notice rule=%s set_aside=%s sent=%s", notice.rule_id, notice.set_aside, sent)

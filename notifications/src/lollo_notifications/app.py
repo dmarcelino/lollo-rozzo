@@ -36,10 +36,12 @@ import anyio
 from jinja2 import Environment, PackageLoader, select_autoescape
 from lollo_common.auth import COOP, FETCH, PAGE, Authenticator, AuthError, admit
 from lollo_common.executor import BadRequest, error, guard_sources
+from lollo_common.limits import BodyLimit
 from lollo_common.lollo import stylesheet
 from lollo_common.notify import MAX_SEND_BODY, MAX_TITLE, NOTIFY_PREFIX, SEND_PATH, PayloadError, check_payload
 from lollo_common.text import one_line
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -78,7 +80,13 @@ TEST_PAYLOAD = {
 }
 
 # The label in front of a sender's titles; any other sender's is its name, capitalised.
-LABELS = {"vault": "Vault", "browser": "Browser", OWN_SOURCE: "Lollo"}
+LABELS = {
+    "vault": "Vault",
+    "browser": "Browser",
+    "gmail-triggers": "Gmail triggers",
+    "news-radar": "News Radar",
+    OWN_SOURCE: "Lollo",
+}
 
 Handler = Callable[[Request, str], Awaitable[Response]]
 
@@ -308,4 +316,7 @@ def create_app(
             Mount(PREFIX, routes=ui),
         ],
         lifespan=lifespan,
+        # Bodies are capped before anything reads them (lollo_common.limits); the
+        # send API's own reader caps it lower still (MAX_SEND_BODY).
+        middleware=[Middleware(BodyLimit)],
     )

@@ -46,6 +46,9 @@ SAMPLE = 600
 class RunResult:
     items: list[Item] = field(default_factory=list)
     error: str = ""
+    # Why it failed, as one of the fixed reason codes (store.REASONS): what a
+    # report may say, where `error` may quote the site.
+    code: str = ""
     not_modified: bool = False
     etag: str = ""
     last_modified: str = ""
@@ -114,10 +117,14 @@ async def run_source(
     max_follow: int | None = None,
     max_wait: float | None = None,
     look_for_blocks: bool = False,
+    site_ok: Callable[[str], bool] | None = None,
 ) -> RunResult:
     """Never raises for what a site does: the result's error says why the run failed.
     look_for_blocks (source_test): keep the first page's top repeated block, to
-    compare with the items found."""
+    compare with the items found. site_ok: what the URLs the spec names (its url
+    and pages) must pass, or the run fails (unconfirmed_site): news-radar/monitors,
+    a source reads from sites the person confirmed. What those sites lead to, a
+    redirect, a sitemap's files or the links followed, is theirs to choose."""
     result = RunResult()
     accept = ACCEPT[spec.kind]
     # Conditional requests only make sense for a source that is a single request.
@@ -141,10 +148,12 @@ async def run_source(
                 max_wait=max_wait,
                 # Only the feed itself, as a feed reader reads it: never what it links to.
                 feed=spec.kind == "rss",
+                site_ok=site_ok,
             )
         except FetchError as e:
             if i == 0:
                 result.error = str(e)
+                result.code = e.code
                 result.retry_after = e.retry_after
                 if e.page is not None:
                     result.sample = sample_of(e.page)
@@ -182,6 +191,7 @@ async def run_source(
         except (ExtractError, FetchError) as e:  # FetchError: an index's sitemap file
             if i == 0:
                 result.error = str(e)
+                result.code = e.code if isinstance(e, FetchError) else "extract_failed"
                 result.retry_after = getattr(e, "retry_after", 0)
                 return result
             break

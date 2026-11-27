@@ -234,49 +234,73 @@ vm_agent() {
   args+=(-v "$vm:$vm" -e SSH_AUTH_SOCK="$vm")
 }
 
-# toolbox_host -> what `toolbox` takes from the host: the home (read-only, for
-# the files it mounts), the ssh agent, and the tokens and `secret` values that
-# only the host's commands can give. Values go by name (-e NAME), never in argv.
+# toolbox_host ARGS... -> what `toolbox` takes from the host: the home (read-only,
+# for the files it mounts), and the ssh agent and the tokens of the credentials
+# the run chose, by flag (--gh, --ssh, --claude in ARGS, before the stack name)
+# or by the toolbox file's `use` lines (unless --no-credentials): the grammar
+# lolloctl's cmd_toolbox reads. Nothing is fetched for a credential the run did
+# not choose. Also the toolbox file's `secret` values, which only the host's
+# commands can give. Values go by name (-e NAME), never in argv.
 toolbox_host() {
-  local file line w name a val
-  args+=(-v "$HOME:$HOME:ro" -e LOLLOCTL_HOST_HOME="$HOME" -e XDG_CONFIG_HOME -e CLAUDE_CONFIG_DIR -e CLAUDE_CODE_OAUTH_TOKEN)
+  local file line w name a val k kinds="" no_credentials=""
+  while [[ ${1:-} == --* ]]; do
+    case $1 in
+      --gh | --ssh | --claude) kinds+=" ${1#--}" ;;
+      --no-credentials) no_credentials=1 ;;
+    esac
+    shift
+  done
+  file=${XDG_CONFIG_HOME:-$HOME/.config}/lolloctl/toolbox
+  if [[ -f $file ]]; then
+    # The same checks as lolloctl's toolbox_personal, but before anything runs:
+    # the `secret` commands run here, as you.
+    [[ -O $file ]] || die "$file is not owned by you"
+    (((8#$(file_stat %a %Lp "$file") & 8#022) == 0)) || die "$file is writable by others (chmod 600 $file)"
+    if [[ -z $no_credentials ]]; then
+      while IFS= read -r line || [[ -n $line ]]; do
+        read -ra w <<<"$line"
+        [[ ${#w[@]} -ge 2 && ${w[0]} == use ]] || continue
+        # lolloctl refuses an unknown kind; here it only goes unused.
+        for k in "${w[@]:1}"; do kinds+=" $k"; done
+      done <"$file"
+    fi
+  fi
+  args+=(-v "$HOME:$HOME:ro" -e LOLLOCTL_HOST_HOME="$HOME" -e XDG_CONFIG_HOME -e CLAUDE_CONFIG_DIR)
   # The Claude config and the toolbox file may live outside the home; just them,
   # read-only, or lolloctl would not find them in its container.
   [[ -z ${CLAUDE_CONFIG_DIR:-} ]] || mount_ro_outside_home "$CLAUDE_CONFIG_DIR"
-  mount_ro_outside_home "${XDG_CONFIG_HOME:-$HOME/.config}/lolloctl/toolbox"
-  if [[ -n ${SSH_AUTH_SOCK:-} && -S $SSH_AUTH_SOCK ]]; then
+  mount_ro_outside_home "$file"
+  if [[ " $kinds " == *" ssh "* && -n ${SSH_AUTH_SOCK:-} && -S $SSH_AUTH_SOCK ]]; then
     if [[ $os == Darwin ]]; then
       vm_agent
     else
       args+=(-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e SSH_AUTH_SOCK)
     fi
   fi
-  if command -v gh >/dev/null; then
+  if [[ " $kinds " == *" gh "* ]] && command -v gh >/dev/null; then
     LOLLOCTL_GH_TOKEN=$(gh auth token 2>/dev/null </dev/null) || LOLLOCTL_GH_TOKEN=""
     export LOLLOCTL_GH_TOKEN
     args+=(-e LOLLOCTL_GH_TOKEN)
   fi
-  # The Claude token from the keyring: libsecret on Linux, the login keychain
-  # on macOS, both under the service name claude-toolbox.
-  if [[ -z ${CLAUDE_CODE_OAUTH_TOKEN:-} ]]; then
-    if [[ $os == Darwin ]]; then
-      LOLLOCTL_CLAUDE_TOKEN=$(security find-generic-password -s claude-toolbox -w 2>/dev/null </dev/null) || LOLLOCTL_CLAUDE_TOKEN=""
-      export LOLLOCTL_CLAUDE_TOKEN
-      args+=(-e LOLLOCTL_CLAUDE_TOKEN)
-    elif command -v secret-tool >/dev/null; then
-      LOLLOCTL_CLAUDE_TOKEN=$(secret-tool lookup service claude-toolbox 2>/dev/null </dev/null) || LOLLOCTL_CLAUDE_TOKEN=""
-      export LOLLOCTL_CLAUDE_TOKEN
-      args+=(-e LOLLOCTL_CLAUDE_TOKEN)
+  # The Claude token: the caller's, or from the keyring (libsecret on Linux,
+  # the login keychain on macOS, both under the service name claude-toolbox).
+  if [[ " $kinds " == *" claude "* ]]; then
+    args+=(-e CLAUDE_CODE_OAUTH_TOKEN)
+    if [[ -z ${CLAUDE_CODE_OAUTH_TOKEN:-} ]]; then
+      if [[ $os == Darwin ]]; then
+        LOLLOCTL_CLAUDE_TOKEN=$(security find-generic-password -s claude-toolbox -w 2>/dev/null </dev/null) || LOLLOCTL_CLAUDE_TOKEN=""
+        export LOLLOCTL_CLAUDE_TOKEN
+        args+=(-e LOLLOCTL_CLAUDE_TOKEN)
+      elif command -v secret-tool >/dev/null; then
+        LOLLOCTL_CLAUDE_TOKEN=$(secret-tool lookup service claude-toolbox 2>/dev/null </dev/null) || LOLLOCTL_CLAUDE_TOKEN=""
+        export LOLLOCTL_CLAUDE_TOKEN
+        args+=(-e LOLLOCTL_CLAUDE_TOKEN)
+      fi
     fi
   fi
   # The toolbox file's `secret NAME COMMAND [ARG...]` lines; lolloctl checks
   # the rest of the file, and refuses a secret it gets no value for.
-  file=${XDG_CONFIG_HOME:-$HOME/.config}/lolloctl/toolbox
   [[ -f $file ]] || return 0
-  # The same checks as lolloctl's toolbox_personal, but before anything runs:
-  # these commands run here, as you.
-  [[ -O $file ]] || die "$file is not owned by you"
-  (((8#$(file_stat %a %Lp "$file") & 8#022) == 0)) || die "$file is writable by others (chmod 600 $file)"
   while IFS= read -r line || [[ -n $line ]]; do
     read -ra w <<<"$line"
     [[ ${#w[@]} -ge 3 && ${w[0]} == secret && ${w[1]} =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
@@ -316,7 +340,7 @@ case ${1:-} in
     mapfile -t pos < <(positional "${@:2}")
     [[ -z ${pos[1]:-} ]] || mount_same "$(dirname -- "${pos[1]}")"
     ;;
-  toolbox) toolbox_host ;;
+  toolbox) toolbox_host "${@:2}" ;;
   self-upgrade)
     # The current image fetches the new wrapper and checks its sum; the new
     # wrapper pulls its image; only then does it replace this one, which is

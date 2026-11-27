@@ -10,6 +10,7 @@ printf 'docker %s\n' "$*" >>"$STUB_LOG"
 printf 'docker-env PUBLIC_ORIGIN=%s\n' "${PUBLIC_ORIGIN:-}" >>"$STUB_LOG"
 [[ -z ${DOC_TOOLS_VOLUME:-} ]] || printf 'docker-env DOC_TOOLS_NETWORK=%s DOC_TOOLS_VOLUME=%s\n' "${DOC_TOOLS_NETWORK:-}" "$DOC_TOOLS_VOLUME" >>"$STUB_LOG"
 [[ ! -v PIPELOCK_DIRECT ]] || printf 'docker-env PIPELOCK_DIRECT=%s\n' "$PIPELOCK_DIRECT" >>"$STUB_LOG"
+[[ ! -v LOLLO_DENY_HOSTS ]] || printf 'docker-env LOLLO_DENY_HOSTS=%s\n' "$LOLLO_DENY_HOSTS" >>"$STUB_LOG"
 args=" $* "
 # What compose_env passes beside stack.env: the code, the shell's base and, in
 # release mode, the published images' names (the vault's stands for them all).
@@ -71,10 +72,20 @@ case $args in
     ;;
   # lolloctl reading its own container's mounts (check_mounts): mounts.json.
   " inspect --format {{json .Mounts}} "*) cat "$STUB_ROOT/mounts.json" 2>/dev/null || exit 1 ;;
+  # Whether the app-server's container runs with init (the audit): STUB_INIT, else true.
+  " inspect --format {{.HostConfig.Init}} "*) echo "${STUB_INIT:-true}" ;;
   # Filling a tools volume: a container of the image, never started, copied out.
   " create "*)
     [[ ${STUB_CREATE_RC:-0} == 0 ]] || exit "$STUB_CREATE_RC"
     echo doc-tools-cid
+    ;;
+  # The audit reading a path of the app-server's container: a tar of that path
+  # under container/, or a failure when there is none.
+  " cp app-server-cid:"*" - ")
+    cpath=${args#* cp app-server-cid:}
+    cpath=${cpath% - }
+    [[ -e $STUB_ROOT/container$cpath || -L $STUB_ROOT/container$cpath ]] || exit 1
+    tar -C "$STUB_ROOT/container${cpath%/*}" -cf - "${cpath##*/}"
     ;;
   " cp "*)
     [[ ${STUB_CP_RC:-0} == 0 ]] || exit "$STUB_CP_RC"
@@ -167,6 +178,43 @@ case $args in
   *" -p lollo_shared "*" ps -aq gotenberg "*)
     grep -qx 'lollo_shared gotenberg' "$STUB_ROOT/containers.txt" 2>/dev/null && echo gotenberg-id
     ;;
+  # The runtime audit's scan (a run labelled lolloctl.audit=): its script (stdin)
+  # goes to audit-script, then runs with the host's bash on the directory
+  # mounted at /src, as the backup image would; exits with STUB_AUDIT_RC instead.
+  " run "*" lolloctl.audit="*)
+    cat >"$STUB_ROOT/audit-script"
+    [[ ${STUB_AUDIT_RC:-0} == 0 ]] || exit "$STUB_AUDIT_RC"
+    prev="" src="" go="" sargs=()
+    for a in "$@"; do
+      [[ $prev == -v && $a == *:/src:ro ]] && src=${a%:/src:ro}
+      if [[ -n $go ]]; then
+        [[ $a != /src ]] || a=$src
+        sargs+=("$a")
+      fi
+      [[ $prev == -s && $a == -- ]] && go=1
+      prev=$a
+    done
+    bash -s -- "${sargs[@]}" <"$STUB_ROOT/audit-script"
+    ;;
+  # The app-server's container (`compose ps -aq app-server`): app-server-cid
+  # when containers.txt lists it for the project; its changes (`diff`) are
+  # diff-out, or fail with STUB_DIFF_RC.
+  *" ps -aq app-server ")
+    project=${args#* -p }
+    project=${project%% *}
+    awk -v p="$project" '$1 == p && $2 == "app-server" { print "app-server-cid"; exit }' "$STUB_ROOT/containers.txt" 2>/dev/null
+    ;;
+  " diff "*)
+    [[ ${STUB_DIFF_RC:-0} == 0 ]] || exit "$STUB_DIFF_RC"
+    cat "$STUB_ROOT/diff-out" 2>/dev/null
+    ;;
+  # The toolbox's workspace scan: its script (stdin) goes to scan-stdin; it
+  # prints scan-out (findings, NUL-separated) and exits with STUB_SCAN_RC.
+  " run "*" lolloctl.toolbox-scan="*)
+    cat >"$STUB_ROOT/scan-stdin"
+    [[ ! -f $STUB_ROOT/scan-out ]] || cat "$STUB_ROOT/scan-out"
+    exit "${STUB_SCAN_RC:-0}"
+    ;;
   " run "*)
     # Values passed by name (`-e NAME`) go to run-env.log, so tests can tell them
     # from argv, which is all calls.log sees.
@@ -254,10 +302,13 @@ case $args in
   *" letta agents list "*)
     cat >/dev/null # like `compose exec`, which forwards the caller's stdin
     cat "$STUB_ROOT/agents.json" 2>/dev/null
+    [[ ! -f $STUB_ROOT/exec-stderr ]] || cat "$STUB_ROOT/exec-stderr" >&2
     exit "${STUB_AGENTS_RC:-0}"
     ;;
   *" exec "*)
     cat >>"$STUB_ROOT/exec-stdin.log"
+    # What the command writes to its error output, if the test gave it anything.
+    [[ ! -f $STUB_ROOT/exec-stderr ]] || cat "$STUB_ROOT/exec-stderr" >&2
     # The `sh -c` script goes to exec-script and the arguments after it to
     # exec-args (NUL-separated, $0 included), so tests can run it themselves.
     prev="" script=""
@@ -296,9 +347,11 @@ case $args in
     done
     printf 'docker-env-file %s\n' "$(grep '^COMPOSE_PROFILES=' "$env_file")" >>"$STUB_LOG"
     # Like Compose, ${KEY} in the config takes KEY's value from the env file
-    # (empty when it has none), so one config serves every stack.
+    # (empty when it has none), so one config serves every stack; lolloctl's own
+    # LOLLO_DENY_HOSTS comes from the environment, which Compose prefers.
     [[ -f $STUB_ROOT/compose-config.json ]] || exit 0
     awk 'NR == FNR { i = index($0, "="); if (i > 1) v[substr($0, 1, i - 1)] = substr($0, i + 1); next }
+      FNR == 1 && ("LOLLO_DENY_HOSTS" in ENVIRON) { v["LOLLO_DENY_HOSTS"] = ENVIRON["LOLLO_DENY_HOSTS"] }
       { out = ""
         while (match($0, /\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) {
           out = out substr($0, 1, RSTART - 1) v[substr($0, RSTART + 2, RLENGTH - 3)]

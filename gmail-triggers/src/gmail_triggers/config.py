@@ -47,6 +47,10 @@ MAX_FETCH_PER_POLL = 200
 HANDLED_KEEP_SECONDS = 30 * 86400
 # Run log entries kept per rule.
 RUNS_KEEP_PER_RULE = 200
+# On a rule anyone may set off: senders new to it whose mail may start a run in
+# any 24 hours. Mail from further new senders is set aside (no run) and shown
+# on the rule's page; each new sender sends the person one notice either way.
+NEW_SENDERS_PER_DAY = 3
 
 
 class ConfigError(Exception):

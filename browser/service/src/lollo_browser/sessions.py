@@ -18,6 +18,11 @@ older than one another task saved, nor brings back a sign-in the person
 forgot while it ran, even if they kept the site again. Tasks live in memory
 too, so the epochs need not outlive the service.
 
+A kept site never holds a denied host's cookies or storage (LOLLO_DENY_HOSTS:
+every stack's Lettuce and lollo hosts and the Access team domain), even when the
+person keeps that host's registrable domain: one Access sign-in must not carry
+into every later task (agent-cannot-be-the-person).
+
 Files: settings.json, and signins/<sha256 of the site>.json, all mode 0600."""
 
 from __future__ import annotations
@@ -38,6 +43,22 @@ from .sites import host_in, host_of, site_of
 
 class SiteError(ValueError):
     pass
+
+
+# The identity provider's sites: the only one lolloctl configures for Access is
+# Google. A sign-in kept there signs agents in to every site that offers "Sign
+# in with Google", so the Sites page asks the person to confirm it.
+IDENTITY_PROVIDER_SITES = frozenset({"google.com"})
+
+
+def is_identity_provider(site: str) -> bool:
+    return site in IDENTITY_PROVIDER_SITES
+
+
+def _denied(host: str, deny_hosts: frozenset[str]) -> bool:
+    """True when host is a denied host or under one."""
+    host = host.lower().lstrip(".").rstrip(".")
+    return any(host == d or host.endswith("." + d) for d in deny_hosts)
 
 
 @dataclass(frozen=True)
@@ -88,8 +109,14 @@ def _origin_site(origin: dict[str, Any]) -> str:
 
 
 class Sessions:
-    def __init__(self, data_dir: str | Path, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        data_dir: str | Path,
+        clock: Callable[[], float] = time.time,
+        deny_hosts: Iterable[str] = (),
+    ) -> None:
         self._dir = Path(data_dir)
+        self._deny = frozenset(h.lower() for h in deny_hosts)
         self._settings_path = self._dir / "settings.json"
         self._signins = self._dir / "signins"
         self._clock = clock
@@ -187,6 +214,14 @@ class Sessions:
     def _bump(self, site: str) -> None:
         self._epochs[site] = self._epochs.get(site, 0) + 1
 
+    def _allowed_cookies(self, cookies: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Cookies of no denied host. A cookie scoped to a parent domain
+        (.example.com) is kept: Access sets a host-only cookie on its host."""
+        return [c for c in cookies if not _denied(str(c.get("domain", "")), self._deny)]
+
+    def _allowed_origins(self, origins: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [o for o in origins if not _denied(host_of(str(o.get("origin", ""))), self._deny)]
+
     # ── service API ──────────────────────────────────────────────────────
 
     def epochs(self) -> dict[str, int]:
@@ -216,12 +251,13 @@ class Sessions:
                 data = json.loads(self._signin_path(site).read_text(encoding="utf-8"))
             except FileNotFoundError, ValueError:
                 continue
-            # Only what belongs to the site, even if the file were tampered with.
-            for cookie in data.get("cookies", []):
+            # Only what belongs to the site, even if the file were tampered with,
+            # and never a denied host's.
+            for cookie in self._allowed_cookies(data.get("cookies", [])):
                 expires = cookie.get("expires", -1)
                 if _cookie_site(cookie) == site and (not expires or expires < 0 or expires > now):
                     cookies.append(cookie)
-            origins.extend(o for o in data.get("origins", []) if _origin_site(o) == site)
+            origins.extend(o for o in self._allowed_origins(data.get("origins", [])) if _origin_site(o) == site)
             loaded.add(site)
         if not loaded:
             return None, frozenset()
@@ -234,12 +270,14 @@ class Sessions:
         sites written."""
         kept = self.kept_sites()
         written = []
+        all_cookies = self._allowed_cookies(state.get("cookies", []))
+        all_origins = self._allowed_origins(state.get("origins", []))
         for site in sorted(kept & set(touched)):
             data = {
                 "v": 1,
                 "site": site,
-                "cookies": [c for c in state.get("cookies", []) if _cookie_site(c) == site],
-                "origins": [o for o in state.get("origins", []) if _origin_site(o) == site],
+                "cookies": [c for c in all_cookies if _cookie_site(c) == site],
+                "origins": [o for o in all_origins if _origin_site(o) == site],
             }
             with self._lock:
                 # Forgotten while the task ran: write nothing.

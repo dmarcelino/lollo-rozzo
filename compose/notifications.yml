@@ -3,9 +3,10 @@
 # sender of the lollo's Web Push notifications. It holds the stack's push keys
 # (LOLLO_VAPID_*) and every device's subscription, and serves the page where a
 # person turns notifications on, https://<name>-lollo.<domain>/notifications/,
-# and the service worker that shows them. On whenever a sender is: the vault or
-# the browser (Compose starts a service when any of its profiles is on); it has
-# no profile of its own, and without either this file adds nothing.
+# and the service worker that shows them. On whenever a sender is: the vault,
+# the browser, Gmail triggers or News Radar (Compose starts a service when any
+# of its profiles is on); it has no profile of its own, and without any of them
+# this file adds nothing.
 #
 # The tunnel forwards /notifications/ on the lollo host to it
 # (cf_tunnel_configure); every page there needs a Cloudflare Access JWT of the
@@ -25,7 +26,7 @@
 # Relative paths resolve against --project-directory (upstream/docker).
 services:
   lollo-notifications:
-    profiles: ["lollo-vault", "lollo-browser"]
+    profiles: ["lollo-vault", "lollo-browser", "lollo-gmail-triggers", "lollo-news-radar"]
     build:
       context: ${LOLLO_HOME:?LOLLO_HOME is not set}/notifications
       additional_contexts:
@@ -46,6 +47,8 @@ services:
       # One token per sender; each sender gets only its own, as NOTIFY_TOKEN.
       NOTIFY_TOKEN_VAULT: ${NOTIFY_TOKEN_VAULT:-}
       NOTIFY_TOKEN_BROWSER: ${NOTIFY_TOKEN_BROWSER:-}
+      NOTIFY_TOKEN_GMAIL_TRIGGERS: ${NOTIFY_TOKEN_GMAIL_TRIGGERS:-}
+      NOTIFY_TOKEN_NEWS_RADAR: ${NOTIFY_TOKEN_NEWS_RADAR:-}
       TZ: ${TZ:-UTC}
     networks:
       - default

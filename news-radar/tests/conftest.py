@@ -113,9 +113,47 @@ def store(settings: Settings, clock: Clock) -> Store:
     return Store(settings.db_path, clock=clock)
 
 
+class FakeNotifier:
+    """Stands in for lollo_common.notify.Notifier: keeps every payload, and
+    answers `accepted` (False: the notifications service refused or was down)."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, str]] = []
+        self.accepted = True
+
+    async def send(self, payload: object) -> bool:
+        assert isinstance(payload, dict)
+        self.sent.append(payload)
+        return self.accepted
+
+
+class ConfirmingService(Service):
+    """The service, with every monitor an agent saves confirmed at once, as if
+    the person pressed Confirm: for the tests of what comes after. The tests of
+    the confirmation itself use `strict_service`."""
+
+    def monitor_put(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        out = super().monitor_put(*args, **kwargs)
+        agent = kwargs.get("agent_id", args[0] if args else None)
+        m = self.store.monitor_named(agent, out["saved"])
+        if m is not None and m.awaiting:
+            self.confirm_monitor(m.id)
+        return out
+
+
 @pytest.fixture
-def service(store: Store, fetcher: Fetcher, settings: Settings) -> Service:
-    return Service(store, fetcher, settings)
+def notifier() -> FakeNotifier:
+    return FakeNotifier()
+
+
+@pytest.fixture
+def service(store: Store, fetcher: Fetcher, settings: Settings, notifier: FakeNotifier) -> Service:
+    return ConfirmingService(store, fetcher, settings, notifier)
+
+
+@pytest.fixture
+def strict_service(store: Store, fetcher: Fetcher, settings: Settings, notifier: FakeNotifier) -> Service:
+    return Service(store, fetcher, settings, notifier)
 
 
 @pytest.fixture(scope="session")
@@ -134,7 +172,9 @@ def make_jwt(key: Any, **over: Any) -> str:
         "sub": "user-1",
     }
     claims.update(over)
-    return jwt.encode({k: v for k, v in claims.items() if v is not None}, key, algorithm="RS256")
+    return jwt.encode(
+        {k: v for k, v in claims.items() if v is not None}, key, algorithm="RS256", headers={"kid": "test-key"}
+    )
 
 
 @pytest.fixture

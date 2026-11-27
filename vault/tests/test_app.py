@@ -653,6 +653,41 @@ def test_bitwarden_import_refuses_a_large_upload_before_reading_it(env):
     assert r.status_code == 413 and "at most 5 MB" in r.text and vault.secrets() == []
 
 
+def test_bitwarden_import_takes_an_export_of_up_to_its_limit(env):
+    client, vault = env[0], env[1]
+    setup_vault(client)
+    csrf = csrf_of(client.get(f"{B}/").text)
+    export = {"encrypted": False, "items": [{"type": 4, "name": "Home", "identity": {"address1": STREET}}]}
+    padded = json.dumps(export).encode() + b" " * (4 * 1024 * 1024)
+    r = client.post(
+        f"{B}/secrets/import",
+        data={"csrf": csrf},
+        files={"file": ("b.json", padded, "application/json")},
+        headers={"origin": ORIGIN},
+    )
+    assert r.status_code == 200, r.text[:300]
+    assert [s.name for s in vault.secrets()] == ["Home"]
+    six = b"{" + b" " * (6 * 1024 * 1024) + b"}"
+    r = client.post(
+        f"{B}/secrets/import",
+        data={"csrf": csrf},
+        files={"file": ("b.json", six, "application/json")},
+        headers={"origin": ORIGIN},
+    )
+    assert r.status_code == 413 and "at most 5 MB" in r.text
+
+
+def test_redeem_and_mcp_refuse_a_large_body_and_the_vault_stays_unlocked(env):
+    client, vault = env[0], env[1]
+    setup_vault(client)
+    big = b"{" + b" " * (2 * 1024 * 1024) + b"}"
+    for url in (REDEEM, MCP):
+        r = client.post(url, content=big, headers={"content-type": "application/json", "cf-access-jwt-assertion": ""})
+        assert r.status_code == 413, url
+    assert vault.is_unlocked()
+    assert client.get(f"{B}/").status_code == 200
+
+
 def test_bitwarden_import_refuses_an_encrypted_export_and_needs_csrf(env):
     client, vault = env[0], env[1]
     setup_vault(client)
@@ -762,6 +797,68 @@ def test_mcp_cannot_approve(env):
     assert r.status_code == 403
     res, _ = call_tool(client, "get_result", {"request_id": sub["id"]})
     assert res["status"] == "pending"
+
+
+def login_form(name: str, uris: str) -> dict[str, str]:
+    return {
+        "kind": "login",
+        "name": name,
+        "f_username": "alfred@gmail.com",
+        "f_password": SECRET,
+        "f_uris": uris,
+        "share_mode": "ask",
+    }
+
+
+IDP_WARNING = "This is a Google login"
+
+
+def test_a_google_login_is_warned_about_and_still_shared(env):
+    client = env[0]
+    setup_vault(client)
+    google = add(client, login_form("Google", "https://accounts.google.com/\nhttps://mail.google.com/"))
+    shop = add(client, login_form("Shop", "https://shop.test/"))
+    answers = {}
+    for name, secret in (("google", google), ("shop", shop)):
+        args = {"secret_id": secret, "fields": ["password"], "purpose": "Sign in"}
+        sub, raw = call_tool(client, "request_secret", args)
+        assert sub["status"] == "pending"
+        answers[name] = (sub, raw)
+    google_page = client.get(f"{B}/r/{answers['google'][0]['id']}").text
+    shop_page = client.get(f"{B}/r/{answers['shop'][0]['id']}").text
+    assert IDP_WARNING in google_page and google_page.index(IDP_WARNING) < google_page.index("Share once")
+    assert IDP_WARNING not in shop_page
+    # Agents are not told: the tool results differ only in the request's own id.
+    g, s = answers["google"][0], answers["shop"][0]
+    assert g.keys() == s.keys()
+    assert answers["google"][1].replace(g["id"], "ID") == answers["shop"][1].replace(s["id"], "ID")
+    assert "Google" not in answers["google"][1]
+    # The person can still share it.
+    for sub, _ in answers.values():
+        assert post(client, f"{B}/r/{sub['id']}/decide", {"action": "share", "fields": ["password"]}).status_code == 303
+        res, _ = call_tool(client, "get_result", {"request_id": sub["id"], "wait_seconds": 5})
+        assert res["status"] == "done"
+
+
+@pytest.mark.parametrize(
+    "uris,warned",
+    [
+        ("https://google.com/", True),
+        ("accounts.google.com", True),
+        ("https://ACCOUNTS.GOOGLE.COM./signin", True),
+        ("https://shop.test/\nhttps://accounts.google.com/", True),
+        ("https://notgoogle.com/", False),
+        ("https://google.com.evil.test/", False),
+        ("", False),
+    ],
+)
+def test_identity_provider_logins(uris, warned):
+    from lollo_vault.kinds import identity_provider_login
+    from lollo_vault.vault import Field
+
+    fields = [Field("uris", "Websites", uris)]
+    assert identity_provider_login("login", fields) is warned
+    assert identity_provider_login("note", fields) is False
 
 
 def test_request_page_escapes_agent_input(env):

@@ -14,7 +14,7 @@ This page is for you if someone runs Lollo Rozzo and has given you a stack: your
   | News Radar, `/news-radar/` | What your agents keep an eye on for you (films, concerts, news on a topic) and when they report; ask an agent to set one up. | [Using News Radar](news-radar.md#using-it) |
   | Code editor, `/code-server/` | VS Code in the browser on your agents' workspaces, with a terminal that has the agents' tools. | [Using the code editor](code-server.md#using-it) |
   | Browser, `/browser/` | The browser your agents use to sign in, fill in forms and get orders ready: watch it live, take over a tab when a CAPTCHA or a payment needs you, answer their hand-offs, and choose which sites stay signed in and where agents may finish a checkout. | [Using the browser](browser.md#using-it) |
-  | Notifications, `/notifications/` | With the vault or the browser on: turns on notifications for every lollo page on the device in use, and lists your devices. | [Notifications](notifications.md) |
+  | Notifications, `/notifications/` | With the vault, the browser, Gmail triggers or News Radar on: turns on notifications for every lollo page on the device in use, and lists your devices. | [Notifications](notifications.md) |
 
   Two more features have no page: your agents may have Office and PDF tools ([document tools](doc-tools.md#using-it)), and their web traffic may go through a proxy that checks where it goes and records it, which catches mistakes but is not a wall: an agent can go around it ([egress proxy](egress-firewall.md)). Ask your admin which are on.
 
