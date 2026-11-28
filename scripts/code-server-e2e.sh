@@ -56,7 +56,7 @@ APP=ghcr.io/$APP/lettuce-app-server:$(sed -n 's/^LETTUCE_REF=//p' "$ROOT/config.
 BROWSER=0
 KEEP=0
 DEBIAN=debian:12-slim
-PLAYWRIGHT=mcr.microsoft.com/playwright/python:v1.63.0-noble
+PLAYWRIGHT=mcr.microsoft.com/playwright/python:v1.65.2-noble
 while (($#)); do
   case $1 in
     --browser) BROWSER=1; shift ;;
@@ -300,7 +300,7 @@ EOF'
   # The image has the browsers; the Python package of the same version is installed on the fly.
   # The browser shares the gate's network namespace: it opens http://localhost:8000.
   if docker run --rm --network "container:$P-gate" -v "$ROOT/code-server/tests/e2e:/e2e:ro" "$PLAYWRIGHT" \
-    sh -c 'python3 -m pip install -q --break-system-packages playwright==1.63.0 && python3 /e2e/browser_check.py'; then
+    sh -c 'python3 -m pip install -q --break-system-packages playwright==1.65.2 && python3 /e2e/browser_check.py'; then
     result ok "browser checks"
   else
     result fail "browser checks"
